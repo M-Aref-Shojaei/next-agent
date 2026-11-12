@@ -16,6 +16,7 @@ To complete in M0. For each upstream record: licence, language/runtime, maturity
 | `NousResearch/hermes-agent` | Python runtime, skills/memory `state.db`, subagents | Python | Adapter via `services/hermes-adapter` (`uv`) | *verify* | M2 (opt.) |
 | `Louis-CFM/coucou` | Notch / Dynamic-Island status & approval overlay patterns | *verify* | Reference only | *verify* | M3 |
 | Logseq | Outliner, block refs, journals, graph concepts | Clojure | Concepts only; file format compatibility | AGPL-3.0 — *verify* | M4 |
+| Diagramming (LikeC4, Mermaid, Svelte Flow, cargo-depgraph, dependency-cruiser) | Architecture box diagrams and dependency topology — see [[Diagramming and Topology]] | TS / Rust CLI | Dev tooling now; Mermaid + Svelte Flow in-app | MIT (mostly) — *verify* | now / M4 |
 
 ## Checklist per upstream
 - [ ] Licence and its effect on our distribution (copyleft? attribution?)

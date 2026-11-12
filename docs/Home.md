@@ -40,6 +40,7 @@ A local-first AI workstation: coding agents working on a local repo, a Markdown 
 
 ## Upstream
 - [[Upstream Evaluation]] — opencode, 9router, openclaw, hermes-agent, coucou, Logseq
+- [[Diagramming and Topology]] — tools for box diagrams and dependency maps of this project
 
 ## Guides & reference
 - [[Conventions]]
