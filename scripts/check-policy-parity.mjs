@@ -57,7 +57,7 @@ const tsPolicy = readFileSync("packages/policy/src/index.ts", "utf8");
 
 const rustLabels = new Set([
   ...rustArms(section(rustEngine, "fn reason_rule", "\nfn mode_policy")),
-  ...rustLabelArgs(section(rustEngine, "fn explain", "\nfn resolve")),
+  ...rustLabelArgs(section(rustEngine, "fn explain", "\nfn reason_rule")),
 ]);
 const tsLabels = new Set([
   ...tsReturns(section(tsPolicy, "function denyRule", "\nexport function matchesFixtureCase")),

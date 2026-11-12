@@ -1,9 +1,11 @@
 //! Policy evaluation for agent tool requests.
 //!
 //! Pure and I/O-free: [`evaluate`] takes a request plus context and returns a
-//! [`Decision`]. The same decision table is mirrored in TypeScript under
-//! `packages/policy` and both are checked against `fixtures/policy-cases.json`,
-//! so the Rust engine and the UI preview cannot drift.
+//! [`Decision`]. Filesystem facts (symlinks, junctions) are injected through
+//! [`FsFacts`] via [`explain_with`]. The same decision table is mirrored in
+//! TypeScript under `packages/policy` and both are checked against the shared
+//! fixtures in `fixtures/` (`policy-cases.json`, `command-corpus.json`,
+//! `path-corpus.json`), so the Rust engine and the UI preview cannot drift.
 //!
 //! See `docs/architecture/Permission Engine.md` and
 //! `docs/architecture/Module Boundaries.md`.
@@ -15,14 +17,15 @@ pub mod mode;
 pub mod path;
 pub mod rules;
 
-pub use command::CommandClass;
+pub use command::{analyze, classify, Analysis, CommandClass};
 pub use decision::Decision;
-pub use engine::{evaluate, explain, Context, Evaluation, Request};
-pub use mode::Mode;
-pub use path::{Sandbox, Zone};
+pub use engine::{always_rule, evaluate, explain, explain_with, Context, Evaluation, Request};
+pub use mode::{BypassGrant, Mode, ModeError, Origin, Transition};
+pub use path::{FsFacts, Lexical, MapFs, PathStyle, Sandbox, Zone};
 pub use rules::{Effect, Rule, RuleSet, RuleTarget, Scope};
 
-/// Minimum time a `bypassPermissions` session may run before it auto-reverts.
+/// Idle time after which a `bypassPermissions` session reverts to `manual`
+/// (see [`Mode::after_idle`]).
 pub const BYPASS_IDLE_TIMEOUT_SECONDS: u64 = 30 * 60;
 
 #[cfg(test)]

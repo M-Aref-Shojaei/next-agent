@@ -1,0 +1,1216 @@
+{
+ "$comment": "Path boundary corpus shared by crates/permission-engine (Rust) and packages/policy (TS). `context` overrides the default per case; `fs` lists existing entries (ancestors implied) and symlinks/junctions (`links`, target absolute or relative to the link's parent). `shell: true` checks the word as a shell would glob it. `resolved` (optional) is the canonical path the broker must operate on; null means unresolvable.",
+ "context": {
+  "pathStyle": "posix",
+  "root": "/work/project",
+  "home": "/home/dev",
+  "caseInsensitive": false
+ },
+ "cases": [
+  {
+   "path": ".",
+   "zone": "inside",
+   "note": "root itself",
+   "resolved": "/work/project"
+  },
+  {
+   "path": "",
+   "zone": "inside",
+   "note": "empty path is the root"
+  },
+  {
+   "path": "src/lib.rs",
+   "zone": "inside",
+   "note": "relative",
+   "resolved": "/work/project/src/lib.rs"
+  },
+  {
+   "path": "./a/./b",
+   "zone": "inside",
+   "note": "dot segments",
+   "resolved": "/work/project/a/b"
+  },
+  {
+   "path": "a/../b",
+   "zone": "inside",
+   "note": "dotdot that stays inside",
+   "resolved": "/work/project/b"
+  },
+  {
+   "path": "/work/project/src/a.rs",
+   "zone": "inside",
+   "note": "absolute inside"
+  },
+  {
+   "path": "/work/project//src///a.rs",
+   "zone": "inside",
+   "note": "repeated separators",
+   "resolved": "/work/project/src/a.rs"
+  },
+  {
+   "path": "src/../../project/x",
+   "zone": "inside",
+   "note": "leaves and re-enters",
+   "resolved": "/work/project/x"
+  },
+  {
+   "path": "C:\\Windows\\x",
+   "zone": "inside",
+   "note": "backslash is a filename character on POSIX"
+  },
+  {
+   "path": "..",
+   "zone": "outside",
+   "note": "parent",
+   "resolved": "/work"
+  },
+  {
+   "path": "../",
+   "zone": "outside",
+   "note": "parent with slash"
+  },
+  {
+   "path": "../..",
+   "zone": "outside",
+   "note": "grandparent"
+  },
+  {
+   "path": "../sibling/secret.txt",
+   "zone": "outside",
+   "note": "sibling project"
+  },
+  {
+   "path": "./../../out.txt",
+   "zone": "outside",
+   "note": ""
+  },
+  {
+   "path": "a/../../b",
+   "zone": "outside",
+   "note": ""
+  },
+  {
+   "path": "/work/project/../other",
+   "zone": "outside",
+   "note": "absolute dotdot"
+  },
+  {
+   "path": "/work/project-evil/x",
+   "zone": "outside",
+   "note": "prefix confusion"
+  },
+  {
+   "path": "/work/projectx",
+   "zone": "outside",
+   "note": "prefix confusion without separator"
+  },
+  {
+   "path": "/work",
+   "zone": "outside",
+   "note": "ancestor of root"
+  },
+  {
+   "path": "/",
+   "zone": "outside",
+   "note": "filesystem root"
+  },
+  {
+   "path": "/tmp/x",
+   "zone": "outside",
+   "note": ""
+  },
+  {
+   "path": "~",
+   "zone": "outside",
+   "note": "home",
+   "resolved": "/home/dev"
+  },
+  {
+   "path": "~/notes.md",
+   "zone": "outside",
+   "note": ""
+  },
+  {
+   "path": "../../../../../../../../tmp/x",
+   "zone": "outside",
+   "note": "dotdot clamps at /",
+   "resolved": "/tmp/x"
+  },
+  {
+   "path": "/work/project/../../../../../../etc/passwd",
+   "zone": "sensitive",
+   "note": "clamped then sensitive",
+   "resolved": "/etc/passwd"
+  },
+  {
+   "path": "../../etc/passwd",
+   "zone": "sensitive",
+   "note": "dotdot into /etc"
+  },
+  {
+   "path": "src/../../../etc/shadow",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "/etc/passwd",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "/etc",
+   "zone": "sensitive",
+   "note": "the directory itself"
+  },
+  {
+   "path": "/usr/bin/env",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "/System/Library/x",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "/var/root/.profile",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "/dev/sda",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "/proc/self/environ",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.ssh/id_ed25519",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.ssh",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.aws/credentials",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.config/gh/hosts.yml",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.gnupg/private-keys-v1.d",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.kube/config",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.docker/config.json",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.netrc",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.npmrc",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.git-credentials",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/.zshrc",
+   "zone": "sensitive",
+   "note": "shell startup file (persistence)"
+  },
+  {
+   "path": "~/.bashrc",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/Library/Keychains/login.keychain-db",
+   "zone": "sensitive",
+   "note": "keychain"
+  },
+  {
+   "path": "~/Library/LaunchAgents/x.plist",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "/home/dev/.ssh/../.ssh/id_rsa",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "~/./.ssh//id_rsa",
+   "zone": "sensitive",
+   "note": ""
+  },
+  {
+   "path": "/home/other/.ssh/id_rsa",
+   "zone": "sensitive",
+   "note": "another user's keys (anywhere rule)"
+  },
+  {
+   "path": ".ssh/id_rsa",
+   "zone": "sensitive",
+   "note": "credential dir name inside the workspace"
+  },
+  {
+   "path": "/home/dev/.sshx",
+   "zone": "outside",
+   "note": "not .ssh"
+  },
+  {
+   "path": "~user/.ssh/id_rsa",
+   "zone": "sensitive",
+   "note": "~user is not expanded: unresolvable"
+  },
+  {
+   "path": "$HOME/.ssh/id_rsa",
+   "zone": "sensitive",
+   "note": "unexpanded variable"
+  },
+  {
+   "path": "a\u0000b",
+   "zone": "sensitive",
+   "note": "NUL byte"
+  },
+  {
+   "path": "~/x",
+   "zone": "sensitive",
+   "note": "no home configured: unresolvable",
+   "context": {
+    "home": null
+   }
+  },
+  {
+   "path": "/home/dev/.ssh/id_rsa",
+   "zone": "sensitive",
+   "note": "anywhere rule works without home",
+   "context": {
+    "home": null
+   }
+  },
+  {
+   "path": "x",
+   "zone": "sensitive",
+   "note": "relative root is unusable",
+   "context": {
+    "root": "relative/root"
+   }
+  },
+  {
+   "path": "/anything",
+   "zone": "outside",
+   "note": "root of filesystem contains nothing",
+   "context": {
+    "root": "/"
+   }
+  },
+  {
+   "path": "/WORK/Project/src/a.rs",
+   "zone": "inside",
+   "note": "case-insensitive inside",
+   "context": {
+    "caseInsensitive": true
+   }
+  },
+  {
+   "path": "/WORK/Project/src/a.rs",
+   "zone": "outside",
+   "note": "case-sensitive volume"
+  },
+  {
+   "path": "/home/dev/.SSH/id_rsa",
+   "zone": "sensitive",
+   "note": "case-insensitive sensitive",
+   "context": {
+    "caseInsensitive": true
+   }
+  },
+  {
+   "path": "/ETC/passwd",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "caseInsensitive": true
+   }
+  },
+  {
+   "path": "/home/dev/.s‌sh/id_rsa",
+   "zone": "sensitive",
+   "note": "HFS+ ignorable code point",
+   "context": {
+    "caseInsensitive": true
+   }
+  },
+  {
+   "path": "/home/dev/Library/keychains/x",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "caseInsensitive": true
+   }
+  },
+  {
+   "path": "out/x",
+   "zone": "outside",
+   "note": "symlink escape",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   },
+   "resolved": "/tmp/elsewhere/x"
+  },
+  {
+   "path": "keys/id_rsa",
+   "zone": "sensitive",
+   "note": "symlink into ~/.ssh",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   },
+   "resolved": "/home/dev/.ssh/id_rsa"
+  },
+  {
+   "path": "etc/../passwd",
+   "zone": "sensitive",
+   "note": "dotdot after symlink follows the target",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   },
+   "resolved": "/etc/passwd"
+  },
+  {
+   "path": "rel/passwd",
+   "zone": "sensitive",
+   "note": "relative symlink target",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   },
+   "resolved": "/etc/passwd"
+  },
+  {
+   "path": "inner/lib.rs",
+   "zone": "inside",
+   "note": "symlink that stays inside",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   },
+   "resolved": "/work/project/src/lib.rs"
+  },
+  {
+   "path": "chain/id_rsa",
+   "zone": "sensitive",
+   "note": "symlink chain",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   }
+  },
+  {
+   "path": "dangling",
+   "zone": "sensitive",
+   "note": "dangling symlink is refused",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   }
+  },
+  {
+   "path": "loop_a/x",
+   "zone": "sensitive",
+   "note": "symlink loop is unresolvable",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   }
+  },
+  {
+   "path": "src/new_file.rs",
+   "zone": "inside",
+   "note": "non-existent file under existing dir",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   },
+   "resolved": "/work/project/src/new_file.rs"
+  },
+  {
+   "path": "/tmp/into/lib.rs",
+   "zone": "inside",
+   "note": "outside path that links into the workspace",
+   "context": {
+    "fs": {
+     "entries": [
+      "/work/project/src/lib.rs",
+      "/tmp/elsewhere/x",
+      "/home/dev/.ssh/id_rsa",
+      "/etc/ssh/sshd_config",
+      "/etc/passwd",
+      "/data/notes.md"
+     ],
+     "links": {
+      "/work/project/out": "/tmp/elsewhere",
+      "/work/project/keys": "/home/dev/.ssh",
+      "/work/project/etc": "/etc/ssh",
+      "/work/project/rel": "../../etc",
+      "/work/project/inner": "src",
+      "/work/project/dangling": "/home/dev/.bashrc_new",
+      "/work/project/loop_a": "/work/project/loop_b",
+      "/work/project/loop_b": "/work/project/loop_a",
+      "/work/project/chain": "/work/project/keys",
+      "/tmp/into": "/work/project/src"
+     }
+    }
+   },
+   "resolved": "/work/project/src/lib.rs"
+  },
+  {
+   "path": "/tmp/ws/a",
+   "zone": "inside",
+   "note": "/tmp alias of /private/tmp",
+   "context": {
+    "root": "/tmp/ws",
+    "fs": {
+     "entries": [
+      "/private/tmp/ws/a",
+      "/private/etc/hosts"
+     ],
+     "links": {
+      "/tmp": "/private/tmp",
+      "/etc": "/private/etc"
+     }
+    }
+   },
+   "resolved": "/private/tmp/ws/a"
+  },
+  {
+   "path": "/private/tmp/ws/a",
+   "zone": "inside",
+   "note": "canonical form",
+   "context": {
+    "root": "/tmp/ws",
+    "fs": {
+     "entries": [
+      "/private/tmp/ws/a",
+      "/private/etc/hosts"
+     ],
+     "links": {
+      "/tmp": "/private/tmp",
+      "/etc": "/private/etc"
+     }
+    }
+   }
+  },
+  {
+   "path": "/etc/hosts",
+   "zone": "sensitive",
+   "note": "/etc alias of /private/etc",
+   "context": {
+    "root": "/tmp/ws",
+    "fs": {
+     "entries": [
+      "/private/tmp/ws/a",
+      "/private/etc/hosts"
+     ],
+     "links": {
+      "/tmp": "/private/tmp",
+      "/etc": "/private/etc"
+     }
+    }
+   },
+   "resolved": "/private/etc/hosts"
+  },
+  {
+   "path": "/private/etc/hosts",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "root": "/tmp/ws",
+    "fs": {
+     "entries": [
+      "/private/tmp/ws/a",
+      "/private/etc/hosts"
+     ],
+     "links": {
+      "/tmp": "/private/tmp",
+      "/etc": "/private/etc"
+     }
+    }
+   }
+  },
+  {
+   "path": "../b",
+   "zone": "inside",
+   "note": "relative to a nested cwd",
+   "cwd": "src",
+   "resolved": "/work/project/b"
+  },
+  {
+   "path": "x",
+   "zone": "outside",
+   "note": "cwd outside",
+   "cwd": "/tmp"
+  },
+  {
+   "path": "id_rsa",
+   "zone": "sensitive",
+   "note": "cwd in ~/.ssh",
+   "cwd": "/home/dev/.ssh"
+  },
+  {
+   "path": "src/*.rs",
+   "zone": "inside",
+   "note": "glob inside",
+   "shell": true
+  },
+  {
+   "path": "/etc/*",
+   "zone": "sensitive",
+   "note": "glob in /etc",
+   "shell": true
+  },
+  {
+   "path": "~/.ss?/id_rsa",
+   "zone": "sensitive",
+   "note": "glob that may hit .ssh",
+   "shell": true
+  },
+  {
+   "path": "/tmp/*.log",
+   "zone": "sensitive",
+   "note": "glob outside is unknowable",
+   "shell": true
+  },
+  {
+   "path": "src/*/../../x",
+   "zone": "sensitive",
+   "note": "glob followed by dotdot",
+   "shell": true
+  },
+  {
+   "path": "src\\a.rs",
+   "zone": "inside",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   },
+   "resolved": "C:\\work\\project\\src\\a.rs"
+  },
+  {
+   "path": "src/a.rs",
+   "zone": "inside",
+   "note": "forward slashes",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   },
+   "resolved": "C:\\work\\project\\src\\a.rs"
+  },
+  {
+   "path": "C:\\work\\project\\a",
+   "zone": "inside",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "c:\\WORK\\Project\\a",
+   "zone": "inside",
+   "note": "always case-insensitive",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:/work/project/a",
+   "zone": "inside",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\work\\project\\a",
+   "zone": "inside",
+   "note": "root-relative on cwd drive",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\\\?\\C:\\work\\project\\a",
+   "zone": "inside",
+   "note": "verbatim prefix stripped",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   },
+   "resolved": "C:\\work\\project\\a"
+  },
+  {
+   "path": "\\\\?\\C:\\work\\project\\..\\x",
+   "zone": "sensitive",
+   "note": "dotdot in verbatim path refused",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\\\?\\UNC\\server\\share\\x",
+   "zone": "outside",
+   "note": "verbatim UNC",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "..\\..\\Windows\\System32",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:\\work\\project-evil\\x",
+   "zone": "outside",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "D:\\work\\project\\a",
+   "zone": "outside",
+   "note": "other drive",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:\\Windows\\System32\\drivers\\etc\\hosts",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:\\Windows.\\System32",
+   "zone": "sensitive",
+   "note": "trailing dot",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:\\Windows \\System32",
+   "zone": "sensitive",
+   "note": "trailing space",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:\\Windows::$INDEX_ALLOCATION\\x",
+   "zone": "sensitive",
+   "note": "alternate data stream",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:\\PROGRA~1\\x",
+   "zone": "sensitive",
+   "note": "8.3 short name",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "D:\\Program Files\\x",
+   "zone": "sensitive",
+   "note": "system folder on any drive",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:\\ProgramData\\x",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "~\\.ssh\\id_rsa",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:\\Users\\dev\\AppData\\Roaming\\Microsoft\\Credentials\\x",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:\\Users\\dev\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\x.lnk",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\\\server\\share\\x",
+   "zone": "outside",
+   "note": "UNC",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "//server/share/x",
+   "zone": "outside",
+   "note": "UNC with forward slashes",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\\\localhost\\c$\\Windows\\x",
+   "zone": "sensitive",
+   "note": "admin share is the local drive",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\\\127.0.0.1\\C$\\work\\project\\a",
+   "zone": "inside",
+   "note": "admin share into the workspace",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\\\.\\PhysicalDrive0",
+   "zone": "sensitive",
+   "note": "device namespace",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\\\?\\Volume{0000}\\x",
+   "zone": "sensitive",
+   "note": "volume GUID path",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\\\?\\GLOBALROOT\\Device\\x",
+   "zone": "sensitive",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "C:foo",
+   "zone": "sensitive",
+   "note": "drive-relative path",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "src\\NUL",
+   "zone": "sensitive",
+   "note": "reserved device name",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "src\\com1.txt",
+   "zone": "sensitive",
+   "note": "reserved device name with extension",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "src\\...\\x",
+   "zone": "sensitive",
+   "note": "all-dots component",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "\\\\server",
+   "zone": "sensitive",
+   "note": "incomplete UNC",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "%USERPROFILE%\\.ssh",
+   "zone": "sensitive",
+   "note": "unexpanded variable",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev"
+   }
+  },
+  {
+   "path": "j\\id_rsa",
+   "zone": "sensitive",
+   "note": "junction into .ssh",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev",
+    "fs": {
+     "entries": [
+      "C:\\work\\project\\src",
+      "C:\\Users\\dev\\.ssh\\id_rsa",
+      "D:\\other\\x"
+     ],
+     "links": {
+      "C:\\work\\project\\j": "C:\\Users\\dev\\.ssh",
+      "C:\\work\\project\\d": "D:\\other"
+     }
+    }
+   },
+   "resolved": "C:\\Users\\dev\\.ssh\\id_rsa"
+  },
+  {
+   "path": "d\\x",
+   "zone": "outside",
+   "note": "junction to another drive",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev",
+    "fs": {
+     "entries": [
+      "C:\\work\\project\\src",
+      "C:\\Users\\dev\\.ssh\\id_rsa",
+      "D:\\other\\x"
+     ],
+     "links": {
+      "C:\\work\\project\\j": "C:\\Users\\dev\\.ssh",
+      "C:\\work\\project\\d": "D:\\other"
+     }
+    }
+   },
+   "resolved": "D:\\other\\x"
+  },
+  {
+   "path": "src\\x",
+   "zone": "inside",
+   "note": "",
+   "context": {
+    "pathStyle": "windows",
+    "root": "C:\\work\\project",
+    "home": "C:\\Users\\dev",
+    "fs": {
+     "entries": [
+      "C:\\work\\project\\src",
+      "C:\\Users\\dev\\.ssh\\id_rsa",
+      "D:\\other\\x"
+     ],
+     "links": {
+      "C:\\work\\project\\j": "C:\\Users\\dev\\.ssh",
+      "C:\\work\\project\\d": "D:\\other"
+     }
+    }
+   }
+  }
+ ]
+}

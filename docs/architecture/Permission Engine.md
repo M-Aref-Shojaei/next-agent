@@ -65,5 +65,18 @@ enum Decision { Allow { reason }, Ask { reason, options }, Deny { reason } }
 ## Audit
 Every decision → `events`. Every bypass-allowed action, out-of-sandbox write, and approval → `audit_log` (append-only, hash-chained; see [[Data Model]]).
 
+## M1 implementation notes
+Decisions made while implementing Step 3; the shared fixtures in `fixtures/` (`policy-cases.json`, `command-corpus.json`, `path-corpus.json`) are the executable form of this page and run in both Rust and `packages/policy`.
+- **Filesystem facts** are injected via the `FsFacts` trait (`explain_with`); `evaluate`/`explain` are lexical only. Resolution walks component by component, canonicalizing after each step, so `link/..` follows the kernel, not the string. Dangling links, `~user`, `$VAR`, NUL bytes, device/volume paths, drive-relative `C:x`, reserved names (`NUL`, `COM1`), unresolved 8.3 names and `..` inside `\\?\` paths are refused (zone `sensitive`). `Evaluation.resolved_path` is the canonical path the broker must operate on.
+- **Windows**: `\\?\` stripped, `\\localhost\C$` = `C:`, trailing dots/spaces and `:stream` suffixes dropped before comparison, always case-insensitive. On case-insensitive POSIX volumes default-ignorable code points are ignored too (HFS+).
+- **Sensitive list** extended with shell start-up files, credential files (`.netrc`, `.npmrc`, `.git-credentials`, cargo credentials), `LaunchAgents`, `/private/etc` (macOS canonical `/etc`), and credential directory names (`.ssh`, `.aws`, …) matched anywhere in a path. A root of `/` or `C:\` contains nothing.
+- **Auto protects inside the workspace**: writes to `.env*`, `.envrc`, `.git/**`, `.next-agent/**` and reads of `.env*` ask.
+- **Commands touch paths**: absolute/`~`/`..` words, redirect targets, secret file names, every operand of read-only tools (`cat`, `rg`, `ls`, …) and the exec `cwd` are zone-checked. In `auto`, `safe_dev` runs only if all are inside; any sensitive path denies.
+- **Manual asks for `safe_dev` commands** (per the table above); only reads inside are silent in `manual`.
+- **Classifier**: subshells, groups, `$( )`/backticks inside double quotes and `${…}`, process substitution, here-docs/strings and redirections are parsed; `sudo` floors at `sensitive`; wrappers (`env`, `exec`, `nohup`, `timeout`, `xargs`, `uv run`, `pnpm exec`, …) are looked through; interpreters with `-c`/`-e` floor at `unknown`; `git`/package managers must have the subcommand first (so `git -c …` is not safe); installs are safe only from the lockfile; non-allowlisted env assignments (`PATH=`, `LD_PRELOAD=`) and any parameter expansion make a command `unknown`.
+- **Rules**: deny rules match any simple command / any mentioned path; allow rules must cover every simple command and never match an unparseable line. Tool-wide and command allow rules cannot unlock a sensitive path; only an explicit path rule can. `always_rule` builds the narrow rule for "Always for this workspace" (exact argv or exact escaped path; `None` for compound commands and network).
+- **Modes**: cycling out of bypass lands on `manual`; `Mode::transition` refuses bypass without a `BypassGrant` (typed phrase or CLI flag) and always for `Origin::Channel`; persisted bypass is restored as `manual`; bypass reverts after `BYPASS_IDLE_TIMEOUT_SECONDS` idle.
+- **Network allowlist**: `http`/`https` only; userinfo, backslashes, `%`, whitespace/control characters and IPv6 literals are refused rather than parsed.
+
 ## Known limitation
 M1 enforcement is at the tool-broker level. A permitted process (e.g. `pnpm test` running a malicious postinstall) can still act outside the workspace. M2 adds OS-level sandboxing; see [[ADR-0004 Permission Engine in Rust Core]].
