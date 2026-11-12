@@ -414,8 +414,7 @@ impl GitCli {
 
     fn conflicted_files(repo: &Path) -> Vec<String> {
         run_git(repo, &["diff", "--name-only", "-z", "--diff-filter=U"])
-            .map(|o| nul_list(&o.stdout))
-            .unwrap_or_default()
+            .map_or_else(|_| Vec::new(), |o| nul_list(&o.stdout))
     }
 
     fn make_wt(repo: &Path, task_id: &TaskId) -> Result<Option<TaskWorktree>> {
@@ -884,7 +883,7 @@ mod tests {
         assert!(wt.root.join("a.txt").exists());
         assert_eq!(g(&wt.root, &["branch", "--show-current"]).trim(), wt.branch);
         // excluded without touching .gitignore
-        assert!(g(t.path(), &["status", "--porcelain"]).trim().is_empty());
+        assert_eq!(g(t.path(), &["status", "--porcelain"]).trim(), "");
         assert!(!t.path().join(".gitignore").exists());
         let again = GitCli.ensure_task_worktree(t.path(), &id).unwrap();
         assert_eq!(again, wt);
@@ -984,10 +983,11 @@ mod tests {
         );
         assert!(t.path().join("c.txt").exists());
         assert!(!wt.root.exists());
-        assert!(g(t.path(), &["branch", "--list", "next-agent/*"])
-            .trim()
-            .is_empty());
-        assert!(g(t.path(), &["status", "--porcelain"]).trim().is_empty());
+        assert_eq!(
+            g(t.path(), &["branch", "--list", "next-agent/*"]).trim(),
+            ""
+        );
+        assert_eq!(g(t.path(), &["status", "--porcelain"]).trim(), "");
     }
 
     #[test]
@@ -1051,7 +1051,7 @@ mod tests {
                 }
             );
             assert_eq!(g(t.path(), &["rev-parse", "HEAD"]), head);
-            assert!(g(t.path(), &["status", "--porcelain"]).trim().is_empty());
+            assert_eq!(g(t.path(), &["status", "--porcelain"]).trim(), "");
             assert_eq!(
                 std::fs::read_to_string(t.path().join("a.txt")).unwrap(),
                 "user\ntwo\nthree\n"
@@ -1116,7 +1116,10 @@ mod tests {
             "agent\n"
         );
         // and the user's edit is not swept into the merge commit
-        assert!(g(t.path(), &["show", "--name-only", "--format=", "HEAD"]).trim() == "a.txt");
+        assert_eq!(
+            g(t.path(), &["show", "--name-only", "--format=", "HEAD"]).trim(),
+            "a.txt"
+        );
     }
 
     #[test]
@@ -1158,9 +1161,10 @@ mod tests {
         GitCli.discard(&wt).unwrap();
         GitCli.discard(&wt).unwrap();
         assert!(!wt.root.exists());
-        assert!(g(t.path(), &["branch", "--list", "next-agent/*"])
-            .trim()
-            .is_empty());
+        assert_eq!(
+            g(t.path(), &["branch", "--list", "next-agent/*"]).trim(),
+            ""
+        );
         assert_eq!(GitCli.find(t.path(), &wt.task_id).unwrap(), None);
         assert_eq!(snapshot(t.path()), before);
     }

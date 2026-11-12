@@ -16,10 +16,30 @@ use crate::runner::{BrokerOutcome, RunContext, ToolBroker};
 use crate::store::{AuditEntry, RuleRow, Store, StoreError};
 use crate::tools::{ToolRequest, ToolResult};
 use next_agent_permission_engine::{
-    evaluate, explain, CommandClass, Context, Decision, Effect, Mode, Request, Rule, RuleSet,
-    RuleTarget, Scope, Zone,
+    always_rule, evaluate, explain_with, CommandClass, Context, Decision, Effect, Evaluation,
+    FsFacts, Mode, Request, Rule, RuleSet, RuleTarget, Scope, Zone,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Real filesystem facts for the policy engine, so symlink and junction
+/// escapes are judged against the disk rather than lexically.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RealFs;
+
+impl FsFacts for RealFs {
+    fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
+        std::fs::canonicalize(path).ok()
+    }
+
+    fn read_link(&self, path: &Path) -> Option<PathBuf> {
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        if meta.file_type().is_symlink() {
+            std::fs::read_link(path).ok()
+        } else {
+            None
+        }
+    }
+}
 
 /// What a human (or an auto-approver policy) chose for an `Ask`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,7 +232,17 @@ impl SqliteBroker<'_> {
             }
         };
         let policy_request = to_policy_request(request);
-        let evaluation = explain(&policy_request, self.mode, &self.rules, &self.context);
+        let evaluation = explain_with(
+            &policy_request,
+            self.mode,
+            &self.rules,
+            &self.context,
+            &RealFs,
+        );
+        // File tools act on the path the policy actually judged, so a link
+        // cannot point the tool somewhere other than what was approved.
+        let resolved_request = with_resolved_path(request, evaluation.resolved_path.as_deref());
+        let request = &resolved_request;
 
         let reason = match evaluation.decision.clone() {
             Decision::Allow { reason } => {
@@ -236,27 +266,14 @@ impl SqliteBroker<'_> {
                     .approver
                     .as_mut()
                     .map(|approver| approver.approve(call_id, request, &reason));
-                // Record the user's answer in the task timeline, not only the
-                // audit log, so every decision is replayable from events.
-                let self_recording = self
-                    .approver
-                    .as_ref()
-                    .is_some_and(|approver| approver.records_events());
-                if let (Some(ctx), Some(answer), false) = (ctx, choice, self_recording) {
-                    ctx.events.emit(EventKind::ApprovalResolved {
-                        approval_id: call_id.to_string(),
-                        choice: answer.as_str().to_string(),
-                        by: "user".to_string(),
-                    });
-                }
+                self.record_answer(ctx, call_id, choice);
                 match choice {
                     Some(Approval::Allow) => {
                         self.audit(request, "allow", "approved once by user");
                         reason
                     }
                     Some(Approval::AlwaysForWorkspace) => {
-                        self.persist_allow_rule(request);
-                        self.audit(request, "allow", "approved for workspace by user");
+                        self.approve_for_workspace(request, &policy_request, &evaluation);
                         reason
                     }
                     Some(Approval::Deny) => {
@@ -312,23 +329,70 @@ impl SqliteBroker<'_> {
 }
 
 impl SqliteBroker<'_> {
-    fn persist_allow_rule(&mut self, request: &ToolRequest) {
-        let target = describe(request);
+    /// "Always for this workspace": persist a narrow rule when one exists,
+    /// otherwise treat the answer as a one-time allow. Never a blanket rule.
+    fn approve_for_workspace(
+        &mut self,
+        request: &ToolRequest,
+        policy_request: &Request,
+        evaluation: &Evaluation,
+    ) {
+        let note = if self.persist_allow_rule(policy_request, evaluation) {
+            "approved for workspace by user"
+        } else {
+            "approved once by user (no narrow workspace rule possible)"
+        };
+        self.audit(request, "allow", note);
+    }
+
+    /// Record the user's answer in the task timeline, not only the audit
+    /// log, unless the approver already emits approval events itself.
+    fn record_answer(&self, ctx: Option<&RunContext<'_>>, call_id: &str, choice: Option<Approval>) {
+        let self_recording = self
+            .approver
+            .as_ref()
+            .is_some_and(|approver| approver.records_events());
+        if let (Some(ctx), Some(answer), false) = (ctx, choice, self_recording) {
+            ctx.events.emit(EventKind::ApprovalResolved {
+                approval_id: call_id.to_string(),
+                choice: answer.as_str().to_string(),
+                by: "user".to_string(),
+            });
+        }
+    }
+
+    /// Persist the narrow rule for "Always for this workspace". Returns
+    /// false when the engine refuses to derive one; the caller then treats
+    /// the answer as a one-time allow.
+    fn persist_allow_rule(&mut self, request: &Request, evaluation: &Evaluation) -> bool {
+        let id_seed = format!("{request:?}");
         let id = format!(
-            "allow-{}-{}",
-            request.kind(),
-            &crate::hash::sha256_hex(target.as_bytes())[..12]
+            "allow-{}",
+            &crate::hash::sha256_hex(id_seed.as_bytes())[..16]
         );
+        let Some(rule) = always_rule(id, request, evaluation, &self.context.workspace_id) else {
+            return false;
+        };
+        let (kind, pattern) = match &rule.target {
+            RuleTarget::CommandPrefix { prefix } => {
+                ("command", serde_json::to_string(prefix).unwrap_or_default())
+            }
+            RuleTarget::Path { glob } => ("path", glob.clone()),
+            RuleTarget::Tool { .. } => return false,
+        };
         let row = RuleRow {
-            id,
+            id: rule.id.clone(),
             scope: "workspace".into(),
             workspace_id: Some(self.context.workspace_id.clone()),
             effect: "allow".into(),
-            kind: request.kind().into(),
-            pattern: target,
+            kind: kind.into(),
+            pattern,
         };
-        let _ = self.store.insert_rule(&row);
+        if self.store.insert_rule(&row).is_err() {
+            return false;
+        }
         let _ = self.load_rules();
+        true
     }
 }
 
@@ -340,6 +404,22 @@ fn noteworthy(mode: Mode, evaluation: &next_agent_permission_engine::Evaluation)
         || evaluation
             .class
             .is_some_and(|class| class != CommandClass::SafeDev)
+}
+
+/// Point file tools at the canonical path the policy evaluated.
+fn with_resolved_path(request: &ToolRequest, resolved: Option<&Path>) -> ToolRequest {
+    let Some(resolved) = resolved else {
+        return request.clone();
+    };
+    let mut out = request.clone();
+    match &mut out {
+        ToolRequest::Read { path }
+        | ToolRequest::ListDir { path }
+        | ToolRequest::Write { path, .. }
+        | ToolRequest::ApplyPatch { path, .. } => *path = resolved.to_path_buf(),
+        _ => {}
+    }
+    out
 }
 
 /// One-line target description used in audit rows, rules and approval cards.
@@ -387,9 +467,17 @@ pub fn row_to_rule(row: &RuleRow) -> Option<Rule> {
         _ => return None,
     };
     let target = if row.kind == "command" {
-        RuleTarget::CommandPrefix {
-            prefix: row.pattern.split_whitespace().map(str::to_string).collect(),
+        // Exact argv as a JSON array (written by "Always for this workspace");
+        // hand-written rules may use plain whitespace-separated words.
+        let prefix = if row.pattern.trim_start().starts_with('[') {
+            serde_json::from_str::<Vec<String>>(&row.pattern).ok()?
+        } else {
+            row.pattern.split_whitespace().map(str::to_string).collect()
+        };
+        if prefix.is_empty() {
+            return None;
         }
+        RuleTarget::CommandPrefix { prefix }
     } else if row.kind == "path" {
         RuleTarget::Path {
             glob: row.pattern.clone(),
@@ -541,6 +629,71 @@ mod tests {
         assert_eq!(broker.handle("c2", &write).decision, "allow");
     }
 
+    fn exec(command: &str, cwd: &std::path::Path) -> ToolRequest {
+        ToolRequest::Exec {
+            command: command.into(),
+            cwd: cwd.to_path_buf(),
+        }
+    }
+
+    /// A registered workspace (rules reference it by foreign key).
+    fn registered(tag: &str) -> (Store, crate::Workspace) {
+        let dir = std::env::temp_dir().join(format!("na-always-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let workspace = crate::Workspace::open(&dir).expect("workspace");
+        let store = Store::open_in_memory().expect("store");
+        store.upsert_workspace(&workspace).expect("register");
+        (store, workspace)
+    }
+
+    fn answer_with<'a>(
+        store: &'a Store,
+        workspace: &crate::Workspace,
+        approval: Approval,
+    ) -> SqliteBroker<'a> {
+        let context = context_for(
+            workspace.root().to_path_buf(),
+            workspace.id().to_string(),
+            None,
+        );
+        let mut b = SqliteBroker::new(store, Mode::Manual, context)
+            .with_executor(StubExecutor)
+            .with_approver(Scripted(approval));
+        b.load_rules().expect("load");
+        b
+    }
+
+    #[test]
+    fn always_for_workspace_allows_only_the_exact_command() {
+        let (store, ws) = registered("exact");
+        let root = ws.root();
+        let first = answer_with(&store, &ws, Approval::AlwaysForWorkspace)
+            .handle("c1", &exec("pnpm test", root));
+        assert_eq!(first.decision, "allow");
+
+        let rules = store.rules_for(ws.id()).expect("rules");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].kind, "command");
+
+        // Same command: the stored rule allows it without asking.
+        let again = answer_with(&store, &ws, Approval::Deny).handle("c2", &exec("pnpm test", root));
+        assert_eq!(again.decision, "allow");
+
+        // A different command must still ask (and the user can decline it).
+        let other =
+            answer_with(&store, &ws, Approval::Deny).handle("c3", &exec("cargo build", root));
+        assert_eq!(other.decision, "deny", "always-rule must not be tool-wide");
+    }
+
+    #[test]
+    fn always_for_workspace_on_compound_command_is_one_time() {
+        let (store, ws) = registered("compound");
+        let outcome = answer_with(&store, &ws, Approval::AlwaysForWorkspace)
+            .handle("c1", &exec("pnpm test && pnpm build", ws.root()));
+        assert_eq!(outcome.decision, "allow");
+        assert_eq!(store.rules_for(ws.id()).expect("rules").len(), 0);
+    }
+
     #[test]
     fn stored_rules_are_loaded_into_the_policy_set() {
         let store = Store::open_in_memory().expect("store");
@@ -550,7 +703,7 @@ mod tests {
                 scope: "global".into(),
                 workspace_id: None,
                 effect: "deny".into(),
-                kind: "run_command".into(),
+                kind: "command".into(),
                 pattern: "pnpm test".into(),
             })
             .expect("rule");
