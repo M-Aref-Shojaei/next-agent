@@ -10,7 +10,10 @@ Goal: see how Next Agent fits together as box diagrams and a dependency map. Tha
 
 Researched 2026-11-13. Licences come from project pages and package listings; confirm each one against the repo's LICENSE before adopting it.
 
-## Recommendation
+## Decision (2026-11-13)
+Mermaid is the diagram format. The project-to-project dependency map is generated as Mermaid in [[Project Topology]] (`make topology`; `make check` fails when it is stale). LikeC4, D2 and the external graph tools are not adopted for now; in-app Mermaid rendering is planned for M4.
+
+## Recommendation (original research)
 
 Use two layers that check each other:
 

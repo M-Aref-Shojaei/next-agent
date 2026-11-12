@@ -16,6 +16,7 @@ A local-first AI workstation: coding agents working on a local repo, a Markdown 
 
 ## Architecture
 - [[Architecture Overview]] — components, process model, Input → Process → Output
+- [[Project Topology]] — generated Mermaid map of how the crates, packages and services connect
 - [[Module Boundaries]] — the seams that keep upstream updates local
 - [[Permission Engine]] — modes, sandbox boundaries, command classification, decision order
 - [[Worktree Isolation]] — `next-agent/auto-*` worktrees and diff review
