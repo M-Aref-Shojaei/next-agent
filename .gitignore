@@ -1,0 +1,8 @@
+node_modules/
+target/
+.next-agent/
+.DS_Store
+*.log
+dist/
+.svelte-kit/
+coverage/

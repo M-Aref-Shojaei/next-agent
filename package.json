@@ -1,0 +1,15 @@
+{
+  "name": "next-agent",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "test": "node scripts/test.mjs",
+    "test:rust": "cargo test --workspace --all-targets",
+    "check": "node scripts/check-workspace.mjs && node scripts/check-rust-structure.mjs && node scripts/check-policy-parity.mjs && node scripts/check-boundaries.mjs",
+    "verify": "node scripts/test.mjs && node scripts/check-workspace.mjs && node scripts/check-rust-structure.mjs && node scripts/check-policy-parity.mjs && node scripts/check-boundaries.mjs"
+  }
+}

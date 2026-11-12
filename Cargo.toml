@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/core",
+  "crates/permission-engine",
+  "crates/process-manager",
+  "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://example.invalid/next-agent"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

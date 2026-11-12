@@ -1,0 +1,11 @@
+{
+  "$comment": "External components we build against. A version bump should only touch the owning adapter. See docs/architecture/Module Boundaries.md.",
+  "components": {
+    "9router": { "pin": "unversioned (user-run)", "adapter": "services/router-adapter", "checked": "2026-11-11", "risk": "high" },
+    "tauri": { "pin": "2.x", "adapter": "apps/desktop/src-tauri", "checked": "2026-11-11", "risk": "medium" },
+    "sveltekit": { "pin": "2.x", "adapter": "apps/desktop", "checked": "2026-11-11", "risk": "low" },
+    "rusqlite": { "pin": "0.32 (bundled)", "adapter": "crates/core/src/store.rs", "checked": "2026-11-11", "risk": "medium" },
+    "opencode": { "pin": "M2 (not integrated)", "adapter": "services/agent-gateway", "checked": "2026-11-11", "risk": "high" },
+    "hermes-agent": { "pin": "M2 opt (not integrated)", "adapter": "services/hermes-adapter", "checked": "2026-11-11", "risk": "high" }
+  }
+}
