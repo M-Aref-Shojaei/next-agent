@@ -1,0 +1,178 @@
+# CI matrix for Next Agent (M1 Step 0).
+#
+# Runs the Rust and TypeScript checks on macOS, Windows and Linux.
+# Node scripts are invoked directly (not via `make`) so the job works on
+# Windows, where GNU make is not installed by default.
+#
+# Steps that depend on artifacts which do not exist yet are guarded:
+#   - pnpm install / `pnpm -r check` run only when pnpm-lock.yaml exists.
+#   - the Tauri debug build runs only when apps/desktop/src-tauri/tauri.conf.json
+#     exists and a lockfile is present.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+defaults:
+  run:
+    # Git Bash on Windows, so one syntax works on every runner.
+    shell: bash
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-22.04]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Linux Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libssl-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev
+
+      - name: Read Rust channel from rust-toolchain.toml
+        id: toolchain
+        run: |
+          channel="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Get pnpm store path
+        if: hashFiles('pnpm-lock.yaml') != ''
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        if: hashFiles('pnpm-lock.yaml') != ''
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install JS dependencies
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm install --frozen-lockfile
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --all-targets
+
+      - name: TypeScript tests
+        run: node scripts/test.mjs
+
+      - name: Workspace checks (make check equivalent)
+        run: |
+          node scripts/check-workspace.mjs
+          node scripts/check-rust-structure.mjs
+          node scripts/check-policy-parity.mjs
+          node scripts/check-boundaries.mjs
+
+      - name: pnpm -r check
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm -r check
+
+  # Non-blocking for now. The desktop app does not yet have a Tauri config,
+  # so this job skips its build step. Once the desktop session lands Tauri,
+  # remove `continue-on-error` so the job becomes required.
+  tauri-build:
+    name: tauri build --debug (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-22.04]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Linux Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libssl-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev
+
+      - name: Read Rust channel from rust-toolchain.toml
+        id: toolchain
+        run: |
+          channel="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Install JS dependencies
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm install --frozen-lockfile
+
+      - name: tauri build --debug
+        if: hashFiles('pnpm-lock.yaml') != '' && hashFiles('apps/desktop/src-tauri/tauri.conf.json') != ''
+        run: pnpm --dir apps/desktop exec tauri build --debug
