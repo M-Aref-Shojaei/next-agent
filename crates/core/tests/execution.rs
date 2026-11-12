@@ -266,7 +266,10 @@ fn always_for_workspace_writes_a_scoped_rule() {
     let handle = fx.launch(
         "always",
         Mode::Manual,
-        vec![call("w1", write("a.txt")), call("w2", write("b.txt"))],
+        // Same target twice: the rule must cover an identical request. (Exact
+        // path/argv scoping lands with the permission-engine branch's
+        // `always_rule`; a different file must still ask then.)
+        vec![call("w1", write("a.txt")), call("w2", write("a.txt"))],
     );
     let mut asked = 0;
     let events = drive(&handle, |_| {
@@ -274,7 +277,10 @@ fn always_for_workspace_writes_a_scoped_rule() {
         Some(Approval::AlwaysForWorkspace)
     });
     assert_eq!(handle.join(), Ok(TaskStatus::Completed));
-    assert_eq!(asked, 1, "second write is covered by the new rule");
+    assert_eq!(
+        asked, 1,
+        "repeat of the same write is covered by the new rule"
+    );
     let rules = Store::open(&fx.db)
         .expect("store")
         .rules_for(fx.workspace.id())
@@ -282,7 +288,6 @@ fn always_for_workspace_writes_a_scoped_rule() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].scope, "workspace");
     assert_eq!(rules[0].effect, "allow");
-    assert!(fx.root().join("b.txt").exists());
     assert_persisted(&fx.db, &events);
 }
 
