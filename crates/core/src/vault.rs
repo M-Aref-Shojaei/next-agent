@@ -245,6 +245,7 @@ fn describe(request: Option<&ToolRequest>, tool: &str, root: Option<&Path>) -> S
         Some(ToolRequest::Exec { command, .. }) => command.clone(),
         Some(
             ToolRequest::Write { path, .. }
+            | ToolRequest::ApplyPatch { path, .. }
             | ToolRequest::Read { path }
             | ToolRequest::ListDir { path },
         ) => {
@@ -285,7 +286,7 @@ pub fn analyze(doc: &TaskDoc) -> Result<TaskFacts, VaultError> {
 
     for event in &doc.events {
         match &event.kind {
-            EventKind::ToolRequested { call_id, tool } => {
+            EventKind::ToolRequested { call_id, tool, .. } => {
                 tool_calls += 1;
                 calls.push(Call {
                     id: call_id.clone(),
@@ -310,6 +311,7 @@ pub fn analyze(doc: &TaskDoc) -> Result<TaskFacts, VaultError> {
             EventKind::ApprovalResolved {
                 approval_id,
                 choice,
+                ..
             } => {
                 // Approval ids are resolved against the request that named them.
                 let call_id = doc.events.iter().find_map(|e| match &e.kind {
@@ -324,7 +326,7 @@ pub fn analyze(doc: &TaskDoc) -> Result<TaskFacts, VaultError> {
                     c.approval = Some(choice.clone());
                 }
             }
-            EventKind::ToolFinished { call_id, ok } => {
+            EventKind::ToolFinished { call_id, ok, .. } => {
                 if let Some(c) = calls.iter_mut().find(|c| &c.id == call_id) {
                     c.ok = Some(*ok);
                 }
@@ -897,6 +899,7 @@ mod tests {
         push(EventKind::TaskStarted {
             mode: "auto",
             executor: "mock".into(),
+            model: String::new(),
         });
         for (call, tool) in [
             ("c1", "write_file"),
@@ -907,6 +910,7 @@ mod tests {
             push(EventKind::ToolRequested {
                 call_id: call.into(),
                 tool: tool.into(),
+                args: serde_json::Value::Null,
             });
             let decision = if call == "c4" { "deny" } else { "allow" };
             push(EventKind::PermissionDecided {
@@ -917,6 +921,8 @@ mod tests {
             push(EventKind::ToolFinished {
                 call_id: call.into(),
                 ok: call != "c3" && call != "c4",
+                exit_code: None,
+                summary: String::new(),
             });
         }
         push(EventKind::TaskCompleted {

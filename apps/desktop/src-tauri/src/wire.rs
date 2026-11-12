@@ -32,30 +32,9 @@ pub enum StreamMessage {
 /// Event payload fields for each kind (everything except the envelope).
 #[must_use]
 pub fn kind_data(kind: &EventKind) -> Value {
-    match kind {
-        EventKind::TaskStarted { mode, executor } => json!({"mode": mode, "executor": executor}),
-        EventKind::MessageDelta { text } | EventKind::Message { text } => json!({"text": text}),
-        EventKind::PlanProposed { markdown } => json!({"markdown": markdown}),
-        EventKind::ToolRequested { call_id, tool } => json!({"call_id": call_id, "tool": tool}),
-        EventKind::PermissionDecided {
-            call_id,
-            decision,
-            reason,
-        } => json!({"call_id": call_id, "decision": decision, "reason": reason}),
-        EventKind::ApprovalRequested {
-            approval_id,
-            call_id,
-            summary,
-        } => json!({"approval_id": approval_id, "call_id": call_id, "summary": summary}),
-        EventKind::ApprovalResolved {
-            approval_id,
-            choice,
-        } => json!({"approval_id": approval_id, "choice": choice}),
-        EventKind::ToolFinished { call_id, ok } => json!({"call_id": call_id, "ok": ok}),
-        EventKind::TaskCompleted { summary } => json!({"summary": summary}),
-        EventKind::TaskFailed { error } => json!({"error": error}),
-        EventKind::TaskCancelled => json!({}),
-    }
+    // Single source of truth: the core's serde payload, so new event fields
+    // reach the UI without touching this adapter.
+    kind.data()
 }
 
 /// Full envelope for one event.
@@ -66,7 +45,7 @@ pub fn envelope(event: &AgentEvent) -> Value {
         "id": format!("{}:{}", event.task_id, event.seq),
         "task_id": event.task_id.as_str(),
         "seq": event.seq,
-        "ts": now_rfc3339(),
+        "ts": event.ts,
         "kind": event.kind.kind(),
         "data": kind_data(&event.kind),
     })
@@ -122,9 +101,12 @@ mod tests {
         let event = AgentEvent {
             task_id: TaskId::from_seed("t"),
             seq: 3,
+            ts: "2026-11-12T00:00:00Z".into(),
             kind: EventKind::ToolFinished {
                 call_id: "c1".into(),
                 ok: true,
+                exit_code: Some(0),
+                summary: String::new(),
             },
         };
         let value = envelope(&event);
@@ -133,6 +115,7 @@ mod tests {
         assert_eq!(value["kind"], "tool_finished");
         assert_eq!(value["data"]["call_id"], "c1");
         assert_eq!(value["data"]["ok"], true);
+        assert_eq!(value["ts"], "2026-11-12T00:00:00Z");
     }
 
     #[test]

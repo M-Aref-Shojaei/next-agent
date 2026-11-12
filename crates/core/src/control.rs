@@ -125,6 +125,10 @@ impl ChannelApprover {
 }
 
 impl Approver for ChannelApprover {
+    fn records_events(&self) -> bool {
+        true
+    }
+
     fn approve(&mut self, call_id: &str, request: &ToolRequest, reason: &str) -> Approval {
         let approval_id = format!("apr_{call_id}");
         let receiver = self.control.register(&approval_id);

@@ -62,6 +62,13 @@ impl Approval {
 /// ([`ChannelApprover`](crate::control::ChannelApprover)).
 pub trait Approver {
     fn approve(&mut self, call_id: &str, request: &ToolRequest, reason: &str) -> Approval;
+
+    /// Whether this approver emits its own `approval_requested` /
+    /// `approval_resolved` events. When false, the broker records the
+    /// resolution itself so no user decision is missing from the timeline.
+    fn records_events(&self) -> bool {
+        false
+    }
 }
 
 /// Performs the side effect once policy has allowed it.
@@ -229,6 +236,19 @@ impl SqliteBroker<'_> {
                     .approver
                     .as_mut()
                     .map(|approver| approver.approve(call_id, request, &reason));
+                // Record the user's answer in the task timeline, not only the
+                // audit log, so every decision is replayable from events.
+                let self_recording = self
+                    .approver
+                    .as_ref()
+                    .is_some_and(|approver| approver.records_events());
+                if let (Some(ctx), Some(answer), false) = (ctx, choice, self_recording) {
+                    ctx.events.emit(EventKind::ApprovalResolved {
+                        approval_id: call_id.to_string(),
+                        choice: answer.as_str().to_string(),
+                        by: "user".to_string(),
+                    });
+                }
                 match choice {
                     Some(Approval::Allow) => {
                         self.audit(request, "allow", "approved once by user");

@@ -524,6 +524,9 @@ fn summarize(request: &ToolRequest) -> String {
         ToolRequest::Write { path, contents } => {
             format!("{} ({} bytes)", path.display(), contents.len())
         }
+        ToolRequest::ApplyPatch { path, patch } => {
+            format!("{} (patch, {} bytes)", path.display(), patch.len())
+        }
         ToolRequest::Search { pattern, path } => format!("{pattern} in {}", path.display()),
         ToolRequest::Exec { command, cwd } => format!("{command}  (in {})", cwd.display()),
         ToolRequest::Network { url } => url.clone(),
@@ -671,8 +674,10 @@ mod tests {
             .iter()
             .any(|m| matches!(m, StreamMessage::Approval { tool, .. } if tool == "write_file")));
         let denied = messages.iter().any(|m| match m {
+            // The policy decision is `ask`; the user's deny is recorded as
+            // the approval resolution (core event contract).
             StreamMessage::Event { event } => {
-                event["kind"] == "permission_decided" && event["data"]["decision"] == "deny"
+                event["kind"] == "approval_resolved" && event["data"]["choice"] == "deny"
             }
             _ => false,
         });
