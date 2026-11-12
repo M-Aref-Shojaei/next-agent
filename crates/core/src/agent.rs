@@ -1,10 +1,16 @@
 //! Agent execution abstraction.
 //!
 //! An executor never touches the filesystem or shell. It proposes
-//! [`ToolRequest`]s; the broker (task 3) applies the permission engine and
-//! executes them, feeding [`ToolResult`]s back in.
+//! [`ToolRequest`]s; the broker applies the permission engine and executes
+//! them, feeding [`ToolResult`](crate::tools::ToolResult)s back in.
+//!
+//! The trait is a synchronous step machine driven by
+//! [`run_task_with`](crate::runner::run_task_with) on a dedicated (blocking)
+//! thread. The async-facing surface from the spec — `start` returning an event
+//! stream, `cancel`, `respond(approval_id, decision)` — is
+//! [`spawn_task`](crate::control::spawn_task) + [`TaskHandle`](crate::control::TaskHandle).
 
-use crate::events::EventKind;
+use crate::events::{Emitter, EventKind};
 use crate::task::TaskId;
 use crate::tools::ToolRequest;
 
@@ -30,6 +36,8 @@ pub enum AgentStep {
     },
     /// The agent is finished.
     Done { summary: String },
+    /// The agent cannot continue (e.g. the LLM endpoint failed).
+    Fail { error: String },
 }
 
 /// Executor contract. Implementations: `MockExecutor` (tests/UI dev) and the
@@ -37,6 +45,13 @@ pub enum AgentStep {
 pub trait AgentExecutor {
     /// Identifier recorded in `task_started` events.
     fn id(&self) -> &'static str;
+
+    /// Called once before [`AgentExecutor::start`] with the task's event
+    /// emitter, for executors that stream progress (e.g. `message_delta`)
+    /// while a step is still being computed. Default: ignore.
+    fn attach(&mut self, events: &Emitter) {
+        let _ = events;
+    }
 
     /// First step of a task.
     fn start(&mut self, spec: &TaskSpec) -> AgentStep;

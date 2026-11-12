@@ -17,7 +17,9 @@ when you add a dependency that someone else ships, add a row here.
 | Tool enforcement | `ToolBroker` | `crates/core/src/runner.rs` | real broker (task 3), scripted brokers in tests |
 | Policy | `evaluate(req, mode, rules, ctx) -> Decision` | `crates/permission-engine` | pure function; same inputs → same decision |
 | Path sandbox | `PathResolver` | `crates/permission-engine/src/path.rs` | lexical (tests), canonicalizing (runtime) |
-| LLM transport | `CompletionClient` | `crates/core` (task 6) | router adapter, mock server |
+| LLM transport | `CompletionClient` | `crates/core/src/llm.rs` | `RouterClient` (`crates/core/src/router/`), scripted clients in tests |
+| Tool execution | `ToolExecutor` | `crates/core/src/broker.rs` | `LocalTools` (`local_tools.rs`), stubs in tests |
+| Health probing | `HealthProbe` | `crates/process-manager` | `RouterClient`, scripted probes in tests |
 | Git isolation | `WorktreeProvider` | `crates/core` (task 4) | git CLI, no-op for non-git workspaces |
 | Task records | `TaskRecorder` | `crates/core` (task 5) | vault Markdown, JSON export |
 | Wire format | `EventEnvelope` (`v: 1`) | `packages/contracts` | Rust producer, TS consumer, sidecars |
@@ -25,7 +27,7 @@ when you add a dependency that someone else ships, add a row here.
 
 ## Rules
 - **Depend inward on contracts.** Callers import a trait, not an implementation type.
-- **One transport per adapter.** `rusqlite` only in `store.rs`; HTTP only in the router client;
+- **One transport per adapter.** `rusqlite` only in `store.rs`; HTTP (`reqwest`, `eventsource-stream`) and the OS keychain (`keyring`) only in `crates/core/src/router/` — the `http_fetch` tool reaches HTTP through the `HttpFetch` seam implemented there;
   `std::fs` never in `crates/permission-engine`.
 - **Conformance first.** Every new implementation of a seam runs the same suite as the
   existing ones before it is wired in.

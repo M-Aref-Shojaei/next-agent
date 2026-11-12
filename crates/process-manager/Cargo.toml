@@ -7,5 +7,11 @@ license.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[dependencies]
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "time", "sync", "macros", "test-util"] }
+
 [lints]
 workspace = true
