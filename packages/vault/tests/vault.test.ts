@@ -48,3 +48,64 @@ test("task record paths are nested by year and month", () => {
     "Tasks/2026/01/2026-01-05-x.md",
   );
 });
+
+import { readFileSync } from "node:fs";
+import {
+  TASK_END_MARKER,
+  journalPath,
+  parseJournalLinks,
+  parseTaskRecord,
+  taskRecordPathFromIso,
+  workspaceFolder,
+} from "../src/index.ts";
+
+const fixture = (name: string) =>
+  readFileSync(new URL(`../../../fixtures/vault/${name}`, import.meta.url), "utf8");
+
+test("record paths match the shared Rust/TS fixture", () => {
+  const cases = fixture("path-cases.tsv")
+    .split("\n")
+    .filter((l) => l && !l.startsWith("#"));
+  assert.ok(cases.length >= 6);
+  for (const line of cases) {
+    const [iso, title, expected] = line.split("\t");
+    assert.equal(taskRecordPathFromIso(iso, title), expected, line);
+  }
+});
+
+test("ISO dates are not shifted across timezones", () => {
+  assert.equal(journalPath("2026-12-31T23:59:59-08:00"), "Journal/2026-12-31.md");
+  assert.equal(taskRecordPathFromIso("yesterday", "x"), null);
+  assert.equal(journalPath("nope"), null);
+});
+
+test("workspace folders cannot escape", () => {
+  assert.equal(workspaceFolder("../../etc"), "etc");
+  assert.equal(workspaceFolder("a/b"), "a-b");
+  assert.equal(workspaceFolder("..."), "workspace");
+  assert.equal(workspaceFolder("my-app"), "my-app");
+});
+
+test("parses the golden task record written by Rust", () => {
+  const record = parseTaskRecord(fixture("golden-task-record.md"));
+  assert.equal(record.frontmatter.type, "task");
+  assert.equal(record.frontmatter.status, "completed");
+  assert.equal(record.frontmatter.merged, "false");
+  assert.deepEqual(record.frontmatter.tags, ["next-agent/task"]);
+  assert.equal(record.title, "Add login form validation");
+  assert.equal(record.frontmatter.title, record.title);
+  assert.ok(record.userNotes?.startsWith("User notes below this line are preserved."));
+  assert.ok(fixture("golden-task-record.md").includes(TASK_END_MARKER));
+  // The record path derived from its own frontmatter matches the writer's.
+  assert.equal(
+    taskRecordPathFromIso(String(record.frontmatter.finished), String(record.frontmatter.title)),
+    "Tasks/2026/11/2026-11-10-add-login-form-validation.md",
+  );
+});
+
+test("parses journal links", () => {
+  const links = parseJournalLinks(
+    "# 2026-11-10\n\n- [[2026-11-10-add-login-form]] — done (auto)\n- plain bullet\n",
+  );
+  assert.deepEqual(links, [{ stem: "2026-11-10-add-login-form", status: "done", mode: "auto" }]);
+});
