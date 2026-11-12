@@ -43,7 +43,7 @@
 </div>
 
 <style>
-  .page { display: grid; grid-template-columns: 1fr 320px; flex: 1; min-height: 0; }
+  .page { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 40%); flex: 1; min-height: 0; }
   .chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); align-items: flex-end; }
   textarea { resize: none; }

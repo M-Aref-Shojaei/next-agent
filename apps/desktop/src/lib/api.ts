@@ -1,6 +1,8 @@
 // Typed IPC client. Inside Tauri it calls the Rust commands; in a plain browser
 // (vite dev, screenshots) it falls back to an in-memory mock so the UI is usable.
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import type { DiffAction } from "./diff.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 import { mockApi } from "./mock-api.ts";
 
@@ -22,6 +24,18 @@ export interface AuditStatus {
   broken_at: number | null;
 }
 
+export interface RouterHealthReport {
+  status: "ok" | "degraded" | "down";
+  detail: string;
+  latencyMs: number | null;
+  checks: number;
+}
+export interface ReviewOutcome {
+  action: DiffAction;
+  commit: string | null;
+  files: string[];
+}
+
 export interface Api {
   workspaceOpen(path: string): Promise<Workspace>;
   workspaceList(): Promise<Workspace[]>;
@@ -39,7 +53,11 @@ export interface Api {
     onMessage: (message: StreamMessage) => void,
   ): Promise<string>;
   taskCancel(taskId: string): Promise<void>;
-  approvalRespond(approvalId: string, choice: ApprovalChoice): Promise<void>;
+  approvalRespond(taskId: string, approvalId: string, choice: ApprovalChoice): Promise<void>;
+  reviewAction(taskId: string, action: DiffAction): Promise<ReviewOutcome>;
+  routerHealth(): Promise<RouterHealthReport | null>;
+  /** Subscribe to router status changes; returns an unsubscribe function. */
+  onRouterHealth(callback: (report: RouterHealthReport) => void): Promise<() => void>;
 }
 
 const tauriApi: Api = {
@@ -58,7 +76,14 @@ const tauriApi: Api = {
     return invoke("task_start", { workspaceId, prompt, mode, onEvent });
   },
   taskCancel: (taskId) => invoke("task_cancel", { taskId }),
-  approvalRespond: (approvalId, choice) => invoke("approval_respond", { approvalId, choice }),
+  approvalRespond: (taskId, approvalId, choice) =>
+    invoke("approval_respond", { taskId, approvalId, choice }),
+  reviewAction: (taskId, action) => invoke("review_action", { taskId, action }),
+  routerHealth: () => invoke("router_health"),
+  onRouterHealth: (callback) =>
+    listen<RouterHealthReport | null>("router-health", (event) => {
+      if (event.payload) callback(event.payload);
+    }),
 };
 
 export function inTauri(): boolean {

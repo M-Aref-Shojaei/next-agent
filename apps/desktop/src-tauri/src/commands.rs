@@ -1,7 +1,10 @@
 //! Tauri command wrappers. Each is a one-liner over [`AppService`].
 #![allow(clippy::needless_pass_by_value, clippy::missing_errors_doc)] // Tauri commands take owned args.
 
-use crate::service::{AppService, AuditStatus, RuleDto, Sink, TaskRequest, WorkspaceDto};
+use crate::review::ReviewOutcome;
+use crate::service::{
+    AppService, AuditStatus, HealthDto, RuleDto, Sink, TaskRequest, WorkspaceDto,
+};
 use crate::wire::StreamMessage;
 use std::sync::Arc;
 use tauri::ipc::Channel;
@@ -79,6 +82,26 @@ pub fn task_cancel(service: Svc, task_id: String) {
 }
 
 #[tauri::command]
-pub fn approval_respond(service: Svc, approval_id: String, choice: String) -> Result<(), String> {
-    service.approval_respond(&approval_id, &choice)
+pub fn approval_respond(
+    service: Svc,
+    task_id: String,
+    approval_id: String,
+    choice: String,
+) -> Result<(), String> {
+    service.approval_respond(&task_id, &approval_id, &choice)
+}
+
+#[tauri::command]
+pub fn review_action(
+    service: Svc,
+    task_id: String,
+    action: String,
+) -> Result<ReviewOutcome, String> {
+    service.review_action(&task_id, &action)
+}
+
+#[tauri::command]
+#[must_use]
+pub fn router_health(service: Svc) -> Option<HealthDto> {
+    service.health()
 }

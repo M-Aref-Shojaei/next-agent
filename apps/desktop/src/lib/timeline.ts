@@ -1,8 +1,9 @@
 // Pure timeline reducer: Tauri Channel messages in, render-ready state out.
 // Kept free of Svelte so it runs under `node --test`.
 import type { EventEnvelope } from "@next-agent/contracts";
+import type { DiffFile } from "./diff.ts";
 
-export type ToolStatus = "running" | "ok" | "failed" | "denied";
+export type ToolStatus = "running" | "waiting" | "ok" | "failed" | "denied";
 
 export interface MessageItem {
   kind: "message";
@@ -52,6 +53,19 @@ export interface TaskState {
   lastSeq: number;
   /** Tool output that arrived before its `tool_requested` event. */
   stashedOutput: Record<string, string>;
+  /** Auto mode: the isolated worktree branch. */
+  branch?: string;
+  /** Changes waiting for Merge / Discard / Keep. */
+  review?: ReviewState;
+  /** Task record written to the vault. */
+  recordPath?: string;
+}
+
+export interface ReviewState {
+  branch: string;
+  files: DiffFile[];
+  /** Set once the user merged, discarded or kept the changes. */
+  outcome?: string;
 }
 
 export type StreamMessage =
@@ -65,7 +79,11 @@ export type StreamMessage =
       summary: string;
       reason: string;
     }
-  | { type: "tool_output"; task_id: string; call_id: string; ok: boolean; output: string };
+  | { type: "tool_output"; task_id: string; call_id: string; ok: boolean; output: string }
+  | { type: "worktree"; task_id: string; branch: string; root: string }
+  | { type: "notice"; task_id: string; tone: "info" | "ok" | "error"; text: string }
+  | { type: "review"; task_id: string; branch: string; files: DiffFile[] }
+  | { type: "documented"; task_id: string; path: string };
 
 export function newTask(id: string, title: string): TaskState {
   return {
@@ -100,6 +118,21 @@ function field(data: unknown, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+function notice(task: TaskState, tone: NoticeItem["tone"], text: string): TaskState {
+  const id = `notice:${task.items.length}:${text.length}`;
+  return { ...task, items: [...task.items, { kind: "notice", id, tone, text }] };
+}
+
+function findTool(items: TimelineItem[], callId: string): ToolItem | undefined {
+  const found = items.find((i) => i.kind === "tool" && i.callId === callId);
+  return found?.kind === "tool" ? found : undefined;
+}
+
+/** Record the outcome of Merge / Discard / Keep. */
+export function settleReview(task: TaskState, outcome: string): TaskState {
+  return task.review ? { ...task, review: { ...task.review, outcome } } : task;
+}
+
 function updateTool(items: TimelineItem[], callId: string, patch: Partial<ToolItem>): TimelineItem[] {
   return items.map((item) =>
     item.kind === "tool" && item.callId === callId ? { ...item, ...patch } : item,
@@ -123,6 +156,14 @@ export function applyMessage(task: TaskState, message: StreamMessage): TaskState
         },
       ],
     };
+  }
+  if (message.type === "worktree") return { ...task, branch: message.branch };
+  if (message.type === "notice") return notice(task, message.tone, message.text);
+  if (message.type === "review") {
+    return { ...task, review: { branch: message.branch, files: message.files } };
+  }
+  if (message.type === "documented") {
+    return notice({ ...task, recordPath: message.path }, "ok", `Task record written: ${message.path}`);
   }
   if (message.type === "tool_output") {
     const exists = task.items.some((i) => i.kind === "tool" && i.callId === message.call_id);
@@ -196,14 +237,57 @@ export function applyMessage(task: TaskState, message: StreamMessage): TaskState
     }
     case "permission_decided": {
       const decision = field(data, "decision");
-      const blocked = decision === "deny" || decision === "ask";
+      const status =
+        decision === "deny" ? ("denied" as const) : decision === "ask" ? ("waiting" as const) : undefined;
       return {
         ...next,
         items: updateTool(next.items, field(data, "call_id"), {
           decision,
           reason: field(data, "reason"),
-          ...(blocked ? { status: "denied" as const } : {}),
+          ...(status ? { status } : {}),
         }),
+      };
+    }
+    case "approval_requested": {
+      const approvalId = field(data, "approval_id");
+      if (next.approvals.some((a) => a.approvalId === approvalId)) return next;
+      const callId = field(data, "call_id");
+      const tool = findTool(next.items, callId);
+      return {
+        ...next,
+        approvals: [
+          ...next.approvals,
+          {
+            approvalId,
+            callId,
+            tool: tool?.tool ?? "tool",
+            summary: field(data, "summary"),
+            reason: tool?.reason ?? "",
+          },
+        ],
+      };
+    }
+    case "approval_resolved": {
+      const approvalId = field(data, "approval_id");
+      const raw = field(data, "choice");
+      const choice: ApprovalChoice = raw === "allow" || raw === "deny" ? raw : "always";
+      const approval = next.approvals.find((a) => a.approvalId === approvalId);
+      const resolved = resolveApproval(next, approvalId, choice);
+      if (!approval) return resolved;
+      return {
+        ...resolved,
+        items: updateTool(resolved.items, approval.callId, {
+          status: choice === "deny" ? "denied" : "running",
+        }),
+      };
+    }
+    case "tool_output": {
+      const callId = field(data, "call_id");
+      const tool = findTool(next.items, callId);
+      if (!tool) return next;
+      return {
+        ...next,
+        items: updateTool(next.items, callId, { output: (tool.output ?? "") + field(data, "chunk") }),
       };
     }
     case "tool_finished": {
@@ -211,7 +295,12 @@ export function applyMessage(task: TaskState, message: StreamMessage): TaskState
       const callId = field(data, "call_id");
       const current = next.items.find((i) => i.kind === "tool" && i.callId === callId);
       if (current?.kind === "tool" && current.status === "denied") return next;
-      return { ...next, items: updateTool(next.items, callId, { status: ok ? "ok" : "failed" }) };
+      const summary = field(data, "summary");
+      const output = current?.kind === "tool" && !current.output && summary ? { output: summary } : {};
+      return {
+        ...next,
+        items: updateTool(next.items, callId, { status: ok ? "ok" : "failed", ...output }),
+      };
     }
     case "task_completed":
       return {

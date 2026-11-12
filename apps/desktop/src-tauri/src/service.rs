@@ -1,27 +1,50 @@
 //! UI-independent application service. Tauri commands are thin wrappers so
 //! every behaviour here is testable without a window.
 
-use crate::wire::{envelope, StreamMessage};
-use next_agent_core::{
-    context_for, run_task, AgentStep, Approval, Approver, EventKind, MockExecutor, SqliteBroker,
-    Store, TaskId, TaskSpec, ToolExecutor, ToolRequest, ToolResult, Workspace,
-};
+use crate::tasks::FinishedTask;
+use crate::wire::StreamMessage;
+use next_agent_core::router::settings::normalize_base_url;
+use next_agent_core::{Store, StoredWorkspace, TaskControl, Workspace};
 use next_agent_permission_engine::Mode;
+use next_agent_process_manager::HealthReport;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::JoinHandle;
+use tokio::sync::watch;
 
 pub type Sink = Arc<dyn Fn(StreamMessage) + Send + Sync>;
 
 const VAULT_KEY: &str = "vault.path";
-/// Settings the UI may read and write. Everything else is rejected.
-const SETTING_KEYS: &[&str] = &["router.url", "router.model"];
+/// UI setting names mapped to the core's settings keys. Everything else is rejected.
+const SETTING_KEYS: &[(&str, &str)] = &[
+    ("router.url", "router.base_url"),
+    ("router.model", "router.default_model"),
+];
 const DEFAULT_ROUTER_URL: &str = "http://127.0.0.1:20128/v1";
-const APPROVAL_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Router status for the status-bar dot.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthDto {
+    pub status: String,
+    pub detail: String,
+    pub latency_ms: Option<u64>,
+    pub checks: u64,
+}
+
+impl From<&HealthReport> for HealthDto {
+    fn from(report: &HealthReport) -> Self {
+        Self {
+            status: report.status.as_str().to_string(),
+            detail: report.detail.clone(),
+            latency_ms: report.latency_ms,
+            checks: report.checks,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct WorkspaceDto {
@@ -54,16 +77,20 @@ pub struct TaskRequest {
     pub mode: String,
 }
 
-type Pending = Arc<Mutex<HashMap<String, Sender<Approval>>>>;
+fn lock<'a, T>(mutex: &'a Mutex<T>, what: &str) -> Result<MutexGuard<'a, T>, String> {
+    mutex.lock().map_err(|_| format!("{what} lock poisoned"))
+}
 
 pub struct AppService {
     db_path: PathBuf,
     store: Mutex<Store>,
-    pending: Pending,
-    cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
     counter: AtomicU64,
-    /// Pause between replayed events so the UI visibly streams.
-    pub replay_delay: Duration,
+    running: Mutex<HashMap<String, Arc<TaskControl>>>,
+    joins: Mutex<HashMap<String, JoinHandle<()>>>,
+    finished: Mutex<HashMap<String, FinishedTask>>,
+    health: Mutex<Option<HealthDto>>,
+    /// Bumped when router settings change so the health poller rebuilds its client.
+    router_generation: watch::Sender<u64>,
 }
 
 impl AppService {
@@ -77,17 +104,62 @@ impl AppService {
         Ok(Self {
             db_path,
             store: Mutex::new(store),
-            pending: Arc::default(),
-            cancels: Mutex::default(),
             counter: AtomicU64::new(0),
-            replay_delay: Duration::from_millis(120),
+            running: Mutex::default(),
+            joins: Mutex::default(),
+            finished: Mutex::default(),
+            health: Mutex::default(),
+            router_generation: watch::channel(0).0,
         })
     }
 
-    fn store(&self) -> Result<std::sync::MutexGuard<'_, Store>, String> {
-        self.store
-            .lock()
-            .map_err(|_| "store lock poisoned".to_string())
+    pub(crate) fn store(&self) -> Result<MutexGuard<'_, Store>, String> {
+        lock(&self.store, "store")
+    }
+    pub(crate) fn db_path(&self) -> &Path {
+        &self.db_path
+    }
+    pub(crate) fn counter(&self) -> &AtomicU64 {
+        &self.counter
+    }
+    pub(crate) fn running(
+        &self,
+    ) -> Result<MutexGuard<'_, HashMap<String, Arc<TaskControl>>>, String> {
+        lock(&self.running, "tasks")
+    }
+    pub(crate) fn joins(&self) -> Result<MutexGuard<'_, HashMap<String, JoinHandle<()>>>, String> {
+        lock(&self.joins, "joins")
+    }
+    pub(crate) fn finished(&self) -> Result<MutexGuard<'_, HashMap<String, FinishedTask>>, String> {
+        lock(&self.finished, "finished tasks")
+    }
+
+    /// Latest router health, if probed yet.
+    #[must_use]
+    pub fn health(&self) -> Option<HealthDto> {
+        self.health.lock().ok().and_then(|h| h.clone())
+    }
+
+    /// Record a router health report (called by the poller).
+    pub fn set_health(&self, report: &HealthReport) {
+        if let Ok(mut health) = self.health.lock() {
+            *health = Some(HealthDto::from(report));
+        }
+    }
+
+    /// Changes whenever router settings change.
+    #[must_use]
+    pub fn router_generation(&self) -> watch::Receiver<u64> {
+        self.router_generation.subscribe()
+    }
+
+    pub(crate) fn workspace(&self, id: &str) -> Result<StoredWorkspace, String> {
+        self.store()?
+            .list_workspaces()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|w| w.id == id)
+            .ok_or_else(|| format!("unknown workspace {id}"))
     }
 
     /// Register (or re-open) a folder as a workspace.
@@ -158,9 +230,14 @@ impl AppService {
     /// # Errors
     /// Returns a message for unknown keys or database errors.
     pub fn setting_get(&self, key: &str) -> Result<Option<String>, String> {
-        check_key(key)?;
-        let raw = self.store()?.get_setting(key).map_err(|e| e.to_string())?;
-        let value = raw.and_then(|r| serde_json::from_str::<String>(&r).ok());
+        let stored = core_key(key)?;
+        let raw = self
+            .store()?
+            .get_setting(stored)
+            .map_err(|e| e.to_string())?;
+        let value = raw
+            .and_then(|r| serde_json::from_str::<String>(&r).ok())
+            .filter(|v| !v.is_empty());
         Ok(value.or_else(|| (key == "router.url").then(|| DEFAULT_ROUTER_URL.to_string())))
     }
 
@@ -169,15 +246,19 @@ impl AppService {
     /// # Errors
     /// Returns a message for unknown keys, bad router URLs or database errors.
     pub fn setting_set(&self, key: &str, value: &str) -> Result<(), String> {
-        check_key(key)?;
-        // Avoid a double-slash literal: scripts/lib/rust-structure.mjs mistakes it for a comment.
-        if key == "router.url" && !is_http_url(value) {
-            return Err("router URL must be an http or https URL".into());
-        }
-        let encoded = serde_json::to_string(value).map_err(|e| e.to_string())?;
+        let stored = core_key(key)?;
+        let value = if key == "router.url" {
+            normalize_base_url(value)
+                .map_err(|_| "router URL must be an http or https URL".to_string())?
+        } else {
+            value.trim().to_string()
+        };
+        let encoded = serde_json::to_string(&value).map_err(|e| e.to_string())?;
         self.store()?
-            .set_setting(key, &encoded)
-            .map_err(|e| e.to_string())
+            .set_setting(stored, &encoded)
+            .map_err(|e| e.to_string())?;
+        self.router_generation.send_modify(|g| *g += 1);
+        Ok(())
     }
 
     /// Permission rules visible in a workspace (global + its own).
@@ -221,181 +302,14 @@ impl AppService {
             broken_at: v.broken_at,
         })
     }
-
-    /// Answer a pending approval card.
-    ///
-    /// # Errors
-    /// Returns a message if the approval is unknown or the choice is invalid.
-    pub fn approval_respond(&self, approval_id: &str, choice: &str) -> Result<(), String> {
-        let approval = parse_choice(choice)?;
-        let sender = self
-            .pending
-            .lock()
-            .map_err(|_| "approvals lock poisoned".to_string())?
-            .remove(approval_id)
-            .ok_or_else(|| format!("no pending approval {approval_id}"))?;
-        sender
-            .send(approval)
-            .map_err(|_| "task already finished".to_string())
-    }
-
-    /// Cancel a running task (denies its pending approvals).
-    pub fn task_cancel(&self, task_id: &str) {
-        if let Ok(cancels) = self.cancels.lock() {
-            if let Some(flag) = cancels.get(task_id) {
-                flag.store(true, Ordering::SeqCst);
-            }
-        }
-        if let Ok(mut pending) = self.pending.lock() {
-            let prefix = format!("{task_id}:");
-            let ids: Vec<String> = pending
-                .keys()
-                .filter(|k| k.starts_with(&prefix))
-                .cloned()
-                .collect();
-            for id in ids {
-                if let Some(tx) = pending.remove(&id) {
-                    let _ = tx.send(Approval::Deny);
-                }
-            }
-        }
-    }
-
-    /// Create the task row and run it on a background thread, streaming to `sink`.
-    ///
-    /// # Errors
-    /// Returns a message if the workspace/mode is invalid or the task row cannot be created.
-    pub fn task_start(
-        self: &Arc<Self>,
-        request: &TaskRequest,
-        sink: Sink,
-    ) -> Result<String, String> {
-        let prepared = self.prepare(request)?;
-        let task_id = prepared.spec.id.as_str().to_string();
-        let service = Arc::clone(self);
-        std::thread::spawn(move || {
-            let _ = service.execute(&prepared, &sink);
-            if let Ok(mut cancels) = service.cancels.lock() {
-                cancels.remove(prepared.spec.id.as_str());
-            }
-        });
-        Ok(task_id)
-    }
-
-    fn prepare(&self, request: &TaskRequest) -> Result<Prepared, String> {
-        let mode = parse_mode(&request.mode)?;
-        let workspace = {
-            let store = self.store()?;
-            store
-                .list_workspaces()
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .find(|w| w.id == request.workspace_id)
-                .ok_or_else(|| format!("unknown workspace {}", request.workspace_id))?
-        };
-        let n = self.counter.fetch_add(1, Ordering::SeqCst);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let id = TaskId::from_seed(&format!("{}:{nanos}:{n}", workspace.id));
-        let mode_name = mode_name(mode);
-        let title: String = request.prompt.chars().take(60).collect();
-        self.store()?
-            .create_task(
-                id.as_str(),
-                &workspace.id,
-                &title,
-                &request.prompt,
-                mode_name,
-            )
-            .map_err(|e| e.to_string())?;
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.cancels
-            .lock()
-            .map_err(|_| "cancel lock poisoned".to_string())?
-            .insert(id.as_str().to_string(), cancelled.clone());
-        Ok(Prepared {
-            spec: TaskSpec {
-                id,
-                prompt: request.prompt.clone(),
-                mode: mode_name,
-                model: "mock-1".into(),
-            },
-            mode,
-            root: PathBuf::from(&workspace.path),
-            workspace_id: workspace.id,
-            cancelled,
-        })
-    }
-
-    /// Run a prepared task to completion on the current thread.
-    fn execute(&self, prepared: &Prepared, sink: &Sink) -> Result<(), String> {
-        let store = Store::open(&self.db_path).map_err(|e| e.to_string())?;
-        let task = prepared.spec.id.as_str().to_string();
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        let context = context_for(prepared.root.clone(), prepared.workspace_id.clone(), home);
-        let mut broker = SqliteBroker::new(&store, prepared.mode, context)
-            .for_task(task.clone())
-            .with_executor(StubExecutor {
-                task_id: task.clone(),
-                sink: sink.clone(),
-            })
-            .with_approver(UiApprover {
-                task_id: task.clone(),
-                sink: sink.clone(),
-                pending: self.pending.clone(),
-                counter: 0,
-            });
-        broker.load_rules().map_err(|e| e.to_string())?;
-        let mut executor = MockExecutor::new(mock_script(&prepared.root));
-        let flag = prepared.cancelled.clone();
-        let events = run_task(&mut executor, &mut broker, &prepared.spec, &move || {
-            flag.load(Ordering::SeqCst)
-        });
-        for event in &events {
-            let data = crate::wire::kind_data(&event.kind).to_string();
-            let _ = store.append_event(&task, event.seq, event.kind.kind(), &data);
-            sink(StreamMessage::Event {
-                event: envelope(event),
-            });
-            if !self.replay_delay.is_zero() {
-                std::thread::sleep(self.replay_delay);
-            }
-        }
-        Ok(())
-    }
-
-    /// Blocking variant used by tests.
-    ///
-    /// # Errors
-    /// Same as [`Self::task_start`] plus execution errors.
-    pub fn task_run_blocking(&self, request: &TaskRequest, sink: &Sink) -> Result<String, String> {
-        let prepared = self.prepare(request)?;
-        self.execute(&prepared, sink)?;
-        Ok(prepared.spec.id.as_str().to_string())
-    }
 }
 
-struct Prepared {
-    spec: TaskSpec,
-    mode: Mode,
-    root: PathBuf,
-    workspace_id: String,
-    cancelled: Arc<AtomicBool>,
-}
-
-fn is_http_url(value: &str) -> bool {
-    value
-        .split_once(':')
-        .is_some_and(|(scheme, rest)| matches!(scheme, "http" | "https") && rest.starts_with('/'))
-}
-
-fn check_key(key: &str) -> Result<(), String> {
-    if SETTING_KEYS.contains(&key) {
-        Ok(())
-    } else {
-        Err(format!("unknown setting `{key}`"))
-    }
+fn core_key(key: &str) -> Result<&'static str, String> {
+    SETTING_KEYS
+        .iter()
+        .find(|(ui, _)| *ui == key)
+        .map(|(_, core)| *core)
+        .ok_or_else(|| format!("unknown setting `{key}`"))
 }
 
 /// Parse the UI's mode string.
@@ -422,118 +336,6 @@ pub fn mode_name(mode: Mode) -> &'static str {
     }
 }
 
-fn parse_choice(choice: &str) -> Result<Approval, String> {
-    match choice {
-        "allow" => Ok(Approval::Allow),
-        "deny" => Ok(Approval::Deny),
-        "always" => Ok(Approval::AlwaysForWorkspace),
-        other => Err(format!("unknown approval choice `{other}`")),
-    }
-}
-
-/// Scripted calls for the UI demo: a read, a write (asks in manual) and a command.
-fn mock_script(root: &Path) -> Vec<AgentStep> {
-    vec![
-        AgentStep::Emit(EventKind::Message {
-            text: "Looking at the project first.".into(),
-        }),
-        AgentStep::Call {
-            call_id: "call_1".into(),
-            request: ToolRequest::Read {
-                path: root.join("README.md"),
-            },
-        },
-        AgentStep::Call {
-            call_id: "call_2".into(),
-            request: ToolRequest::Write {
-                path: root.join("NOTES.md"),
-                contents: "# Notes\n".into(),
-            },
-        },
-        AgentStep::Call {
-            call_id: "call_3".into(),
-            request: ToolRequest::Exec {
-                command: "ls".into(),
-                cwd: root.to_path_buf(),
-            },
-        },
-    ]
-}
-
-/// Executes nothing: the UI demo never touches the filesystem or a shell.
-struct StubExecutor {
-    task_id: String,
-    sink: Sink,
-}
-
-impl ToolExecutor for StubExecutor {
-    fn execute(&mut self, call_id: &str, request: &ToolRequest) -> ToolResult {
-        let output = format!(
-            "(mock) {} completed; no side effects performed",
-            request.kind()
-        );
-        (self.sink)(StreamMessage::ToolOutput {
-            task_id: self.task_id.clone(),
-            call_id: call_id.to_string(),
-            ok: true,
-            output: output.clone(),
-        });
-        ToolResult::ok(call_id, output)
-    }
-}
-
-/// Blocks the task until the UI answers via `approval_respond`.
-struct UiApprover {
-    task_id: String,
-    sink: Sink,
-    pending: Pending,
-    counter: u64,
-}
-
-impl Approver for UiApprover {
-    fn approve(&mut self, call_id: &str, request: &ToolRequest, reason: &str) -> Approval {
-        self.counter += 1;
-        let approval_id = format!("{}:{}", self.task_id, self.counter);
-        let (tx, rx) = channel();
-        match self.pending.lock() {
-            Ok(mut pending) => {
-                pending.insert(approval_id.clone(), tx);
-            }
-            Err(_) => return Approval::Deny,
-        }
-        (self.sink)(StreamMessage::Approval {
-            task_id: self.task_id.clone(),
-            approval_id: approval_id.clone(),
-            call_id: call_id.to_string(),
-            tool: request.kind().to_string(),
-            summary: summarize(request),
-            reason: reason.to_string(),
-        });
-        // Fail closed on timeout or a dropped sender.
-        let choice = rx.recv_timeout(APPROVAL_TIMEOUT).unwrap_or(Approval::Deny);
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.remove(&approval_id);
-        }
-        choice
-    }
-}
-
-fn summarize(request: &ToolRequest) -> String {
-    match request {
-        ToolRequest::Read { path } | ToolRequest::ListDir { path } => path.display().to_string(),
-        ToolRequest::Write { path, contents } => {
-            format!("{} ({} bytes)", path.display(), contents.len())
-        }
-        ToolRequest::ApplyPatch { path, patch } => {
-            format!("{} (patch, {} bytes)", path.display(), patch.len())
-        }
-        ToolRequest::Search { pattern, path } => format!("{pattern} in {}", path.display()),
-        ToolRequest::Exec { command, cwd } => format!("{command}  (in {})", cwd.display()),
-        ToolRequest::Network { url } => url.clone(),
-        ToolRequest::AskUser { question } => question.clone(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,8 +343,7 @@ mod tests {
 
     fn service() -> (tempfile::TempDir, Arc<AppService>) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let mut svc = AppService::new(dir.path().join("db.sqlite")).expect("service");
-        svc.replay_delay = Duration::ZERO;
+        let svc = AppService::new(dir.path().join("db.sqlite")).expect("service");
         (dir, Arc::new(svc))
     }
 
@@ -610,45 +411,142 @@ mod tests {
         );
     }
 
-    #[test]
-    fn auto_task_streams_ordered_events_and_persists_them() {
-        let (dir, svc) = service();
-        let ws = dir.path().join("proj");
+    fn git(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .expect("git");
+        assert!(status.success(), "git {args:?}");
+    }
+
+    /// A workspace that is a git repo with one commit, plus a vault folder.
+    fn repo_workspace(dir: &Path, svc: &AppService) -> (PathBuf, String) {
+        let ws = dir.join("proj");
         std::fs::create_dir(&ws).expect("mkdir");
+        git(&ws, &["init", "-q", "-b", "main"]);
+        git(&ws, &["config", "user.email", "test@example.invalid"]);
+        git(&ws, &["config", "user.name", "Test"]);
+        std::fs::write(ws.join("README.md"), "# proj\n").expect("write");
+        git(&ws, &["add", "."]);
+        git(&ws, &["commit", "-q", "-m", "init"]);
+        let vault = dir.join("vault");
+        std::fs::create_dir(&vault).expect("vault");
+        svc.vault_set(vault.to_str().expect("utf8"))
+            .expect("vault set");
         let opened = svc
             .workspace_open(ws.to_str().expect("utf8"))
             .expect("open");
-        let (sink, log) = collector();
+        (PathBuf::from(opened.path), opened.id)
+    }
+
+    fn run(svc: &Arc<AppService>, workspace_id: &str, mode: &str, sink: Sink) -> String {
         let request = TaskRequest {
-            workspace_id: opened.id,
-            prompt: "demo".into(),
-            mode: "auto".into(),
+            workspace_id: workspace_id.into(),
+            prompt: "Add a demo note".into(),
+            mode: mode.into(),
         };
-        let task = svc.task_run_blocking(&request, &sink).expect("run");
-        let messages = log.lock().expect("lock");
-        let seqs: Vec<u64> = messages
+        let id = svc.task_start(&request, sink).expect("start");
+        svc.task_wait(&id);
+        id
+    }
+
+    fn events_of(messages: &[StreamMessage]) -> Vec<serde_json::Value> {
+        messages
             .iter()
             .filter_map(|m| match m {
-                StreamMessage::Event { event } => event["seq"].as_u64(),
+                StreamMessage::Event { event } => Some(event.clone()),
                 _ => None,
             })
-            .collect();
-        assert!(seqs.len() >= 4, "{seqs:?}");
+            .collect()
+    }
+
+    /// The M1 exit scenario without a window: auto task in a worktree,
+    /// review diff, task record in the vault, merge into the main tree.
+    #[test]
+    fn auto_task_runs_in_worktree_then_merges_and_documents() {
+        let (dir, svc) = service();
+        let (root, ws_id) = repo_workspace(dir.path(), &svc);
+        let (sink, log) = collector();
+        let task = run(&svc, &ws_id, "auto", sink);
+        let messages = log.lock().expect("lock").clone();
+
+        let events = events_of(&messages);
+        let seqs: Vec<u64> = events.iter().filter_map(|e| e["seq"].as_u64()).collect();
         assert_eq!(seqs, (0..seqs.len() as u64).collect::<Vec<_>>());
+        assert_eq!(events.last().expect("events")["kind"], "task_completed");
         let persisted = svc
             .store()
             .expect("store")
             .event_kinds(&task)
             .expect("kinds");
-        assert_eq!(persisted.len(), seqs.len());
-        assert_eq!(persisted[0], "task_started");
-        assert_eq!(persisted.last().map(String::as_str), Some("task_completed"));
+        assert_eq!(persisted.len(), events.len());
+
+        let branch = messages
+            .iter()
+            .find_map(|m| match m {
+                StreamMessage::Worktree { branch, .. } => Some(branch.clone()),
+                _ => None,
+            })
+            .expect("worktree message");
+        assert!(branch.starts_with("next-agent/auto-"), "{branch}");
+        assert!(
+            !root.join("NEXT_AGENT_DEMO.md").exists(),
+            "main tree untouched before merge"
+        );
+
+        let files = messages
+            .iter()
+            .find_map(|m| match m {
+                StreamMessage::Review { files, .. } => Some(files.clone()),
+                _ => None,
+            })
+            .expect("review message");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "NEXT_AGENT_DEMO.md");
+
+        let record = messages
+            .iter()
+            .find_map(|m| match m {
+                StreamMessage::Documented { path, .. } => Some(PathBuf::from(path)),
+                _ => None,
+            })
+            .expect("documented message");
+        let text = std::fs::read_to_string(&record).expect("record");
+        assert!(text.contains("NEXT_AGENT_DEMO.md"), "{text}");
+
+        let outcome = svc.review_action(&task, "merge").expect("merge");
+        assert!(outcome.commit.is_some());
+        assert!(
+            root.join("NEXT_AGENT_DEMO.md").exists(),
+            "merged into main tree"
+        );
+        let text = std::fs::read_to_string(&record).expect("record");
+        assert!(text.contains("merged: true"), "{text}");
+        assert!(
+            svc.review_action(&task, "merge").is_err(),
+            "worktree is gone after merge"
+        );
     }
 
     #[test]
-    fn manual_task_blocks_on_approval_until_answered() {
+    fn discard_drops_the_worktree_and_leaves_main_tree_alone() {
         let (dir, svc) = service();
-        let ws = dir.path().join("proj");
+        let (root, ws_id) = repo_workspace(dir.path(), &svc);
+        let (sink, _log) = collector();
+        let task = run(&svc, &ws_id, "auto", sink);
+        svc.review_action(&task, "discard").expect("discard");
+        assert!(!root.join("NEXT_AGENT_DEMO.md").exists());
+        assert!(!root
+            .join(".next-agent/worktrees")
+            .read_dir()
+            .is_ok_and(|mut d| d.next().is_some()));
+    }
+
+    #[test]
+    fn auto_on_non_git_folder_falls_back_to_manual_and_asks() {
+        let (dir, svc) = service();
+        let ws = dir.path().join("plain");
         std::fs::create_dir(&ws).expect("mkdir");
         let opened = svc
             .workspace_open(ws.to_str().expect("utf8"))
@@ -656,39 +554,38 @@ mod tests {
         let (inner, log) = collector();
         let responder = Arc::clone(&svc);
         let sink: Sink = Arc::new(move |m| {
-            if let StreamMessage::Approval { approval_id, .. } = &m {
-                responder
-                    .approval_respond(approval_id, "deny")
-                    .expect("respond");
+            if let StreamMessage::Event { event } = &m {
+                if event["kind"] == "approval_requested" {
+                    let task = event["task_id"].as_str().expect("task");
+                    let approval = event["data"]["approval_id"].as_str().expect("id");
+                    responder
+                        .approval_respond(task, approval, "deny")
+                        .expect("respond");
+                }
             }
             inner(m);
         });
-        let request = TaskRequest {
-            workspace_id: opened.id,
-            prompt: "demo".into(),
-            mode: "manual".into(),
-        };
-        svc.task_run_blocking(&request, &sink).expect("run");
-        let messages = log.lock().expect("lock");
-        assert!(messages
+        run(&svc, &opened.id, "auto", sink);
+        let messages = log.lock().expect("lock").clone();
+        assert!(messages.iter().any(
+            |m| matches!(m, StreamMessage::Notice { text, .. } if text.contains("runs in Manual mode"))
+        ));
+        let events = events_of(&messages);
+        assert_eq!(events[0]["data"]["mode"], "manual");
+        assert!(events
             .iter()
-            .any(|m| matches!(m, StreamMessage::Approval { tool, .. } if tool == "write_file")));
-        let denied = messages.iter().any(|m| match m {
-            // The policy decision is `ask`; the user's deny is recorded as
-            // the approval resolution (core event contract).
-            StreamMessage::Event { event } => {
-                event["kind"] == "approval_resolved" && event["data"]["choice"] == "deny"
-            }
-            _ => false,
-        });
-        assert!(denied, "denied write must be recorded");
+            .any(|e| e["kind"] == "approval_resolved" && e["data"]["choice"] == "deny"));
+        assert!(
+            !ws.join("NEXT_AGENT_DEMO.md").exists(),
+            "denied write never happened"
+        );
     }
 
     #[test]
-    fn approval_respond_rejects_unknown_ids_and_choices() {
+    fn approval_respond_rejects_unknown_tasks_and_choices() {
         let (_dir, svc) = service();
-        assert!(svc.approval_respond("nope", "allow").is_err());
-        assert!(svc.approval_respond("nope", "maybe").is_err());
+        assert!(svc.approval_respond("t", "nope", "allow").is_err());
+        assert!(svc.approval_respond("t", "nope", "maybe").is_err());
     }
 
     #[test]

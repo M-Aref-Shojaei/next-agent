@@ -2352,11 +2352,13 @@ version = "0.1.0"
 dependencies = [
  "next-agent-core",
  "next-agent-permission-engine",
+ "next-agent-process-manager",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

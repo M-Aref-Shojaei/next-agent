@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ToolItem } from "$lib/timeline.ts";
   let { item }: { item: ToolItem } = $props();
-  const ICON = { running: "…", ok: "✓", failed: "✗", denied: "⊘" } as const;
+  const ICON = { running: "…", waiting: "?", ok: "✓", failed: "✗", denied: "⊘" } as const;
 </script>
 
 <details class="tool {item.status}">
@@ -17,7 +17,7 @@
 <style>
   .tool { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 6px 10px; }
   summary { cursor: pointer; display: flex; gap: 8px; align-items: center; }
-  .running .icon { color: var(--info); } .ok .icon { color: var(--ok); }
+  .running .icon { color: var(--info); } .waiting .icon { color: var(--warn); } .ok .icon { color: var(--ok); }
   .failed .icon, .denied .icon { color: var(--danger); }
   pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; overflow: auto; white-space: pre-wrap; }
   p { margin: 6px 0 0; }

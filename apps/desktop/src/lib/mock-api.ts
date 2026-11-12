@@ -110,10 +110,19 @@ export const mockApi: Api = {
     return taskId;
   },
   async taskCancel() {},
-  async approvalRespond(approvalId, choice) {
+  async approvalRespond(_taskId, approvalId, choice) {
     const resolve = waiting.get(approvalId);
     if (!resolve) throw `no pending approval ${approvalId}`;
     waiting.delete(approvalId);
     resolve(choice);
+  },
+  async reviewAction(_taskId, action) {
+    return { action, commit: action === "merge" ? "mock000" : null, files: [] };
+  },
+  async routerHealth() {
+    return { status: "down", detail: "mock API: no router", latencyMs: null, checks: 1 };
+  },
+  async onRouterHealth() {
+    return () => {};
   },
 };

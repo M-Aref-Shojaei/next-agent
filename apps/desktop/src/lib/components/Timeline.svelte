@@ -17,7 +17,7 @@
 
 <div class="timeline" bind:this={scroller} role="log" aria-live="polite" aria-label="Task timeline" tabindex="-1">
   {#if !task}
-    <p class="muted empty">Open a workspace, then describe a task below. The mock executor will run it.</p>
+    <p class="muted empty">Open a workspace, then describe a task below. Without a router and model, a scripted demo agent runs it.</p>
   {:else}
     <div class="user"><span class="sr-only">You: </span>{task.title}</div>
     {#each task.items as item (item.id)}

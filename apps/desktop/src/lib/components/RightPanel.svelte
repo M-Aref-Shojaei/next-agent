@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { app } from "$lib/app.svelte.ts";
   import DiffViewer from "./DiffViewer.svelte";
   const TABS = ["Diff", "Files", "Vault"] as const;
   let tab = $state<(typeof TABS)[number]>("Diff");
+  const task = $derived(app.activeTask);
 </script>
 
 <aside class="panel" aria-label="Details panel">
@@ -12,11 +14,19 @@
   </div>
   <div role="tabpanel" id="pane-{tab}" aria-labelledby="tab-{tab}" class="body">
     {#if tab === "Diff"}
-      <DiffViewer files={[]} />
+      <DiffViewer
+        files={task?.review?.files ?? []}
+        branch={task?.review?.branch}
+        outcome={task?.review?.outcome}
+        onAction={(action) => (task ? app.review(task.id, action) : undefined)}
+      />
     {:else if tab === "Files"}
       <p class="muted">File tree — placeholder.</p>
+    {:else if task?.recordPath}
+      <p>Task record:</p>
+      <code class="path">{task.recordPath}</code>
     {:else}
-      <p class="muted">Vault browser — placeholder.</p>
+      <p class="muted">Finished tasks are written to the vault folder set in Settings.</p>
     {/if}
   </div>
 </aside>
@@ -27,4 +37,5 @@
   [role="tab"] { border: 0; border-radius: 0; background: transparent; }
   [role="tab"][aria-selected="true"] { border-bottom: 2px solid var(--accent); font-weight: 600; }
   .body { padding: 12px; overflow: auto; }
+  .path { word-break: break-all; font-size: 12px; }
 </style>

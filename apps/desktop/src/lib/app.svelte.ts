@@ -1,12 +1,14 @@
 // App-wide reactive state (Svelte 5 runes). Logic lives in pure modules
 // (timeline.ts, modes.ts, shortcuts.ts); this class only wires them to the API.
 import type { ModeName } from "@next-agent/contracts";
-import { api, type Workspace } from "./api.ts";
+import { api, type RouterHealthReport, type Workspace } from "./api.ts";
+import type { DiffAction } from "./diff.ts";
 import { cycleMode } from "./modes.ts";
 import {
   applyMessage,
   newTask,
   resolveApproval,
+  settleReview,
   type ApprovalChoice,
   type StreamMessage,
   type TaskState,
@@ -20,11 +22,14 @@ class AppStore {
   tasks = $state<TaskState[]>([]);
   activeTaskId = $state<string | null>(null);
   mode = $state<ModeName>("manual");
-  /** Stubbed until the router health poller (Step 6) lands. */
   router = $state<RouterHealth>("unknown");
-  /** Stubbed until worktree isolation (Step 4) lands. */
-  branch = $state<string | null>(null);
+  routerDetail = $state<string>("");
   error = $state<string | null>(null);
+
+  /** Worktree branch of the active task (auto mode), if any. */
+  get branch(): string | null {
+    return this.activeTask?.branch ?? null;
+  }
 
   get activeWorkspace(): Workspace | undefined {
     return this.workspaces.find((w) => w.id === this.activeWorkspaceId);
@@ -36,7 +41,19 @@ class AppStore {
     return this.tasks.reduce((n, t) => n + t.approvals.filter((a) => a.choice === undefined).length, 0);
   }
 
+  private setHealth(report: RouterHealthReport | null): void {
+    if (!report) return;
+    this.router = report.status;
+    this.routerDetail = report.detail;
+  }
+
   async init(): Promise<void> {
+    try {
+      this.setHealth(await api.routerHealth());
+      await api.onRouterHealth((report) => this.setHealth(report));
+    } catch {
+      // Health is informational; never block startup on it.
+    }
     try {
       this.workspaces = await api.workspaceList();
       this.activeWorkspaceId ??= this.workspaces[0]?.id ?? null;
@@ -99,8 +116,24 @@ class AppStore {
 
   async respond(taskId: string, approvalId: string, choice: ApprovalChoice): Promise<void> {
     try {
-      await api.approvalRespond(approvalId, choice);
+      await api.approvalRespond(taskId, approvalId, choice);
       this.tasks = this.tasks.map((t) => (t.id === taskId ? resolveApproval(t, approvalId, choice) : t));
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
+  async review(taskId: string, action: DiffAction): Promise<void> {
+    try {
+      const outcome = await api.reviewAction(taskId, action);
+      const label =
+        outcome.action === "merge"
+          ? `merged${outcome.commit ? ` (${outcome.commit.slice(0, 8)})` : ""}`
+          : outcome.action === "discard"
+            ? "discarded"
+            : "kept for later";
+      this.tasks = this.tasks.map((t) => (t.id === taskId ? settleReview(t, label) : t));
+      this.error = null;
     } catch (e) {
       this.error = String(e);
     }

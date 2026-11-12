@@ -3,13 +3,13 @@
   import ModeBadge from "./ModeBadge.svelte";
 
   const LABEL: Record<RouterHealth, string> = {
-    ok: "ok", degraded: "degraded", down: "down", unknown: "not checked (stub)",
+    ok: "ok", degraded: "degraded", down: "down", unknown: "checking…",
   };
 </script>
 
 <footer class="status" aria-label="Status bar">
   <ModeBadge mode={app.mode} workspaceName={app.activeWorkspace?.name ?? ""} onselect={(m) => app.setMode(m)} />
-  <span class="item" role="status" aria-label="Router health: {LABEL[app.router]}">
+  <span class="item" role="status" title={app.routerDetail} aria-label="Router health: {LABEL[app.router]}">
     <span class="dot {app.router}" aria-hidden="true"></span> router {LABEL[app.router]}
   </span>
   <span class="item">branch {app.branch ?? "—"}</span>

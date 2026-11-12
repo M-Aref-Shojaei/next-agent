@@ -5,6 +5,7 @@ import {
   newTask,
   pendingApprovals,
   resolveApproval,
+  settleReview,
   type StreamMessage,
   type TaskState,
 } from "../src/lib/timeline.ts";
@@ -95,4 +96,57 @@ test("message deltas coalesce into one agent message", () => {
 test("failure and cancel set terminal status", () => {
   assert.equal(run(newTask("t", "x"), ev(0, "task_failed", { error: "boom" })).status, "failed");
   assert.equal(run(newTask("t", "x"), ev(0, "task_cancelled", {})).status, "cancelled");
+});
+
+test("approvals come from events: ask waits, deny marks the tool denied", () => {
+  const task = run(
+    newTask("t", "x"),
+    ev(0, "tool_requested", { call_id: "c1", tool: "write_file", args: {} }),
+    ev(1, "permission_decided", { call_id: "c1", decision: "ask", reason: "mutating tool in manual mode" }),
+  );
+  const waiting = task.items[0];
+  assert.equal(waiting.kind === "tool" && waiting.status, "waiting");
+  const asked = run(task, ev(2, "approval_requested", { approval_id: "apr_c1", call_id: "c1", summary: "NOTES.md", options: [] }));
+  assert.equal(pendingApprovals(asked).length, 1);
+  assert.equal(asked.approvals[0].tool, "write_file");
+  assert.equal(asked.approvals[0].reason, "mutating tool in manual mode");
+
+  const denied = run(
+    asked,
+    ev(3, "approval_resolved", { approval_id: "apr_c1", choice: "deny", by: "user" }),
+    ev(4, "tool_finished", { call_id: "c1", ok: false, exit_code: null, summary: "denied by user" }),
+  );
+  assert.equal(pendingApprovals(denied).length, 0);
+  const tool = denied.items[0];
+  assert.equal(tool.kind === "tool" && tool.status, "denied");
+});
+
+test("allowed approval resumes; streamed output and summary fill the tool card", () => {
+  const task = run(
+    newTask("t", "x"),
+    ev(0, "tool_requested", { call_id: "c1", tool: "run_command", args: {} }),
+    ev(1, "permission_decided", { call_id: "c1", decision: "ask", reason: "r" }),
+    ev(2, "approval_requested", { approval_id: "a1", call_id: "c1", summary: "ls", options: [] }),
+    ev(3, "approval_resolved", { approval_id: "a1", choice: "always_for_workspace", by: "user" }),
+    ev(4, "tool_output", { call_id: "c1", stream: "stdout", chunk: "a\n" }),
+    ev(5, "tool_output", { call_id: "c1", stream: "stdout", chunk: "b\n" }),
+    ev(6, "tool_finished", { call_id: "c1", ok: true, exit_code: 0, summary: "a\nb\n" }),
+  );
+  assert.equal(task.approvals[0].choice, "always");
+  const tool = task.items[0];
+  assert.equal(tool.kind === "tool" && tool.status, "ok");
+  assert.equal(tool.kind === "tool" && tool.output, "a\nb\n");
+});
+
+test("worktree, review and documented messages land on the task", () => {
+  const task = run(
+    newTask("t", "x"),
+    { type: "worktree", task_id: "t", branch: "next-agent/auto-1", root: "/w" },
+    { type: "review", task_id: "t", branch: "next-agent/auto-1", files: [{ path: "a.md", status: "added", hunks: [] }] },
+    { type: "documented", task_id: "t", path: "/vault/x.md" },
+  );
+  assert.equal(task.branch, "next-agent/auto-1");
+  assert.equal(task.review?.files.length, 1);
+  assert.equal(task.recordPath, "/vault/x.md");
+  assert.equal(settleReview(task, "merged").review?.outcome, "merged");
 });

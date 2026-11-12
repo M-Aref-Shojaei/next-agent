@@ -14,12 +14,12 @@ Task ledger for [[M1 Vertical Slice]]. Update this note (and the step boxes ther
 |---|---|---|---|
 | 0. Scaffold | ✅ done | node + Rust suites run locally | Rust 1.100 and pnpm 10 installed 2026-11-12 |
 | 1. Workspace setup & SQLite | ✅ done | store + desktop command tests | Tauri commands `workspace_open`/`workspace_list`/`vault_set` landed with the UI |
-| 2. Agent execution abstraction | ✅ done (module) | execution + broker tests | Desktop still drives the legacy `run_task` path, not `spawn_task` |
+| 2. Agent execution abstraction | ✅ done | execution + broker tests | Desktop runs tasks through `spawn_task` |
 | 3. Permission engine | ✅ done | 53 engine tests + shared path/command/policy corpora | Security review pending (M1 DoD) |
-| 4. Git worktree isolation | 🟡 API done | 19 temp-repo tests | Not yet triggered by the broker on the first mutating auto tool |
-| 5. Vault task documentation | 🟡 writer done | Rust + TS golden tests | Not yet called on task completion; LLM summarizer not plugged in |
-| 6. 9Router endpoint & health | ✅ done (module) | 17 wiremock router tests | UI status dot still stubbed (HealthMonitor not wired) |
-| 7. Workstation UI | 🟡 shell done | desktop Rust + node tests, svelte-check clean | Diff reviewer stubbed; GUI not launched yet |
+| 4. Git worktree isolation | ✅ done | 19 temp-repo tests + desktop end-to-end | Worktree is created at task start, not on the first mutating tool (see log) |
+| 5. Vault task documentation | ✅ done | Rust + TS golden tests + desktop end-to-end | LLM summarizer not plugged in; deterministic summary used |
+| 6. 9Router endpoint & health | ✅ done | 17 wiremock router tests | Status bar shows live health |
+| 7. Workstation UI | 🟡 wired | desktop Rust + node tests, svelte-check clean | Exit scenario wired; diff view is a plain side-by-side table, not CodeMirror; no Playwright smoke yet |
 | 10. CI matrix | 🟡 written | YAML parses | Never run: no GitHub remote |
 
 ## Log
@@ -45,3 +45,13 @@ Task ledger for [[M1 Vertical Slice]]. Update this note (and the step boxes ther
 - **Security fix:** "Always for this workspace" used to persist a tool-wide allow (one approval let every later command run). It now stores the exact argv or canonical path via `always_rule`; compound commands and network requests are one-time. Policy runs with real filesystem facts (`RealFs`) and file tools act on the resolved path. Regression tests added.
 - State: 234 Rust tests, 207 node tests, clippy `-D warnings`, fmt, `make check`, svelte-check and the frontend build all pass.
 - **Next:** wire the exit scenario end-to-end in the desktop app — `spawn_task` + approvals, worktree on first mutating auto tool, diff reviewer, vault record on completion, live router health — then launch the GUI and push CI to a remote.
+
+### 2026-11-13 — Exit scenario wired in the desktop app
+- Desktop tasks now run through `spawn_task` with `LocalTools`: approvals come from `approval_requested` events and are answered per task (`approval_respond(task_id, approval_id, choice)`); cancel uses `TaskControl`.
+- Auto mode creates `next-agent/auto-*` worktrees via `GitCli` and makes the worktree the sandbox root. Non-git folders, or repos with no commits, fall back to Manual with a notice in the timeline (Q4).
+- **Deviation:** the worktree is created when the task starts, not on its first mutating tool. A task that changes nothing has its worktree removed at the end.
+- When a task finishes, the app checkpoints its worktree, sends the diff to the reviewer and writes the vault record. The reviewer offers Merge (squash by default, Q5), Discard and Keep. Merging rewrites the record with `merged: true`.
+- Agent: `BuiltinExecutor` when the router is healthy and a default model is set; otherwise the scripted demo agent, with a notice saying which one ran.
+- Router health streams to the status bar through a `router-health` event. The poller rebuilds its client when the router settings change. The UI setting keys are mapped to the core's `router.base_url` and `router.default_model`.
+- Tests: 236 Rust, 211 node; clippy, `make check` and svelte-check are clean. Desktop end-to-end tests cover auto → worktree → review → vault record → merge, discard, and the non-git fallback to Manual with a denied approval. `tauri dev` launches. The window was not screenshotted (no screen-recording permission); the frontend was smoke-tested in a browser against the mock API.
+- **Left for M1 DoD:** CodeMirror merge view, an LLM summarizer for task records, a Playwright/WebDriver smoke test, a real-router run, a security review, and CI on a remote across all three OSes.

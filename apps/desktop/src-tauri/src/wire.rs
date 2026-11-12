@@ -11,22 +11,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum StreamMessage {
     /// A sequenced event (reconciled by `(task_id, seq)` in the UI).
     Event { event: Value },
-    /// An approval the user must answer; sent live while the task is blocked.
-    Approval {
+    /// The task runs in an isolated git worktree (auto mode).
+    Worktree {
         task_id: String,
-        approval_id: String,
-        call_id: String,
-        tool: String,
-        summary: String,
-        reason: String,
+        branch: String,
+        root: String,
     },
-    /// Output of a finished tool call (events carry only `ok`).
-    ToolOutput {
+    /// Informational line for the timeline (mode fallback, demo agent, …).
+    Notice {
         task_id: String,
-        call_id: String,
-        ok: bool,
-        output: String,
+        tone: &'static str,
+        text: String,
     },
+    /// Changes ready for review once the task has finished.
+    Review {
+        task_id: String,
+        branch: String,
+        files: Vec<crate::review::DiffFileDto>,
+    },
+    /// The task record was written to the vault.
+    Documented { task_id: String, path: String },
 }
 
 /// Event payload fields for each kind (everything except the envelope).
@@ -120,13 +124,11 @@ mod tests {
 
     #[test]
     fn stream_messages_are_tagged() {
-        let message = StreamMessage::ToolOutput {
+        let message = StreamMessage::Documented {
             task_id: "t".into(),
-            call_id: "c".into(),
-            ok: true,
-            output: "x".into(),
+            path: "/v/x.md".into(),
         };
         let value = serde_json::to_value(message).expect("serialize");
-        assert_eq!(value["type"], "tool_output");
+        assert_eq!(value["type"], "documented");
     }
 }
