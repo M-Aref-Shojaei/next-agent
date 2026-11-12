@@ -44,6 +44,15 @@ for (const file of walk("crates")) {
   }
 }
 
+// 1b. only the git adapter may spawn `git`
+for (const file of walk("crates")) {
+  const rel = file.replaceAll("\\", "/");
+  if (rel === "crates/core/src/worktree.rs") continue;
+  if (/Command::new\(\s*"git"/.test(readFileSync(file, "utf8"))) {
+    failures.push(`${rel} spawns git; only crates/core/src/worktree.rs may (Git isolation seam)`);
+  }
+}
+
 // 2. no cross-crate path jumps
 for (const manifest of ["Cargo.toml"]) {
   if (!existsSync(manifest)) continue;
@@ -53,6 +62,7 @@ for (const manifest of ["Cargo.toml"]) {
 const SEAMS = [
   ["Agent runtime", "crates/core/src/agent.rs"],
   ["Tool enforcement", "crates/core/src/runner.rs"],
+  ["Git isolation", "crates/core/src/worktree.rs"],
   ["Path sandbox", "crates/permission-engine/src/path.rs"],
   ["Event wire format", "packages/contracts/src/index.ts"],
   ["Upstream pin", "upstream.lock.json"],
@@ -94,4 +104,4 @@ if (failures.length) {
   console.error(`Boundary check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
-console.log("Boundary check passed (4 seams, transports isolated, permission engine I/O-free).");
+console.log("Boundary check passed (5 seams, transports isolated, permission engine I/O-free).");

@@ -16,6 +16,7 @@ pub mod store;
 pub mod task;
 pub mod tools;
 pub mod workspace;
+pub mod worktree;
 
 pub use agent::{AgentExecutor, AgentStep, MockExecutor, TaskSpec};
 pub use broker::{
@@ -31,3 +32,7 @@ pub use store::{AuditEntry, AuditVerification, RuleRow, Store, StoreError, Store
 pub use task::{TaskId, TaskStatus};
 pub use tools::{ToolRequest, ToolResult};
 pub use workspace::{Workspace, WorkspaceError};
+pub use worktree::{
+    GitCli, MergeOptions, MergeOutcome, MergeStrategy, StructuredDiff, TaskWorktree, WorktreeError,
+    WorktreeProvider,
+};
