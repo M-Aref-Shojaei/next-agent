@@ -5,30 +5,13 @@ use std::path::PathBuf;
 /// A side effect an agent wants to perform. Never executed by the agent itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolRequest {
-    Read {
-        path: PathBuf,
-    },
-    ListDir {
-        path: PathBuf,
-    },
-    Search {
-        pattern: String,
-        path: PathBuf,
-    },
-    Write {
-        path: PathBuf,
-        contents: String,
-    },
-    Exec {
-        command: String,
-        cwd: PathBuf,
-    },
-    Network {
-        url: String,
-    },
-    AskUser {
-        question: String,
-    },
+    Read { path: PathBuf },
+    ListDir { path: PathBuf },
+    Search { pattern: String, path: PathBuf },
+    Write { path: PathBuf, contents: String },
+    Exec { command: String, cwd: PathBuf },
+    Network { url: String },
+    AskUser { question: String },
 }
 
 impl ToolRequest {
@@ -100,7 +83,10 @@ mod tests {
     fn kinds_match_event_names() {
         let path = PathBuf::from("/w/a.txt");
         assert_eq!(ToolRequest::Read { path: path.clone() }.kind(), "read_file");
-        assert_eq!(ToolRequest::ListDir { path: path.clone() }.kind(), "list_dir");
+        assert_eq!(
+            ToolRequest::ListDir { path: path.clone() }.kind(),
+            "list_dir"
+        );
         assert_eq!(
             ToolRequest::Search {
                 pattern: "x".into(),
@@ -126,7 +112,10 @@ mod tests {
             "run_command"
         );
         assert_eq!(
-            ToolRequest::Network { url: "http://x".into() }.kind(),
+            ToolRequest::Network {
+                url: "http://x".into()
+            }
+            .kind(),
             "http_fetch"
         );
         assert_eq!(
@@ -166,7 +155,10 @@ mod tests {
             Some(&PathBuf::from("/w/a"))
         );
         assert_eq!(
-            ToolRequest::Network { url: "http://x".into() }.path(),
+            ToolRequest::Network {
+                url: "http://x".into()
+            }
+            .path(),
             None
         );
     }

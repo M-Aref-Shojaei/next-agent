@@ -109,8 +109,8 @@ impl<'a> SqliteBroker<'a> {
 
     fn audit(&self, request: &ToolRequest, decision: &'static str, reason: &str) {
         let target = describe(request);
-        let entry = AuditEntry::new(self.mode.label(), request.kind(), &target, decision)
-            .reason(reason);
+        let entry =
+            AuditEntry::new(self.mode.label(), request.kind(), &target, decision).reason(reason);
         let entry = match &self.task_id {
             Some(task) => entry.task(task),
             None => entry,
@@ -212,7 +212,9 @@ impl SqliteBroker<'_> {
 fn noteworthy(mode: Mode, evaluation: &next_agent_permission_engine::Evaluation) -> bool {
     mode.sandbox_unlocked()
         || evaluation.zone.is_some_and(|zone| zone != Zone::Inside)
-        || evaluation.class.is_some_and(|class| class != CommandClass::SafeDev)
+        || evaluation
+            .class
+            .is_some_and(|class| class != CommandClass::SafeDev)
 }
 
 fn describe(request: &ToolRequest) -> String {
@@ -326,7 +328,7 @@ mod tests {
         }
     }
 
-    fn broker<'a>(store: &'a Store, mode: Mode) -> SqliteBroker<'a> {
+    fn broker(store: &Store, mode: Mode) -> SqliteBroker<'_> {
         SqliteBroker::new(
             store,
             mode,

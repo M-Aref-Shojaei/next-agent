@@ -29,9 +29,7 @@ pub enum AgentStep {
         request: ToolRequest,
     },
     /// The agent is finished.
-    Done {
-        summary: String,
-    },
+    Done { summary: String },
 }
 
 /// Executor contract. Implementations: `MockExecutor` (tests/UI dev) and the

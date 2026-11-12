@@ -1,6 +1,6 @@
 //! SQLite metadata storage for workspaces, tasks, events and settings.
 //!
-//! The WebView never touches the database; this module is the only writer.
+//! The `WebView` never touches the database; this module is the only writer.
 
 use crate::workspace::Workspace;
 use std::path::Path;
@@ -166,7 +166,8 @@ impl Store {
         for statement in MIGRATIONS {
             self.conn.execute_batch(statement)?;
         }
-        self.conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        self.conn
+            .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
 
@@ -189,12 +190,19 @@ impl Store {
             .root()
             .to_str()
             .ok_or_else(|| StoreError::JoinPath(workspace.root().display().to_string()))?;
-        let inserted = self.conn.execute(
+        // SQLite counts an upsert's UPDATE branch as a change too, so check
+        // for an existing row first to tell insert from update.
+        let existed: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspaces WHERE path = ?1)",
+            [path],
+            |row| row.get(0),
+        )?;
+        self.conn.execute(
             "INSERT INTO workspaces (id, path, name) VALUES (?1, ?2, ?3)
              ON CONFLICT(path) DO UPDATE SET last_opened_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
             rusqlite::params![workspace.id(), path, workspace.name()],
         )?;
-        Ok(inserted == 1)
+        Ok(!existed)
     }
 
     /// All known workspaces, most recently opened first.
@@ -282,7 +290,9 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if the query fails.
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, StoreError> {
-        let mut statement = self.conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
+        let mut statement = self
+            .conn
+            .prepare("SELECT value FROM settings WHERE key = ?1")?;
         let mut rows = statement.query(rusqlite::params![key])?;
         Ok(match rows.next()? {
             Some(row) => Some(row.get(0)?),
@@ -339,9 +349,10 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if the write fails.
     pub fn delete_rule(&self, id: &str) -> Result<bool, StoreError> {
-        let removed = self
-            .conn
-            .execute("DELETE FROM permission_rules WHERE id = ?1", rusqlite::params![id])?;
+        let removed = self.conn.execute(
+            "DELETE FROM permission_rules WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
         Ok(removed == 1)
     }
 
@@ -356,7 +367,12 @@ impl Store {
         let prev_hash = self.last_audit_hash()?.unwrap_or_else(|| "genesis".into());
         let payload = format!(
             "{prev_hash}|{}|{}|{}|{}|{}|{}|{}",
-            entry.mode, entry.action, entry.target, entry.decision, entry.reason, entry.actor,
+            entry.mode,
+            entry.action,
+            entry.target,
+            entry.decision,
+            entry.reason,
+            entry.actor,
             entry.task_id.unwrap_or("")
         );
         let hash = crate::hash::sha256_hex(payload.as_bytes());
@@ -525,7 +541,9 @@ mod tests {
                 )
                 .expect("workspace");
         }
-        store.insert_rule(&rule("global-a", "global", None)).expect("global");
+        store
+            .insert_rule(&rule("global-a", "global", None))
+            .expect("global");
         store
             .insert_rule(&rule("own", "workspace", Some("ws_1")))
             .expect("own");
@@ -547,7 +565,9 @@ mod tests {
     #[test]
     fn inserting_the_same_rule_id_updates_instead_of_failing() {
         let store = Store::open_in_memory().expect("open");
-        store.insert_rule(&rule("r", "global", None)).expect("first");
+        store
+            .insert_rule(&rule("r", "global", None))
+            .expect("first");
         let mut updated = rule("r", "global", None);
         updated.effect = "deny".into();
         store.insert_rule(&updated).expect("update");
@@ -559,7 +579,9 @@ mod tests {
     fn deleting_a_missing_rule_reports_false() {
         let store = Store::open_in_memory().expect("open");
         assert!(!store.delete_rule("nope").expect("delete"));
-        store.insert_rule(&rule("r", "global", None)).expect("insert");
+        store
+            .insert_rule(&rule("r", "global", None))
+            .expect("insert");
         assert!(store.delete_rule("r").expect("delete"));
     }
 
@@ -613,10 +635,16 @@ mod tests {
         }
         // The append-only triggers block a normal UPDATE, so drop them first:
         // the point is that the verifier still catches a rewrite.
-        store.conn.execute_batch("DROP TRIGGER audit_log_no_update;").expect("drop");
         store
             .conn
-            .execute("UPDATE audit_log SET target = '/etc/passwd' WHERE seq = 2", [])
+            .execute_batch("DROP TRIGGER audit_log_no_update;")
+            .expect("drop");
+        store
+            .conn
+            .execute(
+                "UPDATE audit_log SET target = '/etc/passwd' WHERE seq = 2",
+                [],
+            )
             .expect("tamper");
 
         let report = store.verify_audit().expect("verify");
@@ -732,4 +760,3 @@ pub struct AuditVerification {
     /// `seq` of the first inconsistent row, when `ok` is false.
     pub broken_at: Option<i64>,
 }
-

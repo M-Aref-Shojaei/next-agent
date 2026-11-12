@@ -19,9 +19,7 @@ pub use broker::{
 };
 pub use events::{AgentEvent, EventKind, EventLog};
 pub use runner::{run_task, BrokerOutcome, ToolBroker};
-pub use store::{
-    AuditEntry, AuditVerification, RuleRow, Store, StoreError, StoredWorkspace,
-};
+pub use store::{AuditEntry, AuditVerification, RuleRow, Store, StoreError, StoredWorkspace};
 pub use task::{TaskId, TaskStatus};
 pub use tools::{ToolRequest, ToolResult};
 pub use workspace::{Workspace, WorkspaceError};

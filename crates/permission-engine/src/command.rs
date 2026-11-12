@@ -39,7 +39,10 @@ impl CommandClass {
     /// Classes that `auto` mode refuses to run unattended.
     #[must_use]
     pub fn auto_forbidden(self) -> bool {
-        matches!(self, Self::Sensitive | Self::NetworkRemote | Self::Deploy | Self::Catastrophic)
+        matches!(
+            self,
+            Self::Sensitive | Self::NetworkRemote | Self::Deploy | Self::Catastrophic
+        )
     }
 
     fn worst(self, other: Self) -> Self {
@@ -52,16 +55,50 @@ impl CommandClass {
 }
 
 /// Programs that only read or build.
-const READ_ONLY: &[&str] = &["ls", "cat", "head", "tail", "wc", "rg", "grep", "fd", "find", "tree", "file", "stat", "which", "echo", "pwd", "true"];
+const READ_ONLY: &[&str] = &[
+    "ls", "cat", "head", "tail", "wc", "rg", "grep", "fd", "find", "tree", "file", "stat", "which",
+    "echo", "pwd", "true",
+];
 
 /// Package managers and the subcommands that are safe to run unattended.
 const SAFE_SUBCOMMANDS: &[(&str, &[&str])] = &[
-    ("pnpm", &["test", "lint", "build", "run", "install", "i", "ci", "fmt", "check", "exec", "dlx", "vitest", "tsc"]),
+    (
+        "pnpm",
+        &[
+            "test", "lint", "build", "run", "install", "i", "ci", "fmt", "check", "exec", "dlx",
+            "vitest", "tsc",
+        ],
+    ),
     ("npm", &["test", "run", "install", "ci", "exec", "ls"]),
     ("yarn", &["test", "run", "install", "build", "lint"]),
     ("bun", &["test", "run", "install", "build", "lint"]),
-    ("cargo", &["build", "test", "check", "clippy", "fmt", "run", "doc", "bench", "metadata"]),
-    ("git", &["status", "diff", "log", "add", "commit", "branch", "show", "rev-parse", "stash", "switch", "checkout", "init", "worktree", "apply", "restore", "blame"]),
+    (
+        "cargo",
+        &[
+            "build", "test", "check", "clippy", "fmt", "run", "doc", "bench", "metadata",
+        ],
+    ),
+    (
+        "git",
+        &[
+            "status",
+            "diff",
+            "log",
+            "add",
+            "commit",
+            "branch",
+            "show",
+            "rev-parse",
+            "stash",
+            "switch",
+            "checkout",
+            "init",
+            "worktree",
+            "apply",
+            "restore",
+            "blame",
+        ],
+    ),
     ("uv", &["run", "sync", "lock"]),
     ("python3", &["-m"]),
     ("node", &["--test"]),
@@ -71,9 +108,54 @@ const SAFE_SUBCOMMANDS: &[(&str, &[&str])] = &[
     ("go", &["build", "test", "vet"]),
 ];
 
-const SENSITIVE_PROGRAMS: &[&str] = &["sudo", "su", "doas", "apt", "apt-get", "dnf", "yum", "pacman", "brew", "port", "systemctl", "service", "launchctl", "crontab", "at", "defaults", "reg", "sc", "net", "iptables", "pfctl", "nft", "diskutil", "security", "csrutil", "chmod", "chown", "chgrp", "killall", "pkill"];
+const SENSITIVE_PROGRAMS: &[&str] = &[
+    "sudo",
+    "su",
+    "doas",
+    "apt",
+    "apt-get",
+    "dnf",
+    "yum",
+    "pacman",
+    "brew",
+    "port",
+    "systemctl",
+    "service",
+    "launchctl",
+    "crontab",
+    "at",
+    "defaults",
+    "reg",
+    "sc",
+    "net",
+    "iptables",
+    "pfctl",
+    "nft",
+    "diskutil",
+    "security",
+    "csrutil",
+    "chmod",
+    "chown",
+    "chgrp",
+    "killall",
+    "pkill",
+];
 
-const NETWORK_PROGRAMS: &[&str] = &["ssh", "scp", "sftp", "telnet", "nc", "netcat", "ncat", "ngrok", "cloudflared", "tailscale", "rclone", "ftp", "socat"];
+const NETWORK_PROGRAMS: &[&str] = &[
+    "ssh",
+    "scp",
+    "sftp",
+    "telnet",
+    "nc",
+    "netcat",
+    "ncat",
+    "ngrok",
+    "cloudflared",
+    "tailscale",
+    "rclone",
+    "ftp",
+    "socat",
+];
 
 /// Deploy verbs, matched as `program subcommand` pairs.
 const DEPLOY_PAIRS: &[(&str, &[&str])] = &[
@@ -250,7 +332,7 @@ fn classify_segment(segment: &str) -> CommandClass {
 }
 
 /// `sudo cmd`, `env A=1 cmd`, `time cmd`, `xargs cmd`: look at the real command.
-fn strip_wrappers<'a>(words: &'a [String]) -> &'a [String] {
+fn strip_wrappers(words: &[String]) -> &[String] {
     let mut index = 0;
     while index < words.len() {
         let word = words[index].as_str();
@@ -266,7 +348,10 @@ fn strip_wrappers<'a>(words: &'a [String]) -> &'a [String] {
             }
         } else if matches!(word, "env" | "time" | "nohup" | "command" | "builtin") {
             index += 1;
-            while index < words.len() && words[index].contains('=') && !words[index].starts_with('-') {
+            while index < words.len()
+                && words[index].contains('=')
+                && !words[index].starts_with('-')
+            {
                 index += 1;
             }
         } else if word == "nice" || word == "xargs" {
@@ -307,7 +392,10 @@ fn is_remote_copy(program: &str, _args: &[&str]) -> bool {
 }
 
 fn is_deploy(program: &str, args: &[&str]) -> bool {
-    if args.iter().any(|arg| *arg == "--prod" || *arg == "--production") {
+    if args
+        .iter()
+        .any(|arg| *arg == "--prod" || *arg == "--production")
+    {
         return true;
     }
     DEPLOY_PAIRS
@@ -317,7 +405,9 @@ fn is_deploy(program: &str, args: &[&str]) -> bool {
 
 fn is_safe(program: &str, args: &[&str]) -> bool {
     if READ_ONLY.contains(&program) {
-        return !args.iter().any(|arg| *arg == "-exec" || *arg == "-delete" || *arg == "-i");
+        return !args
+            .iter()
+            .any(|arg| *arg == "-exec" || *arg == "-delete" || *arg == "-i");
     }
     SAFE_SUBCOMMANDS.iter().any(|(name, verbs)| {
         if *name != program {
@@ -332,21 +422,28 @@ fn is_safe(program: &str, args: &[&str]) -> bool {
 
 fn is_catastrophic(program: &str, args: &[&str]) -> bool {
     let targets_root = args.iter().any(|arg| {
-        matches!(*arg, "/" | "/*" | "~" | "~/" | "/*/*" | "." | "..") || arg.starts_with("--no-preserve-root")
+        matches!(*arg, "/" | "/*" | "~" | "~/" | "/*/*" | "." | "..")
+            || arg.starts_with("--no-preserve-root")
     });
     match program {
         "rm" => {
-            let recursive = args.iter().any(|arg| *arg == "-r" || *arg == "-R" || *arg == "-rf" || *arg == "-fr" || arg.starts_with("-r"))
-                || args.iter().any(|arg| arg.len() > 1 && arg.starts_with('-') && arg.contains('r'));
+            let recursive = args.iter().any(|arg| {
+                *arg == "-r"
+                    || *arg == "-R"
+                    || *arg == "-rf"
+                    || *arg == "-fr"
+                    || arg.starts_with("-r")
+            }) || args
+                .iter()
+                .any(|arg| arg.len() > 1 && arg.starts_with('-') && arg.contains('r'));
             recursive && targets_root
         }
-        "mkfs" | "mkfs.ext4" | "mkfs.xfs" | "format" => true,
+        "mkfs" | "mkfs.ext4" | "mkfs.xfs" | "format" | "shutdown" | "reboot" | "halt"
+        | "poweroff" => true,
         "dd" => args
             .iter()
             .any(|arg| arg.starts_with("of=/dev/") || arg.starts_with("of=\\\\")),
-        "chmod" => args.iter().any(|arg| *arg == "-R" || *arg == "-r") && targets_root,
-        "chown" => args.iter().any(|arg| *arg == "-R" || *arg == "-r") && targets_root,
-        "shutdown" | "reboot" | "halt" | "poweroff" => true,
+        "chmod" | "chown" => args.iter().any(|arg| *arg == "-R" || *arg == "-r") && targets_root,
         _ => {
             // Fork bombs: `:(){ :|:& };:` and friends.
             let joined = args.join(" ");
@@ -362,7 +459,10 @@ mod tests {
 
     #[test]
     fn splits_compound_commands() {
-        assert_eq!(split_segments("a && b || c; d | e"), ["a", "b", "c", "d", "e"]);
+        assert_eq!(
+            split_segments("a && b || c; d | e"),
+            ["a", "b", "c", "d", "e"]
+        );
         assert_eq!(split_segments("echo 'a | b'"), ["echo 'a | b'"]);
         assert_eq!(split_segments("echo $(rm -rf /)"), ["echo", "rm -rf /"]);
         assert_eq!(split_segments("echo `whoami`"), ["echo", "whoami"]);

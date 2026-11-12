@@ -5,13 +5,16 @@
 //! implementations (see ADR-0008).
 
 use next_agent_permission_engine::{
-    evaluate, CommandClass, Context, Decision, Mode, Request, RuleSet, Sandbox,
+    CommandClass, Context, Decision, Mode, Request, RuleSet, Sandbox,
 };
 use serde_json::Value;
 use std::path::PathBuf;
 
 fn fixture() -> Value {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/policy-cases.json");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/policy-cases.json"
+    );
     let text = std::fs::read_to_string(path).expect("fixture is readable");
     serde_json::from_str(&text).expect("fixture is valid JSON")
 }
@@ -104,7 +107,11 @@ fn every_fixture_case_matches() {
             ));
         }
     }
-    assert!(failures.is_empty(), "fixture mismatches:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "fixture mismatches:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]

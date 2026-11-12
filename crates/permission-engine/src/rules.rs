@@ -23,7 +23,9 @@ pub enum RuleTarget {
 pub enum Scope {
     Global,
     /// Only inside one workspace, addressed by its stable `ws_…` id.
-    Workspace { id: String },
+    Workspace {
+        id: String,
+    },
 }
 
 /// One persisted rule.
@@ -103,17 +105,21 @@ impl RuleSet {
         self.rules.is_empty()
     }
 
-    #[must_use]
     pub fn iter(&self) -> impl Iterator<Item = &Rule> {
         self.rules.iter()
     }
 
     /// First rule with the given effect that matches `subject` in `workspace`.
     #[must_use]
-    pub fn matching(&self, effect: Effect, subject: &Subject<'_>, workspace_id: &str) -> Option<&Rule> {
-        self.rules
-            .iter()
-            .find(|rule| rule.effect == effect && rule.applies_to(workspace_id) && matches(rule, subject))
+    pub fn matching(
+        &self,
+        effect: Effect,
+        subject: &Subject<'_>,
+        workspace_id: &str,
+    ) -> Option<&Rule> {
+        self.rules.iter().find(|rule| {
+            rule.effect == effect && rule.applies_to(workspace_id) && matches(rule, subject)
+        })
     }
 }
 
@@ -141,12 +147,13 @@ fn matches(rule: &Rule, subject: &Subject<'_>) -> bool {
 fn command_matches(prefix: &[String], command: &str) -> bool {
     let words: Vec<&str> = command.split_whitespace().collect();
     let words = skip_wrappers(&words);
-    prefix.len() <= words.len() && prefix.iter().zip(&words).all(|(a, b)| a == *b)
+    prefix.len() <= words.len() && prefix.iter().zip(words.iter()).all(|(a, b)| a == *b)
 }
 
 fn skip_wrappers<'a>(words: &'a [&'a str]) -> &'a [&'a str] {
     let mut index = 0;
-    while index < words.len() && matches!(words[index], "sudo" | "doas" | "env" | "time" | "nohup") {
+    while index < words.len() && matches!(words[index], "sudo" | "doas" | "env" | "time" | "nohup")
+    {
         index += 1;
         while index < words.len() && words[index].contains('=') {
             index += 1;
@@ -173,7 +180,7 @@ fn glob_from(pattern: &[char], text: &[char]) -> bool {
             let rest = &pattern[2..];
             // `**/` matches zero or more whole segments, so `**/*.rs` also
             // matches `main.rs` at the current level.
-            if matches!(rest.first(), Some('/') | Some('\\')) {
+            if matches!(rest.first(), Some('/' | '\\')) {
                 let separator = rest[0];
                 let tail = &rest[1..];
                 if glob_from(tail, text) {
@@ -265,9 +272,7 @@ mod tests {
                 kind: "write_file".into(),
             },
         )
-        .scoped_to(Scope::Workspace {
-            id: "ws_1".into(),
-        });
+        .scoped_to(Scope::Workspace { id: "ws_1".into() });
         let set = RuleSet::new(vec![rule]);
         let subject = Subject {
             tool: "write_file",

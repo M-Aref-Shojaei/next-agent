@@ -22,7 +22,9 @@ impl std::fmt::Display for WorkspaceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound(p) => write!(f, "workspace path does not exist: {}", p.display()),
-            Self::NotADirectory(p) => write!(f, "workspace path is not a directory: {}", p.display()),
+            Self::NotADirectory(p) => {
+                write!(f, "workspace path is not a directory: {}", p.display())
+            }
             Self::EmptyPath => write!(f, "workspace path is empty"),
         }
     }
@@ -49,10 +51,10 @@ impl Workspace {
         let root = path
             .canonicalize()
             .map_err(|_| WorkspaceError::NotFound(path.to_path_buf()))?;
-        let name = root
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| root.display().to_string());
+        let name = root.file_name().map_or_else(
+            || root.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
 
         Ok(Self {
             id: stable_id(&root),
@@ -137,25 +139,22 @@ pub fn canonicalize_lenient(path: &Path) -> std::io::Result<PathBuf> {
             }
             return Ok(result);
         }
-        match current.file_name() {
-            Some(name) => {
-                remainder.push(name.to_os_string());
-                if !current.pop() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "no existing ancestor",
-                    ));
-                }
-            }
-            None => {
-                if current.pop() {
-                    continue;
-                }
+        if let Some(name) = current.file_name() {
+            remainder.push(name.to_os_string());
+            if !current.pop() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     "no existing ancestor",
                 ));
             }
+        } else {
+            if current.pop() {
+                continue;
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no existing ancestor",
+            ));
         }
     }
 }

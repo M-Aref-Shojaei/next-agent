@@ -198,8 +198,14 @@ mod tests {
     #[test]
     fn expands_tilde_and_relative_paths() {
         let box_ = sandbox();
-        assert_eq!(box_.resolve(Path::new("/x"), Path::new("~/k")), PathBuf::from("/home/dev/k"));
-        assert_eq!(box_.resolve(Path::new("/x"), Path::new("~")), PathBuf::from("/home/dev"));
+        assert_eq!(
+            box_.resolve(Path::new("/x"), Path::new("~/k")),
+            PathBuf::from("/home/dev/k")
+        );
+        assert_eq!(
+            box_.resolve(Path::new("/x"), Path::new("~")),
+            PathBuf::from("/home/dev")
+        );
         assert_eq!(
             box_.resolve(box_.root(), Path::new("src/a.rs")),
             PathBuf::from("/work/project/src/a.rs")
@@ -208,9 +214,21 @@ mod tests {
 
     #[test]
     fn containment_is_component_wise() {
-        assert!(is_within(Path::new("/work/project/src"), Path::new("/work/project"), false));
-        assert!(!is_within(Path::new("/work/project-evil"), Path::new("/work/project"), false));
-        assert!(!is_within(Path::new("/work"), Path::new("/work/project"), false));
+        assert!(is_within(
+            Path::new("/work/project/src"),
+            Path::new("/work/project"),
+            false
+        ));
+        assert!(!is_within(
+            Path::new("/work/project-evil"),
+            Path::new("/work/project"),
+            false
+        ));
+        assert!(!is_within(
+            Path::new("/work"),
+            Path::new("/work/project"),
+            false
+        ));
     }
 
     /// The escape corpus: every one of these must resolve outside the root.
@@ -269,18 +287,38 @@ mod tests {
     #[test]
     fn sensitive_paths_are_flagged() {
         let box_ = sandbox();
-        assert_eq!(zone(Path::new("/home/dev/.ssh/id_rsa"), &box_, false), Zone::Sensitive);
-        assert_eq!(zone(Path::new("/home/dev/.aws/credentials"), &box_, false), Zone::Sensitive);
+        assert_eq!(
+            zone(Path::new("/home/dev/.ssh/id_rsa"), &box_, false),
+            Zone::Sensitive
+        );
+        assert_eq!(
+            zone(Path::new("/home/dev/.aws/credentials"), &box_, false),
+            Zone::Sensitive
+        );
         assert_eq!(zone(Path::new("/etc/hosts"), &box_, false), Zone::Sensitive);
-        assert_eq!(zone(Path::new("/home/dev/notes.md"), &box_, false), Zone::Outside);
-        assert_eq!(zone(Path::new("/work/project/README.md"), &box_, false), Zone::Inside);
+        assert_eq!(
+            zone(Path::new("/home/dev/notes.md"), &box_, false),
+            Zone::Outside
+        );
+        assert_eq!(
+            zone(Path::new("/work/project/README.md"), &box_, false),
+            Zone::Inside
+        );
     }
 
     #[test]
     fn case_insensitive_comparison_for_macos_and_windows() {
-        let box_ = sandbox();
-        assert!(is_within(Path::new("/Work/Project/A"), Path::new("/work/project"), true));
-        assert!(!is_within(Path::new("/Work/Project/A"), Path::new("/work/project"), false));
+        let _box_ = sandbox();
+        assert!(is_within(
+            Path::new("/Work/Project/A"),
+            Path::new("/work/project"),
+            true
+        ));
+        assert!(!is_within(
+            Path::new("/Work/Project/A"),
+            Path::new("/work/project"),
+            false
+        ));
     }
 
     #[test]

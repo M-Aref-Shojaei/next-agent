@@ -165,7 +165,13 @@ mod tests {
     fn denied_call_ends_task_with_failure_summary() {
         let mut executor = MockExecutor::new(vec![read_call("c1"), read_call("c2")]);
         let events = run_task(&mut executor, &mut DenyAll, &spec(), &|| false);
-        assert_eq!(events.iter().filter(|e| e.kind.kind() == "tool_requested").count(), 1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e.kind.kind() == "tool_requested")
+                .count(),
+            1
+        );
         assert_eq!(
             events.last().map(|event| &event.kind),
             Some(&EventKind::TaskCompleted {

@@ -27,7 +27,9 @@ fn reopening_a_file_keeps_data() {
     {
         let store = Store::open(&db).expect("open");
         assert!(store.upsert_workspace(&workspace).expect("insert"));
-        store.set_setting("router.url", "\"http://127.0.0.1:20128/v1\"").expect("setting");
+        store
+            .set_setting("router.url", "\"http://127.0.0.1:20128/v1\"")
+            .expect("setting");
     }
 
     let store = Store::open(&db).expect("reopen");
@@ -59,7 +61,10 @@ fn settings_round_trip_and_overwrite() {
     assert_eq!(store.get_setting("missing").expect("get"), None);
     store.set_setting("mode", "\"manual\"").expect("set");
     store.set_setting("mode", "\"auto\"").expect("overwrite");
-    assert_eq!(store.get_setting("mode").expect("get").as_deref(), Some("\"auto\""));
+    assert_eq!(
+        store.get_setting("mode").expect("get").as_deref(),
+        Some("\"auto\"")
+    );
 }
 
 #[test]
@@ -72,14 +77,20 @@ fn events_are_persisted_in_order_and_unique() {
         .create_task("tsk_0000000000000001", workspace.id(), "t", "p", "auto")
         .expect("task");
 
-    store.append_event("tsk_0000000000000001", 1, "tool_requested", "{}").expect("seq1");
-    store.append_event("tsk_0000000000000001", 0, "task_started", "{}").expect("seq0");
+    store
+        .append_event("tsk_0000000000000001", 1, "tool_requested", "{}")
+        .expect("seq1");
+    store
+        .append_event("tsk_0000000000000001", 0, "task_started", "{}")
+        .expect("seq0");
     assert_eq!(
         store.event_kinds("tsk_0000000000000001").expect("kinds"),
         ["task_started", "tool_requested"]
     );
     assert!(
-        store.append_event("tsk_0000000000000001", 1, "dup", "{}").is_err(),
+        store
+            .append_event("tsk_0000000000000001", 1, "dup", "{}")
+            .is_err(),
         "duplicate seq must be rejected"
     );
     assert!(
@@ -87,4 +98,3 @@ fn events_are_persisted_in_order_and_unique() {
         "unknown task must be rejected by the foreign key"
     );
 }
-

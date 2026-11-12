@@ -1,22 +1,17 @@
 //! The four permission modes and their transitions.
 
 /// Active permission mode for a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
     /// Read-only exploration; mutations and commands are blocked.
     Plan,
     /// Interactive default; mutations and commands ask the user.
+    #[default]
     Manual,
     /// Autonomous inside the workspace sandbox.
     Auto,
     /// Sandbox unlocked; every sensitive action is audited.
     BypassPermissions,
-}
-
-impl Default for Mode {
-    fn default() -> Self {
-        Self::Manual
-    }
 }
 
 impl Mode {

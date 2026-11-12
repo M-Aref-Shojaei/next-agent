@@ -116,7 +116,10 @@ pub fn explain(request: &Request, mode: Mode, rules: &RuleSet, ctx: &Context) ->
 
     // 1. Explicit user denial, in every mode including bypass.
     if let Some(rule) = rules.matching(Effect::Deny, &subject, &ctx.workspace_id) {
-        return build(Decision::deny(format!("denied by rule {}", rule.id)), "user_deny");
+        return build(
+            Decision::deny(format!("denied by rule {}", rule.id)),
+            "user_deny",
+        );
     }
 
     // 2. Catastrophic commands are never allowed.
@@ -228,9 +231,7 @@ fn mode_policy(
                 (Mode::Auto, Zone::Inside) if secret => {
                     (Polarity::Ask, "write to a secret file".into())
                 }
-                (Mode::Auto, Zone::Inside) => {
-                    (Polarity::Allow, "write inside the worktree".into())
-                }
+                (Mode::Auto, Zone::Inside) => (Polarity::Allow, "write inside the worktree".into()),
                 (Mode::Auto, _) => (Polarity::Ask, "write outside the workspace".into()),
                 (_, Zone::Inside) => (Polarity::Ask, "write inside workspace".into()),
                 (_, _) => (Polarity::Ask, "write outside workspace".into()),
@@ -326,18 +327,21 @@ mod tests {
     #[test]
     fn reads_outside_ask_except_bypass() {
         assert!(matches!(
-            evaluate(&read("/home/dev/notes.md"), Mode::Manual, &RuleSet::empty(), &ctx()),
-            Decision::Ask { .. }
-        ));
-        assert!(
             evaluate(
                 &read("/home/dev/notes.md"),
-                Mode::BypassPermissions,
+                Mode::Manual,
                 &RuleSet::empty(),
                 &ctx()
-            )
-            .is_allowed()
-        );
+            ),
+            Decision::Ask { .. }
+        ));
+        assert!(evaluate(
+            &read("/home/dev/notes.md"),
+            Mode::BypassPermissions,
+            &RuleSet::empty(),
+            &ctx()
+        )
+        .is_allowed());
     }
 
     #[test]
@@ -382,7 +386,12 @@ mod tests {
     fn manual_allows_safe_commands_and_asks_for_the_rest() {
         assert!(evaluate(&exec("pnpm test"), Mode::Manual, &RuleSet::empty(), &ctx()).is_allowed());
         assert!(matches!(
-            evaluate(&exec("sudo apt install x"), Mode::Manual, &RuleSet::empty(), &ctx()),
+            evaluate(
+                &exec("sudo apt install x"),
+                Mode::Manual,
+                &RuleSet::empty(),
+                &ctx()
+            ),
             Decision::Ask { .. }
         ));
     }
