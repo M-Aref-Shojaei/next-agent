@@ -1,0 +1,1201 @@
+//! Git worktree isolation for `auto`-mode tasks (M1 step 4).
+//!
+//! Seam: [`WorktreeProvider`] (see `docs/architecture/Module Boundaries.md`).
+//! The only implementation, [`GitCli`], shells out to the system `git`; **this file is the
+//! only place allowed to spawn `git`** (enforced by `scripts/check-boundaries.mjs`).
+//!
+//! Lifecycle: [`ensure_task_worktree`](WorktreeProvider::ensure_task_worktree) →
+//! (agent edits inside [`TaskWorktree::root`]) → [`checkpoint`](WorktreeProvider::checkpoint) →
+//! [`diff`](WorktreeProvider::diff) → [`merge`](WorktreeProvider::merge) /
+//! [`discard`](WorktreeProvider::discard) / [`keep`](WorktreeProvider::keep).
+//!
+//! Nothing here ever writes to the main working tree until [`merge`](WorktreeProvider::merge).
+
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::task::TaskId;
+
+const BRANCH_PREFIX: &str = "next-agent/auto-";
+const WORKTREE_DIR: &str = ".next-agent/worktrees";
+const EXCLUDE_ENTRY: &str = ".next-agent/";
+
+// ---------------------------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------------------------
+
+/// An isolated checkout for one task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskWorktree {
+    pub task_id: TaskId,
+    /// Canonical root of the main repository.
+    pub repo_root: PathBuf,
+    /// The task's sandbox root / default cwd.
+    pub root: PathBuf,
+    /// `next-agent/auto-<short-id>`.
+    pub branch: String,
+    /// HEAD commit of the main tree when the worktree was created.
+    pub base_commit: String,
+}
+
+/// How a task branch is folded into the branch checked out in the main tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MergeStrategy {
+    /// One commit on the target branch (default, resolves Q5: agent checkpoint noise stays out
+    /// of the user's history).
+    #[default]
+    Squash,
+    /// `--no-ff` merge commit, preserving the agent's checkpoint commits.
+    NoFastForward,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MergeOptions {
+    pub strategy: MergeStrategy,
+    /// Commit message; defaults to `next-agent: task <id>`.
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeOutcome {
+    /// New commit on the target branch; `None` when the task changed nothing.
+    pub commit: Option<String>,
+    pub strategy: MergeStrategy,
+    pub files_changed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileStatus {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineKind {
+    Context,
+    Added,
+    Removed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffLine {
+    pub kind: LineKind,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hunk {
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    /// Text after the second `@@` (usually the enclosing function).
+    pub section: String,
+    pub lines: Vec<DiffLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDiff {
+    pub path: String,
+    /// Set for renames.
+    pub old_path: Option<String>,
+    pub status: FileStatus,
+    pub binary: bool,
+    pub additions: u32,
+    pub deletions: u32,
+    pub hunks: Vec<Hunk>,
+}
+
+/// Structured `<base>...<branch>` diff for the review UI.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StructuredDiff {
+    pub files: Vec<FileDiff>,
+}
+
+impl StructuredDiff {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+}
+
+/// Typed failures. Callers fall back to `manual` mode when
+/// [`WorktreeError::should_fall_back_to_manual`] is true.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorktreeError {
+    /// Workspace is not (the root of) a git repository (Q4: refuse, fall back to manual).
+    NotAGitRepo(PathBuf),
+    /// The `git` binary could not be run.
+    GitUnavailable(String),
+    /// Repository has no commits yet, so there is no HEAD to branch from.
+    NoCommits,
+    /// Main tree is on a detached HEAD; there is no branch to merge into.
+    DetachedHead,
+    /// Main tree has staged changes, or uncommitted changes in files the task also changed.
+    DirtyMainTree { files: Vec<String> },
+    /// Merge conflicted; the main tree has been restored to its pre-merge state.
+    MergeConflict { files: Vec<String> },
+    /// No worktree exists for this task.
+    NotFound(TaskId),
+    /// Any other failing git invocation.
+    Git { command: String, stderr: String },
+}
+
+impl WorktreeError {
+    #[must_use]
+    pub fn should_fall_back_to_manual(&self) -> bool {
+        matches!(
+            self,
+            Self::NotAGitRepo(_) | Self::GitUnavailable(_) | Self::NoCommits
+        )
+    }
+}
+
+impl fmt::Display for WorktreeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotAGitRepo(p) => write!(f, "not a git repository root: {}", p.display()),
+            Self::GitUnavailable(e) => write!(f, "git is unavailable: {e}"),
+            Self::NoCommits => write!(f, "repository has no commits"),
+            Self::DetachedHead => write!(f, "main working tree is on a detached HEAD"),
+            Self::DirtyMainTree { files } => {
+                write!(
+                    f,
+                    "main working tree has conflicting changes: {}",
+                    files.join(", ")
+                )
+            }
+            Self::MergeConflict { files } => write!(f, "merge conflict in: {}", files.join(", ")),
+            Self::NotFound(id) => write!(f, "no worktree for task {id}"),
+            Self::Git { command, stderr } => write!(f, "git {command} failed: {}", stderr.trim()),
+        }
+    }
+}
+
+impl std::error::Error for WorktreeError {}
+
+type Result<T> = std::result::Result<T, WorktreeError>;
+
+// ---------------------------------------------------------------------------------------------
+// Seam
+// ---------------------------------------------------------------------------------------------
+
+/// Git isolation seam. Implementations: [`GitCli`].
+pub trait WorktreeProvider {
+    /// Create (or return the existing) worktree for `task_id` from the main tree's HEAD.
+    ///
+    /// # Errors
+    /// [`WorktreeError::NotAGitRepo`] / [`WorktreeError::NoCommits`] for workspaces where auto
+    /// mode is unavailable; other variants for git failures.
+    fn ensure_task_worktree(&self, repo_root: &Path, task_id: &TaskId) -> Result<TaskWorktree>;
+
+    /// Look up an existing worktree without creating one.
+    ///
+    /// # Errors
+    /// Git failures.
+    fn find(&self, repo_root: &Path, task_id: &TaskId) -> Result<Option<TaskWorktree>>;
+
+    /// Commit everything in the worktree to the task branch. Returns the new commit, or `None`
+    /// if there was nothing to commit.
+    ///
+    /// # Errors
+    /// Git failures.
+    fn checkpoint(&self, wt: &TaskWorktree, message: &str) -> Result<Option<String>>;
+
+    /// Structured diff of the *committed* task branch against its base (`base...branch`).
+    /// Call [`checkpoint`](Self::checkpoint) first to include uncommitted edits.
+    ///
+    /// # Errors
+    /// Git failures.
+    fn diff(&self, wt: &TaskWorktree) -> Result<StructuredDiff>;
+
+    /// Checkpoint, merge into the branch checked out in the main tree, then remove the worktree
+    /// and branch. On error nothing is lost and the main tree is left as it was.
+    ///
+    /// # Errors
+    /// [`WorktreeError::DirtyMainTree`], [`WorktreeError::MergeConflict`],
+    /// [`WorktreeError::DetachedHead`], or git failures.
+    fn merge(&self, wt: &TaskWorktree, options: &MergeOptions) -> Result<MergeOutcome>;
+
+    /// Remove the worktree and delete the branch. Idempotent.
+    ///
+    /// # Errors
+    /// Git failures.
+    fn discard(&self, wt: &TaskWorktree) -> Result<()>;
+
+    /// Checkpoint and leave worktree + branch in place for later review.
+    ///
+    /// # Errors
+    /// Git failures.
+    fn keep(&self, wt: &TaskWorktree) -> Result<()>;
+
+    /// All task worktrees (active or kept) for the sidebar / settings list.
+    ///
+    /// # Errors
+    /// Git failures.
+    fn list(&self, repo_root: &Path) -> Result<Vec<TaskWorktree>>;
+
+    /// `git worktree prune` (run on startup to drop records of deleted directories).
+    ///
+    /// # Errors
+    /// Git failures.
+    fn prune(&self, repo_root: &Path) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------------------------
+// git CLI adapter (the only code that spawns git)
+// ---------------------------------------------------------------------------------------------
+
+/// Shells out to the system `git`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GitCli;
+
+struct GitOutput {
+    ok: bool,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_git(dir: &Path, args: &[&str]) -> Result<GitOutput> {
+    let out = Command::new("git")
+        .arg("-c")
+        .arg("core.quotepath=false")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .map_err(|e| WorktreeError::GitUnavailable(e.to_string()))?;
+    Ok(GitOutput {
+        ok: out.status.success(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    })
+}
+
+fn git(dir: &Path, args: &[&str]) -> Result<String> {
+    let out = run_git(dir, args)?;
+    if out.ok {
+        Ok(out.stdout)
+    } else {
+        Err(WorktreeError::Git {
+            command: args.join(" "),
+            stderr: out.stderr,
+        })
+    }
+}
+
+fn short_id(task_id: &TaskId) -> String {
+    let id = task_id.as_str();
+    id.strip_prefix("tsk_")
+        .unwrap_or(id)
+        .chars()
+        .take(8)
+        .collect()
+}
+
+fn branch_name(task_id: &TaskId) -> String {
+    format!("{BRANCH_PREFIX}{}", short_id(task_id))
+}
+
+fn nul_list(s: &str) -> Vec<String> {
+    s.split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+impl GitCli {
+    /// Validate `repo_root` is the toplevel of a repo with at least one commit.
+    fn open_repo(repo_root: &Path) -> Result<PathBuf> {
+        let canonical = repo_root
+            .canonicalize()
+            .map_err(|_| WorktreeError::NotAGitRepo(repo_root.to_path_buf()))?;
+        let out = run_git(&canonical, &["rev-parse", "--show-toplevel"])?;
+        if !out.ok {
+            return Err(WorktreeError::NotAGitRepo(canonical));
+        }
+        let top = PathBuf::from(out.stdout.trim());
+        if top.canonicalize().ok().as_deref() != Some(canonical.as_path()) {
+            return Err(WorktreeError::NotAGitRepo(canonical));
+        }
+        Ok(canonical)
+    }
+
+    fn head(repo: &Path) -> Result<String> {
+        let out = run_git(repo, &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])?;
+        if out.ok {
+            Ok(out.stdout.trim().to_owned())
+        } else {
+            Err(WorktreeError::NoCommits)
+        }
+    }
+
+    fn ensure_excluded(repo: &Path) -> Result<()> {
+        let raw = git(repo, &["rev-parse", "--git-path", "info/exclude"])?;
+        let mut path = PathBuf::from(raw.trim());
+        if path.is_relative() {
+            path = repo.join(path);
+        }
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        if existing.lines().any(|l| l.trim() == EXCLUDE_ENTRY) {
+            return Ok(());
+        }
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let mut next = existing;
+        if !next.is_empty() && !next.ends_with('\n') {
+            next.push('\n');
+        }
+        next.push_str(EXCLUDE_ENTRY);
+        next.push('\n');
+        std::fs::write(&path, next).map_err(|e| WorktreeError::Git {
+            command: "write info/exclude".into(),
+            stderr: e.to_string(),
+        })
+    }
+
+    fn base_of(repo: &Path, branch: &str) -> Result<String> {
+        let key = format!("branch.{branch}.nextAgentBase");
+        let out = run_git(repo, &["config", "--get", &key])?;
+        if out.ok && !out.stdout.trim().is_empty() {
+            return Ok(out.stdout.trim().to_owned());
+        }
+        Ok(git(repo, &["merge-base", "HEAD", branch])?
+            .trim()
+            .to_owned())
+    }
+
+    fn branch_exists(repo: &Path, branch: &str) -> Result<bool> {
+        let r = format!("refs/heads/{branch}");
+        Ok(run_git(repo, &["rev-parse", "--verify", "--quiet", &r])?.ok)
+    }
+
+    /// Paths with uncommitted changes in the main tree, and whether anything is staged.
+    fn main_tree_status(repo: &Path) -> Result<(Vec<String>, bool)> {
+        let raw = git(
+            repo,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )?;
+        let mut parts = raw.split('\0').filter(|p| !p.is_empty());
+        let (mut paths, mut staged) = (Vec::new(), false);
+        while let Some(entry) = parts.next() {
+            if entry.len() < 4 {
+                continue;
+            }
+            let (x, y) = (entry.as_bytes()[0], entry.as_bytes()[1]);
+            if x != b' ' && x != b'?' && x != b'!' {
+                staged = true;
+            }
+            paths.push(entry[3..].to_owned());
+            if x == b'R' || x == b'C' || y == b'R' || y == b'C' {
+                if let Some(orig) = parts.next() {
+                    paths.push(orig.to_owned());
+                }
+            }
+        }
+        Ok((paths, staged))
+    }
+
+    fn changed_files(repo: &Path, base: &str, branch: &str) -> Result<Vec<String>> {
+        let range = format!("{base}..{branch}");
+        Ok(nul_list(&git(
+            repo,
+            &["diff", "--name-only", "-z", "--no-renames", &range],
+        )?))
+    }
+
+    fn conflicted_files(repo: &Path) -> Vec<String> {
+        run_git(repo, &["diff", "--name-only", "-z", "--diff-filter=U"])
+            .map(|o| nul_list(&o.stdout))
+            .unwrap_or_default()
+    }
+
+    fn make_wt(repo: &Path, task_id: &TaskId) -> Result<Option<TaskWorktree>> {
+        let branch = branch_name(task_id);
+        let root = repo.join(WORKTREE_DIR).join(task_id.as_str());
+        if !root.is_dir() || !Self::branch_exists(repo, &branch)? {
+            return Ok(None);
+        }
+        Ok(Some(TaskWorktree {
+            task_id: task_id.clone(),
+            repo_root: repo.to_path_buf(),
+            root,
+            base_commit: Self::base_of(repo, &branch)?,
+            branch,
+        }))
+    }
+
+    fn cleanup(wt: &TaskWorktree) -> Result<()> {
+        let repo = &wt.repo_root;
+        if wt.root.exists() {
+            let path = wt.root.to_string_lossy().into_owned();
+            let out = run_git(repo, &["worktree", "remove", "--force", &path])?;
+            if !out.ok && wt.root.exists() {
+                return Err(WorktreeError::Git {
+                    command: "worktree remove".into(),
+                    stderr: out.stderr,
+                });
+            }
+        }
+        git(repo, &["worktree", "prune"])?;
+        if Self::branch_exists(repo, &wt.branch)? {
+            git(repo, &["branch", "-D", &wt.branch])?;
+        }
+        Ok(())
+    }
+}
+
+impl WorktreeProvider for GitCli {
+    fn ensure_task_worktree(&self, repo_root: &Path, task_id: &TaskId) -> Result<TaskWorktree> {
+        let repo = Self::open_repo(repo_root)?;
+        if let Some(existing) = Self::make_wt(&repo, task_id)? {
+            return Ok(existing);
+        }
+        let base = Self::head(&repo)?;
+        Self::ensure_excluded(&repo)?;
+        let branch = branch_name(task_id);
+        let root = repo.join(WORKTREE_DIR).join(task_id.as_str());
+        let root_str = root.to_string_lossy().into_owned();
+        git(&repo, &["worktree", "add", &root_str, "-b", &branch, &base])?;
+        git(
+            &repo,
+            &["config", &format!("branch.{branch}.nextAgentBase"), &base],
+        )?;
+        Ok(TaskWorktree {
+            task_id: task_id.clone(),
+            repo_root: repo,
+            root,
+            branch,
+            base_commit: base,
+        })
+    }
+
+    fn find(&self, repo_root: &Path, task_id: &TaskId) -> Result<Option<TaskWorktree>> {
+        let repo = Self::open_repo(repo_root)?;
+        Self::make_wt(&repo, task_id)
+    }
+
+    fn checkpoint(&self, wt: &TaskWorktree, message: &str) -> Result<Option<String>> {
+        git(&wt.root, &["add", "-A"])?;
+        if run_git(&wt.root, &["diff", "--cached", "--quiet"])?.ok {
+            return Ok(None);
+        }
+        // Agent-authored commit: fixed identity so it works without user git config.
+        git(
+            &wt.root,
+            &[
+                "-c",
+                "user.name=Next Agent",
+                "-c",
+                "user.email=agent@next-agent.local",
+                "commit",
+                "--no-verify",
+                "--no-gpg-sign",
+                "-m",
+                message,
+            ],
+        )?;
+        Ok(Some(
+            git(&wt.root, &["rev-parse", "HEAD"])?.trim().to_owned(),
+        ))
+    }
+
+    fn diff(&self, wt: &TaskWorktree) -> Result<StructuredDiff> {
+        let range = format!("{}...{}", wt.base_commit, wt.branch);
+        let raw = git(
+            &wt.repo_root,
+            &[
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "-U3",
+                &range,
+            ],
+        )?;
+        Ok(parse_unified_diff(&raw))
+    }
+
+    fn merge(&self, wt: &TaskWorktree, options: &MergeOptions) -> Result<MergeOutcome> {
+        let repo = &wt.repo_root;
+        self.checkpoint(wt, &format!("next-agent: checkpoint {}", wt.task_id))?;
+
+        let target = git(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .map_err(|_| WorktreeError::DetachedHead)?;
+        let _ = target;
+
+        let files = Self::changed_files(repo, &wt.base_commit, &wt.branch)?;
+        if files.is_empty() {
+            Self::cleanup(wt)?;
+            return Ok(MergeOutcome {
+                commit: None,
+                strategy: options.strategy,
+                files_changed: files,
+            });
+        }
+
+        let (dirty, staged) = Self::main_tree_status(repo)?;
+        let mut blocking: Vec<String> = dirty.into_iter().filter(|p| files.contains(p)).collect();
+        if staged {
+            // Squash/merge commits would sweep staged user changes in; refuse.
+            let staged_paths = nul_list(&git(repo, &["diff", "--cached", "--name-only", "-z"])?);
+            for p in staged_paths {
+                if !blocking.contains(&p) {
+                    blocking.push(p);
+                }
+            }
+        }
+        if !blocking.is_empty() {
+            blocking.sort();
+            return Err(WorktreeError::DirtyMainTree { files: blocking });
+        }
+
+        let before = Self::head(repo)?;
+        let message = options
+            .message
+            .clone()
+            .unwrap_or_else(|| format!("next-agent: task {}", wt.task_id));
+
+        let result = match options.strategy {
+            MergeStrategy::Squash => run_git(repo, &["merge", "--squash", &wt.branch]),
+            MergeStrategy::NoFastForward => {
+                run_git(repo, &["merge", "--no-ff", "-m", &message, &wt.branch])
+            }
+        }?;
+        if !result.ok {
+            let mut conflicts = Self::conflicted_files(repo);
+            conflicts.sort();
+            // Restore the main tree (we verified it had no conflicting local edits).
+            match options.strategy {
+                MergeStrategy::Squash => {
+                    let _ = run_git(repo, &["reset", "--merge"]);
+                }
+                MergeStrategy::NoFastForward => {
+                    let _ = run_git(repo, &["merge", "--abort"]);
+                }
+            }
+            if conflicts.is_empty() {
+                return Err(WorktreeError::Git {
+                    command: "merge".into(),
+                    stderr: format!("{}{}", result.stdout, result.stderr),
+                });
+            }
+            return Err(WorktreeError::MergeConflict { files: conflicts });
+        }
+        if options.strategy == MergeStrategy::Squash
+            && !run_git(repo, &["diff", "--cached", "--quiet"])?.ok
+        {
+            git(repo, &["commit", "-m", &message])?;
+        }
+
+        let after = Self::head(repo)?;
+        Self::cleanup(wt)?;
+        Ok(MergeOutcome {
+            commit: (after != before).then_some(after),
+            strategy: options.strategy,
+            files_changed: files,
+        })
+    }
+
+    fn discard(&self, wt: &TaskWorktree) -> Result<()> {
+        Self::cleanup(wt)
+    }
+
+    fn keep(&self, wt: &TaskWorktree) -> Result<()> {
+        self.checkpoint(wt, &format!("next-agent: checkpoint {}", wt.task_id))?;
+        Ok(())
+    }
+
+    fn list(&self, repo_root: &Path) -> Result<Vec<TaskWorktree>> {
+        let repo = Self::open_repo(repo_root)?;
+        let raw = git(&repo, &["worktree", "list", "--porcelain"])?;
+        let mut out = Vec::new();
+        for block in raw.split("\n\n") {
+            let mut path = None;
+            let mut branch = None;
+            for line in block.lines() {
+                if let Some(p) = line.strip_prefix("worktree ") {
+                    path = Some(PathBuf::from(p));
+                } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
+                    branch = Some(b.to_owned());
+                }
+            }
+            let (Some(path), Some(branch)) = (path, branch) else {
+                continue;
+            };
+            if !branch.starts_with(BRANCH_PREFIX) {
+                continue;
+            }
+            let Some(task_id) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| TaskId::parse(n.to_owned()))
+            else {
+                continue;
+            };
+            let base_commit = Self::base_of(&repo, &branch)?;
+            out.push(TaskWorktree {
+                task_id,
+                repo_root: repo.clone(),
+                root: path,
+                branch,
+                base_commit,
+            });
+        }
+        Ok(out)
+    }
+
+    fn prune(&self, repo_root: &Path) -> Result<()> {
+        let repo = Self::open_repo(repo_root)?;
+        git(&repo, &["worktree", "prune"]).map(|_| ())
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Unified diff parser
+// ---------------------------------------------------------------------------------------------
+
+fn parse_range(s: &str) -> (u32, u32) {
+    let s = s.trim_start_matches(['-', '+']);
+    match s.split_once(',') {
+        Some((a, b)) => (a.parse().unwrap_or(0), b.parse().unwrap_or(0)),
+        None => (s.parse().unwrap_or(0), 1),
+    }
+}
+
+fn parse_hunk_header(line: &str) -> Option<Hunk> {
+    let rest = line.strip_prefix("@@ ")?;
+    let (ranges, section) = rest.split_once(" @@")?;
+    let (old, new) = ranges.split_once(' ')?;
+    let (old_start, old_lines) = parse_range(old);
+    let (new_start, new_lines) = parse_range(new);
+    Some(Hunk {
+        old_start,
+        old_lines,
+        new_start,
+        new_lines,
+        section: section.trim().to_owned(),
+        lines: Vec::new(),
+    })
+}
+
+/// Parse `git diff` output (default prefixes `a/` `b/`) into per-file hunks.
+#[must_use]
+pub fn parse_unified_diff(raw: &str) -> StructuredDiff {
+    let mut files: Vec<FileDiff> = Vec::new();
+    let mut in_hunk = false;
+    for line in raw.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git a/") {
+            // Equal halves ("P b/P") for everything except renames, which override below.
+            let path = if rest.len() % 2 == 1 {
+                let n = (rest.len() - 3) / 2;
+                rest.get(..n).unwrap_or(rest)
+            } else {
+                rest
+            };
+            files.push(FileDiff {
+                path: path.to_owned(),
+                old_path: None,
+                status: FileStatus::Modified,
+                binary: false,
+                additions: 0,
+                deletions: 0,
+                hunks: Vec::new(),
+            });
+            in_hunk = false;
+            continue;
+        }
+        let Some(file) = files.last_mut() else {
+            continue;
+        };
+        if in_hunk && matches!(line.chars().next(), Some(' ' | '+' | '-' | '\\')) {
+            let Some(hunk) = file.hunks.last_mut() else {
+                continue;
+            };
+            let (kind, text) = match line.as_bytes()[0] {
+                b'+' => (LineKind::Added, &line[1..]),
+                b'-' => (LineKind::Removed, &line[1..]),
+                b' ' => (LineKind::Context, &line[1..]),
+                _ => continue, // "\ No newline at end of file"
+            };
+            match kind {
+                LineKind::Added => file.additions += 1,
+                LineKind::Removed => file.deletions += 1,
+                LineKind::Context => {}
+            }
+            hunk.lines.push(DiffLine {
+                kind,
+                text: text.to_owned(),
+            });
+            continue;
+        }
+        if line.starts_with("@@ ") {
+            if let Some(h) = parse_hunk_header(line) {
+                file.hunks.push(h);
+                in_hunk = true;
+            }
+            continue;
+        }
+        in_hunk = false;
+        if line.starts_with("new file mode") {
+            file.status = FileStatus::Added;
+        } else if line.starts_with("deleted file mode") {
+            file.status = FileStatus::Deleted;
+        } else if let Some(p) = line.strip_prefix("rename from ") {
+            file.status = FileStatus::Renamed;
+            file.old_path = Some(p.to_owned());
+        } else if let Some(p) = line.strip_prefix("rename to ") {
+            p.clone_into(&mut file.path);
+        } else if line.starts_with("Binary files ") || line.starts_with("GIT binary patch") {
+            file.binary = true;
+        }
+    }
+    StructuredDiff { files }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new() -> Self {
+            let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos());
+            let p = std::env::temp_dir().join(format!("na-wt-{}-{n}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p.canonicalize().unwrap())
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn g(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args([
+                "-c",
+                "user.name=Tester",
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    fn init_repo() -> TempDir {
+        let t = TempDir::new();
+        g(t.path(), &["init", "-q", "-b", "main"]);
+        std::fs::write(t.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
+        std::fs::write(t.path().join("b.txt"), "bee\n").unwrap();
+        g(t.path(), &["add", "-A"]);
+        g(t.path(), &["commit", "-q", "-m", "init"]);
+        t
+    }
+
+    fn tid(n: &str) -> TaskId {
+        TaskId::from_seed(n)
+    }
+
+    fn snapshot(repo: &Path) -> (String, String, String) {
+        (
+            g(repo, &["rev-parse", "HEAD"]),
+            g(repo, &["status", "--porcelain=v1", "--untracked-files=all"]),
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        )
+    }
+
+    #[test]
+    fn non_git_workspace_is_refused_with_typed_error() {
+        let t = TempDir::new();
+        let err = GitCli
+            .ensure_task_worktree(t.path(), &tid("x"))
+            .unwrap_err();
+        assert!(matches!(err, WorktreeError::NotAGitRepo(_)));
+        assert!(err.should_fall_back_to_manual());
+    }
+
+    #[test]
+    fn repo_without_commits_is_refused() {
+        let t = TempDir::new();
+        g(t.path(), &["init", "-q", "-b", "main"]);
+        let err = GitCli
+            .ensure_task_worktree(t.path(), &tid("x"))
+            .unwrap_err();
+        assert_eq!(err, WorktreeError::NoCommits);
+        assert!(err.should_fall_back_to_manual());
+    }
+
+    #[test]
+    fn subdirectory_of_repo_is_refused() {
+        let t = init_repo();
+        std::fs::create_dir(t.path().join("sub")).unwrap();
+        let err = GitCli
+            .ensure_task_worktree(&t.path().join("sub"), &tid("x"))
+            .unwrap_err();
+        assert!(matches!(err, WorktreeError::NotAGitRepo(_)));
+    }
+
+    #[test]
+    fn creates_worktree_on_auto_branch_and_is_idempotent() {
+        let t = init_repo();
+        let id = tid("one");
+        let wt = GitCli.ensure_task_worktree(t.path(), &id).unwrap();
+        assert_eq!(
+            wt.root,
+            t.path().join(".next-agent/worktrees").join(id.as_str())
+        );
+        assert!(wt.branch.starts_with("next-agent/auto-"));
+        assert_eq!(wt.base_commit, g(t.path(), &["rev-parse", "HEAD"]).trim());
+        assert!(wt.root.join("a.txt").exists());
+        assert_eq!(g(&wt.root, &["branch", "--show-current"]).trim(), wt.branch);
+        // excluded without touching .gitignore
+        assert!(g(t.path(), &["status", "--porcelain"]).trim().is_empty());
+        assert!(!t.path().join(".gitignore").exists());
+        let again = GitCli.ensure_task_worktree(t.path(), &id).unwrap();
+        assert_eq!(again, wt);
+        assert_eq!(GitCli.list(t.path()).unwrap(), vec![wt.clone()]);
+        assert_eq!(GitCli.find(t.path(), &id).unwrap(), Some(wt));
+    }
+
+    #[test]
+    fn auto_task_never_touches_main_tree_until_merge() {
+        let t = init_repo();
+        let before = snapshot(t.path());
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("iso")).unwrap();
+        std::fs::write(wt.root.join("a.txt"), "changed\n").unwrap();
+        std::fs::write(wt.root.join("new.txt"), "n\n").unwrap();
+        std::fs::remove_file(wt.root.join("b.txt")).unwrap();
+        GitCli.checkpoint(&wt, "work").unwrap();
+        GitCli.diff(&wt).unwrap();
+        GitCli.keep(&wt).unwrap();
+        assert_eq!(snapshot(t.path()), before);
+        assert!(!t.path().join("new.txt").exists());
+        assert!(t.path().join("b.txt").exists());
+    }
+
+    #[test]
+    fn structured_diff_has_files_and_hunks() {
+        let t = init_repo();
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("diff")).unwrap();
+        assert!(GitCli.diff(&wt).unwrap().is_empty());
+        std::fs::write(wt.root.join("a.txt"), "one\nTWO\nthree\nfour\n").unwrap();
+        std::fs::write(wt.root.join("sp ace.txt"), "x\n").unwrap();
+        std::fs::remove_file(wt.root.join("b.txt")).unwrap();
+        // uncommitted edits are invisible until checkpoint
+        assert!(GitCli.diff(&wt).unwrap().is_empty());
+        assert!(GitCli.checkpoint(&wt, "edit").unwrap().is_some());
+        assert!(GitCli.checkpoint(&wt, "again").unwrap().is_none());
+        let d = GitCli.diff(&wt).unwrap();
+        let by = |p: &str| {
+            d.files
+                .iter()
+                .find(|f| f.path == p)
+                .unwrap_or_else(|| panic!("{p}"))
+        };
+        let a = by("a.txt");
+        assert_eq!(a.status, FileStatus::Modified);
+        assert_eq!((a.additions, a.deletions), (2, 1));
+        assert_eq!(a.hunks.len(), 1);
+        assert_eq!((a.hunks[0].old_start, a.hunks[0].new_start), (1, 1));
+        assert!(a.hunks[0].lines.contains(&DiffLine {
+            kind: LineKind::Added,
+            text: "TWO".into()
+        }));
+        assert!(a.hunks[0].lines.contains(&DiffLine {
+            kind: LineKind::Removed,
+            text: "two".into()
+        }));
+        assert_eq!(by("b.txt").status, FileStatus::Deleted);
+        assert_eq!(by("sp ace.txt").status, FileStatus::Added);
+    }
+
+    #[test]
+    fn diff_detects_renames_and_binary() {
+        let t = init_repo();
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("ren")).unwrap();
+        std::fs::rename(wt.root.join("a.txt"), wt.root.join("c.txt")).unwrap();
+        std::fs::write(wt.root.join("bin.dat"), [0u8, 159, 146, 150, 0, 1]).unwrap();
+        GitCli.checkpoint(&wt, "x").unwrap();
+        let d = GitCli.diff(&wt).unwrap();
+        let r = d.files.iter().find(|f| f.path == "c.txt").unwrap();
+        assert_eq!(r.status, FileStatus::Renamed);
+        assert_eq!(r.old_path.as_deref(), Some("a.txt"));
+        assert!(d.files.iter().find(|f| f.path == "bin.dat").unwrap().binary);
+    }
+
+    #[test]
+    fn squash_merge_lands_one_commit_and_cleans_up() {
+        let t = init_repo();
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("sq")).unwrap();
+        std::fs::write(wt.root.join("a.txt"), "x\n").unwrap();
+        GitCli.checkpoint(&wt, "c1").unwrap();
+        std::fs::write(wt.root.join("c.txt"), "y\n").unwrap(); // uncommitted: merge checkpoints
+        let before = g(t.path(), &["rev-list", "--count", "HEAD"]);
+        let out = GitCli.merge(&wt, &MergeOptions::default()).unwrap();
+        assert_eq!(out.strategy, MergeStrategy::Squash);
+        assert_eq!(out.files_changed, vec!["a.txt", "c.txt"]);
+        assert_eq!(
+            out.commit.as_deref(),
+            Some(g(t.path(), &["rev-parse", "HEAD"]).trim())
+        );
+        let after = g(t.path(), &["rev-list", "--count", "HEAD"]);
+        assert_eq!(
+            after.trim().parse::<u32>().unwrap(),
+            before.trim().parse::<u32>().unwrap() + 1
+        );
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("a.txt")).unwrap(),
+            "x\n"
+        );
+        assert!(t.path().join("c.txt").exists());
+        assert!(!wt.root.exists());
+        assert!(g(t.path(), &["branch", "--list", "next-agent/*"])
+            .trim()
+            .is_empty());
+        assert!(g(t.path(), &["status", "--porcelain"]).trim().is_empty());
+    }
+
+    #[test]
+    fn no_ff_merge_creates_merge_commit() {
+        let t = init_repo();
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("nf")).unwrap();
+        std::fs::write(wt.root.join("n.txt"), "n\n").unwrap();
+        let opts = MergeOptions {
+            strategy: MergeStrategy::NoFastForward,
+            message: Some("merge it".into()),
+        };
+        let out = GitCli.merge(&wt, &opts).unwrap();
+        assert!(out.commit.is_some());
+        assert_eq!(
+            g(t.path(), &["rev-list", "--parents", "-n1", "HEAD"])
+                .split_whitespace()
+                .count(),
+            3
+        );
+        assert_eq!(
+            g(t.path(), &["log", "-1", "--format=%s"]).trim(),
+            "merge it"
+        );
+        assert!(t.path().join("n.txt").exists());
+    }
+
+    #[test]
+    fn merge_of_unchanged_task_is_a_noop_and_cleans_up() {
+        let t = init_repo();
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("noop")).unwrap();
+        let out = GitCli.merge(&wt, &MergeOptions::default()).unwrap();
+        assert_eq!(out.commit, None);
+        assert!(!wt.root.exists());
+    }
+
+    #[test]
+    fn merge_conflict_is_typed_and_main_tree_restored() {
+        for strategy in [MergeStrategy::Squash, MergeStrategy::NoFastForward] {
+            let t = init_repo();
+            let wt = GitCli
+                .ensure_task_worktree(t.path(), &tid(&format!("cf{strategy:?}")))
+                .unwrap();
+            std::fs::write(wt.root.join("a.txt"), "agent\ntwo\nthree\n").unwrap();
+            // base moves in main with a conflicting edit
+            std::fs::write(t.path().join("a.txt"), "user\ntwo\nthree\n").unwrap();
+            g(t.path(), &["commit", "-qam", "user edit"]);
+            let head = g(t.path(), &["rev-parse", "HEAD"]);
+            let err = GitCli
+                .merge(
+                    &wt,
+                    &MergeOptions {
+                        strategy,
+                        message: None,
+                    },
+                )
+                .unwrap_err();
+            assert_eq!(
+                err,
+                WorktreeError::MergeConflict {
+                    files: vec!["a.txt".into()]
+                }
+            );
+            assert_eq!(g(t.path(), &["rev-parse", "HEAD"]), head);
+            assert!(g(t.path(), &["status", "--porcelain"]).trim().is_empty());
+            assert_eq!(
+                std::fs::read_to_string(t.path().join("a.txt")).unwrap(),
+                "user\ntwo\nthree\n"
+            );
+            // task is intact and can still be discarded
+            assert!(wt.root.exists());
+            GitCli.discard(&wt).unwrap();
+        }
+    }
+
+    #[test]
+    fn base_moved_without_conflict_merges_three_way() {
+        let t = init_repo();
+        let wt = GitCli
+            .ensure_task_worktree(t.path(), &tid("moved"))
+            .unwrap();
+        std::fs::write(wt.root.join("a.txt"), "one\ntwo\nthree\nagent\n").unwrap();
+        std::fs::write(t.path().join("b.txt"), "user\n").unwrap();
+        g(t.path(), &["commit", "-qam", "user"]);
+        GitCli.merge(&wt, &MergeOptions::default()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("a.txt")).unwrap(),
+            "one\ntwo\nthree\nagent\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("b.txt")).unwrap(),
+            "user\n"
+        );
+    }
+
+    #[test]
+    fn dirty_main_tree_overlapping_files_blocks_merge_unrelated_does_not() {
+        let t = init_repo();
+        let wt = GitCli
+            .ensure_task_worktree(t.path(), &tid("dirty"))
+            .unwrap();
+        std::fs::write(wt.root.join("a.txt"), "agent\n").unwrap();
+        // overlapping uncommitted edit
+        std::fs::write(t.path().join("a.txt"), "mine\n").unwrap();
+        let err = GitCli.merge(&wt, &MergeOptions::default()).unwrap_err();
+        assert_eq!(
+            err,
+            WorktreeError::DirtyMainTree {
+                files: vec!["a.txt".into()]
+            }
+        );
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("a.txt")).unwrap(),
+            "mine\n"
+        );
+        assert!(wt.root.exists());
+        // unrelated dirty file is preserved and does not block
+        g(t.path(), &["checkout", "a.txt"]);
+        std::fs::write(t.path().join("b.txt"), "mine too\n").unwrap();
+        GitCli.merge(&wt, &MergeOptions::default()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("b.txt")).unwrap(),
+            "mine too\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("a.txt")).unwrap(),
+            "agent\n"
+        );
+        // and the user's edit is not swept into the merge commit
+        assert!(g(t.path(), &["show", "--name-only", "--format=", "HEAD"]).trim() == "a.txt");
+    }
+
+    #[test]
+    fn staged_changes_in_main_block_merge() {
+        let t = init_repo();
+        let wt = GitCli
+            .ensure_task_worktree(t.path(), &tid("staged"))
+            .unwrap();
+        std::fs::write(wt.root.join("a.txt"), "agent\n").unwrap();
+        std::fs::write(t.path().join("b.txt"), "staged\n").unwrap();
+        g(t.path(), &["add", "b.txt"]);
+        let err = GitCli.merge(&wt, &MergeOptions::default()).unwrap_err();
+        assert_eq!(
+            err,
+            WorktreeError::DirtyMainTree {
+                files: vec!["b.txt".into()]
+            }
+        );
+    }
+
+    #[test]
+    fn detached_head_blocks_merge() {
+        let t = init_repo();
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("det")).unwrap();
+        std::fs::write(wt.root.join("a.txt"), "agent\n").unwrap();
+        g(t.path(), &["checkout", "-q", "--detach"]);
+        assert_eq!(
+            GitCli.merge(&wt, &MergeOptions::default()).unwrap_err(),
+            WorktreeError::DetachedHead
+        );
+    }
+
+    #[test]
+    fn discard_removes_worktree_and_branch_and_is_idempotent() {
+        let t = init_repo();
+        let before = snapshot(t.path());
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("disc")).unwrap();
+        std::fs::write(wt.root.join("a.txt"), "gone\n").unwrap(); // uncommitted too
+        GitCli.discard(&wt).unwrap();
+        GitCli.discard(&wt).unwrap();
+        assert!(!wt.root.exists());
+        assert!(g(t.path(), &["branch", "--list", "next-agent/*"])
+            .trim()
+            .is_empty());
+        assert_eq!(GitCli.find(t.path(), &wt.task_id).unwrap(), None);
+        assert_eq!(snapshot(t.path()), before);
+    }
+
+    #[test]
+    fn keep_preserves_branch_and_lists_it() {
+        let t = init_repo();
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("keep")).unwrap();
+        std::fs::write(wt.root.join("a.txt"), "kept\n").unwrap();
+        GitCli.keep(&wt).unwrap();
+        assert!(wt.root.exists());
+        let listed = GitCli.list(t.path()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].branch, wt.branch);
+        assert_eq!(GitCli.diff(&listed[0]).unwrap().files.len(), 1);
+    }
+
+    #[test]
+    fn prune_drops_records_of_deleted_worktrees() {
+        let t = init_repo();
+        let wt = GitCli.ensure_task_worktree(t.path(), &tid("orph")).unwrap();
+        std::fs::remove_dir_all(&wt.root).unwrap();
+        GitCli.prune(t.path()).unwrap();
+        assert!(!g(t.path(), &["worktree", "list"]).contains("worktrees"));
+    }
+
+    #[test]
+    fn parser_handles_multiple_hunks_and_no_newline_marker() {
+        let raw = "diff --git a/f.txt b/f.txt\nindex 1..2 100644\n--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@ fn a\n-a\n+b\n c\n@@ -10 +10 @@\n-x\n\\ No newline at end of file\n+y\n";
+        let d = parse_unified_diff(raw);
+        assert_eq!(d.files.len(), 1);
+        let f = &d.files[0];
+        assert_eq!(f.hunks.len(), 2);
+        assert_eq!(f.hunks[0].section, "fn a");
+        assert_eq!((f.hunks[1].old_start, f.hunks[1].old_lines), (10, 1));
+        assert_eq!((f.additions, f.deletions), (2, 2));
+    }
+}
