@@ -5,6 +5,8 @@
 //  2. crates never reach into another crate's src via a path import
 //  3. every seam listed in the doc has its contract file present
 //  4. upstream.lock.json is valid and every entry names an existing adapter
+//  5. crates/permission-engine stays pure: no filesystem, process, network or
+//     environment access (facts come in through `FsFacts`)
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -71,8 +73,19 @@ if (existsSync("upstream.lock.json")) {
   }
 }
 
+// 5. the permission engine is I/O-free (tests may read fixtures)
+const IO_PATTERN = /\bstd::(fs|net|process|env)\b|\buse\s+std::\{[^}]*\b(fs|net|process|env)\b/;
+for (const file of walk("crates/permission-engine/src")) {
+  const code = readFileSync(file, "utf8")
+    .split("\n")
+    .map((line) => line.replace(/\/\/.*$/, ""))
+    .join("\n");
+  const match = IO_PATTERN.exec(code);
+  if (match) failures.push(`${file.replaceAll("\\", "/")} uses ${match[0]}; the permission engine must stay I/O-free`);
+}
+
 if (failures.length) {
   console.error(`Boundary check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
-console.log("Boundary check passed (4 seams, transports isolated).");
+console.log("Boundary check passed (4 seams, transports isolated, permission engine I/O-free).");

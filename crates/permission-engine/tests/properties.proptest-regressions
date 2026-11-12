@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ab62688de82d245e56fac2a80f50ed488bd7ac2b992b2927b2fd2817a5c4b929 # shrinks to before = "pnpm test", bad = ":(){ :|:& };:", sep = " && ", wrap = 4, mode = Plan, rules = []
+cc 53924f1ff384083d8a6dff69136020215ddf1b08634c25d29fd0ad5525de7774 # shrinks to base = "~/.ssh", suffix = "/..", write = false, rules = [Rule { id: "r0", effect: Allow, target: Tool { kind: "read_file" }, scope: Global }]
