@@ -35,3 +35,14 @@ cargo test --workspace  # Rust tests
 pnpm -r test            # TS tests
 pnpm -r check           # svelte-check / tsc
 ```
+
+## CI
+`.github/workflows/ci.yml` runs on every push to `main` and on every pull request, across `macos-latest`, `windows-latest` and `ubuntu-22.04`.
+
+- **`check` job (required):** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, `node scripts/test.mjs`, the four `scripts/check-*.mjs` workspace checks (the `make check` steps, called directly so Windows works), and `pnpm -r check`.
+- **`tauri-build` job (non-blocking):** `pnpm --dir apps/desktop exec tauri build --debug`. It has `continue-on-error: true` until the desktop session lands Tauri; remove that line to make it required.
+- Rust is read from `rust-toolchain.toml`. Cargo and pnpm stores are cached.
+- `pnpm install --frozen-lockfile` and `pnpm -r check` run only once `pnpm-lock.yaml` is committed.
+- Linux runners install the Tauri system packages listed in the prerequisites table above.
+
+Reproduce locally with the same commands the `check` job runs (`make check` is equivalent on macOS/Linux).
