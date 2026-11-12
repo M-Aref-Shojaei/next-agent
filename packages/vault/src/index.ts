@@ -55,3 +55,72 @@ export function taskRecordPath(date: Date, title: string): string {
   const day = String(date.getDate()).padStart(2, "0");
   return `Tasks/${year}/${month}/${year}-${month}-${day}-${slugify(title)}.md`;
 }
+
+/** Everything below this line in a task record belongs to the user. */
+export const TASK_END_MARKER = "<!-- next-agent:end -->";
+
+function isoDateParts(iso: string): [string, string, string] | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return match ? [match[1], match[2], match[3]] : null;
+}
+
+/**
+ * Same as {@link taskRecordPath} but for an ISO-8601 timestamp such as
+ * `2026-11-10T10:09:40+03:30`. The calendar date written in the string is
+ * used as-is (never shifted to another timezone), matching the Rust writer
+ * in `crates/core/src/vault.rs`.
+ */
+export function taskRecordPathFromIso(iso: string, title: string): string | null {
+  const parts = isoDateParts(iso);
+  if (!parts) return null;
+  const [y, m, d] = parts;
+  return `Tasks/${y}/${m}/${y}-${m}-${d}-${slugify(title)}.md`;
+}
+
+/** `Journal/2026-11-10.md` for an ISO-8601 timestamp. */
+export function journalPath(iso: string): string | null {
+  const parts = isoDateParts(iso);
+  return parts ? `Journal/${parts.join("-")}.md` : null;
+}
+
+/** Folder name used for a workspace under `Next Agent/`. */
+export function workspaceFolder(name: string): string {
+  const cleaned = name
+    .replace(/[^\p{L}\p{N} ._-]/gu, "-")
+    .replace(/^[. -]+|[. -]+$/g, "");
+  return cleaned || "workspace";
+}
+
+export interface TaskRecord {
+  frontmatter: Frontmatter["data"];
+  title: string;
+  /** `[[links]]` found anywhere in the record. */
+  links: string[];
+  /** Text after the end marker, or null when the marker is missing. */
+  userNotes: string | null;
+}
+
+/** Parses a task record written by the Rust vault writer. */
+export function parseTaskRecord(source: string): TaskRecord {
+  const { data, body } = parseFrontmatter(source);
+  const heading = /^# (.+)$/m.exec(body);
+  const at = body.indexOf(TASK_END_MARKER);
+  return {
+    frontmatter: data,
+    title: heading ? heading[1].trim() : "",
+    links: extractWikilinks(body),
+    userNotes: at === -1 ? null : body.slice(at + TASK_END_MARKER.length).replace(/^\r?\n/, ""),
+  };
+}
+
+/** Journal bullets that link to task records: `- [[stem]] — done (auto)`. */
+export function parseJournalLinks(
+  source: string,
+): { stem: string; status: string; mode: string }[] {
+  const out: { stem: string; status: string; mode: string }[] = [];
+  for (const line of source.split(/\r?\n/)) {
+    const match = /^- \[\[([^\]]+)\]\] — (\S+) \(([^)]*)\)\s*$/.exec(line);
+    if (match) out.push({ stem: match[1], status: match[2], mode: match[3] });
+  }
+  return out;
+}

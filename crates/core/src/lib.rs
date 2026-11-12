@@ -15,6 +15,7 @@ pub mod runner;
 pub mod store;
 pub mod task;
 pub mod tools;
+pub mod vault;
 pub mod workspace;
 pub mod worktree;
 
