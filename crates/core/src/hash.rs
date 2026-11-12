@@ -137,7 +137,13 @@ pub fn sha256_hex(input: &[u8]) -> String {
         }
     }
 
-    state.iter().map(|word| format!("{word:08x}")).collect()
+    state
+        .iter()
+        .fold(String::with_capacity(64), |mut out, word| {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{word:08x}");
+            out
+        })
 }
 
 #[cfg(test)]

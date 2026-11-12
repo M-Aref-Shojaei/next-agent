@@ -5,13 +5,35 @@ use std::path::PathBuf;
 /// A side effect an agent wants to perform. Never executed by the agent itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolRequest {
-    Read { path: PathBuf },
-    ListDir { path: PathBuf },
-    Search { pattern: String, path: PathBuf },
-    Write { path: PathBuf, contents: String },
-    Exec { command: String, cwd: PathBuf },
-    Network { url: String },
-    AskUser { question: String },
+    Read {
+        path: PathBuf,
+    },
+    ListDir {
+        path: PathBuf,
+    },
+    Search {
+        pattern: String,
+        path: PathBuf,
+    },
+    Write {
+        path: PathBuf,
+        contents: String,
+    },
+    /// Apply a unified diff to one file. Policy treats it as a write.
+    ApplyPatch {
+        path: PathBuf,
+        patch: String,
+    },
+    Exec {
+        command: String,
+        cwd: PathBuf,
+    },
+    Network {
+        url: String,
+    },
+    AskUser {
+        question: String,
+    },
 }
 
 impl ToolRequest {
@@ -22,26 +44,59 @@ impl ToolRequest {
             Self::Read { .. } => "read_file",
             Self::ListDir { .. } => "list_dir",
             Self::Search { .. } => "search",
-            Self::Write { .. } => "write_file",
+            Self::Write { .. } | Self::ApplyPatch { .. } => "write_file",
             Self::Exec { .. } => "run_command",
             Self::Network { .. } => "http_fetch",
             Self::AskUser { .. } => "ask_user",
         }
     }
 
+    /// Agent-facing tool name (what the model called). Differs from
+    /// [`ToolRequest::kind`] only for `apply_patch`, which policy, rules and
+    /// audit treat as `write_file`.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::ApplyPatch { .. } => "apply_patch",
+            other => other.kind(),
+        }
+    }
+
     /// Whether the request can change state on disk or the system.
     #[must_use]
     pub fn is_mutating(&self) -> bool {
-        matches!(self, Self::Write { .. } | Self::Exec { .. })
+        matches!(
+            self,
+            Self::Write { .. } | Self::ApplyPatch { .. } | Self::Exec { .. }
+        )
+    }
+
+    /// Arguments as JSON, for `tool_requested` events. File contents and
+    /// patches are reported by size, not inlined.
+    #[must_use]
+    pub fn args_json(&self) -> serde_json::Value {
+        use serde_json::json;
+        match self {
+            Self::Read { path } | Self::ListDir { path } => json!({ "path": path }),
+            Self::Search { pattern, path } => json!({ "pattern": pattern, "path": path }),
+            Self::Write { path, contents } => json!({ "path": path, "bytes": contents.len() }),
+            Self::ApplyPatch { path, patch } => json!({ "path": path, "patch": patch }),
+            Self::Exec { command, cwd } => json!({ "command": command, "cwd": cwd }),
+            Self::Network { url } => json!({ "url": url }),
+            Self::AskUser { question } => json!({ "question": question }),
+        }
     }
 
     /// Path the request targets, if any (for sandbox checks).
     #[must_use]
     pub fn path(&self) -> Option<&PathBuf> {
         match self {
-            Self::Read { path } | Self::ListDir { path } | Self::Search { path, .. } => Some(path),
-            Self::Write { path, .. } => Some(path),
-            Self::Exec { cwd, .. } => Some(cwd),
+            Self::Read { path }
+            | Self::ListDir { path }
+            | Self::Search { path, .. }
+            | Self::Write { path, .. }
+            | Self::ApplyPatch { path, .. }
+            | Self::Exec { cwd: path, .. } => Some(path),
             Self::Network { .. } | Self::AskUser { .. } => None,
         }
     }
@@ -53,6 +108,8 @@ pub struct ToolResult {
     pub call_id: String,
     pub ok: bool,
     pub output: String,
+    /// Process exit code for `run_command`.
+    pub exit_code: Option<i32>,
 }
 
 impl ToolResult {
@@ -62,6 +119,7 @@ impl ToolResult {
             call_id: call_id.into(),
             ok: true,
             output: output.into(),
+            exit_code: None,
         }
     }
 
@@ -71,7 +129,14 @@ impl ToolResult {
             call_id: call_id.into(),
             ok: false,
             output: message.into(),
+            exit_code: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_exit_code(mut self, code: Option<i32>) -> Self {
+        self.exit_code = code;
+        self
     }
 }
 
@@ -125,6 +190,25 @@ mod tests {
             .kind(),
             "ask_user"
         );
+    }
+
+    #[test]
+    fn apply_patch_is_a_write_for_policy() {
+        let patch = ToolRequest::ApplyPatch {
+            path: PathBuf::from("/w/a"),
+            patch: "@@ -1 +1 @@\n-a\n+b\n".into(),
+        };
+        assert_eq!(patch.kind(), "write_file");
+        assert_eq!(patch.name(), "apply_patch");
+        assert!(patch.is_mutating());
+        assert_eq!(patch.path(), Some(&PathBuf::from("/w/a")));
+        assert_eq!(patch.args_json()["path"], "/w/a");
+        let write = ToolRequest::Write {
+            path: PathBuf::from("/w/a"),
+            contents: "abc".into(),
+        };
+        assert_eq!(write.name(), "write_file");
+        assert_eq!(write.args_json()["bytes"], 3);
     }
 
     #[test]

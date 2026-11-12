@@ -2,15 +2,53 @@
 //! a [`ToolBroker`] and recording an ordered event log.
 
 use crate::agent::{AgentExecutor, AgentStep, TaskSpec};
-use crate::events::{AgentEvent, EventKind, EventLog};
+use crate::events::{AgentEvent, Collector, Emitter, EventKind};
+use crate::task::TaskStatus;
 use crate::tools::{ToolRequest, ToolResult};
 
-/// Evaluates and executes tool requests. The real implementation (task 3)
-/// consults the permission engine; tests use scripted brokers.
+/// Per-run context shared by the runner, broker and tool executor.
+pub struct RunContext<'a> {
+    /// The task's ordered event pipeline.
+    pub events: &'a Emitter,
+    /// Polled between steps and while tools run; `true` stops the task.
+    pub cancelled: &'a dyn Fn() -> bool,
+}
+
+impl RunContext<'_> {
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        (self.cancelled)()
+    }
+}
+
+/// Evaluates and executes tool requests. The real implementation
+/// ([`SqliteBroker`](crate::broker::SqliteBroker)) consults the permission
+/// engine; tests use scripted brokers.
 pub trait ToolBroker {
     /// Decide and execute. Returns the decision label/reason for the timeline
     /// plus the result (a denied call yields `ok == false`).
     fn handle(&mut self, call_id: &str, request: &ToolRequest) -> BrokerOutcome;
+
+    /// Streaming form used by the runner. Implementations emit
+    /// `permission_decided` (and any `approval_*`, `tool_started`,
+    /// `tool_output` events) themselves, in that order, and stop early when
+    /// the context is cancelled.
+    ///
+    /// The default runs [`ToolBroker::handle`] and then reports the decision.
+    fn handle_in(
+        &mut self,
+        ctx: &RunContext<'_>,
+        call_id: &str,
+        request: &ToolRequest,
+    ) -> BrokerOutcome {
+        let outcome = self.handle(call_id, request);
+        ctx.events.emit(EventKind::PermissionDecided {
+            call_id: call_id.to_string(),
+            decision: outcome.decision.to_string(),
+            reason: outcome.reason.clone(),
+        });
+        outcome
+    }
 }
 
 /// Broker verdict for one call.
@@ -24,6 +62,9 @@ pub struct BrokerOutcome {
 /// Upper bound on steps so a misbehaving executor cannot loop forever.
 pub const MAX_STEPS: usize = 200;
 
+/// Longest tool output copied into a `tool_finished` summary.
+pub const SUMMARY_LIMIT: usize = 2_000;
+
 /// Run a task, returning every event in order.
 pub fn run_task(
     executor: &mut dyn AgentExecutor,
@@ -31,51 +72,96 @@ pub fn run_task(
     spec: &TaskSpec,
     cancelled: &dyn Fn() -> bool,
 ) -> Vec<AgentEvent> {
-    let mut log = EventLog::new(spec.id.clone());
-    let mut events = vec![log.push(EventKind::TaskStarted {
+    let collector = Collector::new();
+    let events = Emitter::new(spec.id.clone()).with_sink(collector.clone());
+    let ctx = RunContext {
+        events: &events,
+        cancelled,
+    };
+    run_task_with(executor, broker, spec, &ctx);
+    collector.events()
+}
+
+/// Run a task, emitting every event through `ctx.events`. Returns the
+/// terminal status (also recorded as the last event).
+pub fn run_task_with(
+    executor: &mut dyn AgentExecutor,
+    broker: &mut dyn ToolBroker,
+    spec: &TaskSpec,
+    ctx: &RunContext<'_>,
+) -> TaskStatus {
+    let events = ctx.events;
+    events.emit(EventKind::TaskStarted {
         mode: spec.mode,
         executor: executor.id().to_string(),
-    })];
+        model: spec.model.clone(),
+    });
+    executor.attach(events);
 
     let mut step = executor.start(spec);
     for _ in 0..MAX_STEPS {
-        if cancelled() {
-            events.push(log.push(EventKind::TaskCancelled));
-            return events;
+        if let Some(error) = events.error() {
+            events.emit(EventKind::TaskFailed {
+                error: format!("event pipeline failed: {error}"),
+            });
+            return TaskStatus::Failed;
+        }
+        if ctx.is_cancelled() {
+            events.emit(EventKind::TaskCancelled);
+            return TaskStatus::Cancelled;
         }
         match step {
             AgentStep::Emit(kind) => {
-                events.push(log.push(kind));
+                events.emit(kind);
                 step = executor.next(None);
             }
             AgentStep::Call { call_id, request } => {
-                events.push(log.push(EventKind::ToolRequested {
+                events.emit(EventKind::ToolRequested {
                     call_id: call_id.clone(),
-                    tool: request.kind().to_string(),
-                }));
-                let outcome = broker.handle(&call_id, &request);
-                events.push(log.push(EventKind::PermissionDecided {
-                    call_id: call_id.clone(),
-                    decision: outcome.decision.to_string(),
-                    reason: outcome.reason.clone(),
-                }));
-                events.push(log.push(EventKind::ToolFinished {
+                    tool: request.name().to_string(),
+                    args: request.args_json(),
+                });
+                let outcome = broker.handle_in(ctx, &call_id, &request);
+                events.emit(EventKind::ToolFinished {
                     call_id,
                     ok: outcome.result.ok,
-                }));
+                    exit_code: outcome.result.exit_code,
+                    summary: truncate(&outcome.result.output, SUMMARY_LIMIT),
+                });
+                if ctx.is_cancelled() {
+                    events.emit(EventKind::TaskCancelled);
+                    return TaskStatus::Cancelled;
+                }
                 step = executor.next(Some(&outcome.result));
             }
             AgentStep::Done { summary } => {
-                events.push(log.push(EventKind::TaskCompleted { summary }));
-                return events;
+                events.emit(EventKind::TaskCompleted { summary });
+                return TaskStatus::Completed;
+            }
+            AgentStep::Fail { error } => {
+                events.emit(EventKind::TaskFailed { error });
+                return TaskStatus::Failed;
             }
         }
     }
 
-    events.push(log.push(EventKind::TaskFailed {
+    events.emit(EventKind::TaskFailed {
         error: format!("step limit of {MAX_STEPS} exceeded"),
-    }));
-    events
+    });
+    TaskStatus::Failed
+}
+
+/// Cut `text` to at most `limit` bytes on a char boundary, marking the cut.
+#[must_use]
+pub fn truncate(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
+        return text.to_string();
+    }
+    let mut end = limit;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}… [{} bytes truncated]", &text[..end], text.len() - end)
 }
 
 #[cfg(test)]
@@ -198,6 +284,50 @@ mod tests {
         let events = run_task(&mut Looping, &mut AllowAll, &spec(), &|| false);
         assert_eq!(events.last().map(|e| e.kind.kind()), Some("task_failed"));
         assert_eq!(events.len(), MAX_STEPS + 2);
+    }
+
+    #[test]
+    fn failing_executor_ends_with_task_failed() {
+        struct Broken;
+        impl AgentExecutor for Broken {
+            fn id(&self) -> &'static str {
+                "broken"
+            }
+            fn start(&mut self, _spec: &TaskSpec) -> AgentStep {
+                AgentStep::Fail {
+                    error: "router down".into(),
+                }
+            }
+            fn next(&mut self, _result: Option<&ToolResult>) -> AgentStep {
+                unreachable!()
+            }
+        }
+        let events = run_task(&mut Broken, &mut AllowAll, &spec(), &|| false);
+        assert_eq!(kinds(&events), ["task_started", "task_failed"]);
+    }
+
+    #[test]
+    fn tool_events_carry_args_and_summary() {
+        let mut executor = MockExecutor::new(vec![read_call("c1")]);
+        let events = run_task(&mut executor, &mut AllowAll, &spec(), &|| false);
+        let requested = events
+            .iter()
+            .find(|e| e.kind.kind() == "tool_requested")
+            .expect("requested");
+        assert_eq!(requested.data()["args"]["path"], "/w/a");
+        let finished = events
+            .iter()
+            .find(|e| e.kind.kind() == "tool_finished")
+            .expect("finished");
+        assert_eq!(finished.data()["summary"], "done");
+    }
+
+    #[test]
+    fn truncate_respects_char_boundaries() {
+        assert_eq!(truncate("abc", 5), "abc");
+        let cut = truncate("héllo", 2);
+        assert!(cut.starts_with('h'));
+        assert!(cut.contains("truncated"));
     }
 
     #[test]

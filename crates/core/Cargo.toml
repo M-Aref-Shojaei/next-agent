@@ -10,6 +10,25 @@ path = "src/lib.rs"
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 next-agent-permission-engine = { path = "../permission-engine" }
+next-agent-process-manager = { path = "../process-manager" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+# Tool execution (search + patch).
+grep-regex = "0.1"
+grep-searcher = "0.1"
+ignore = "0.4"
+diffy = "0.4"
+# Router client only (crates/core/src/router/): HTTP, SSE, keychain.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+eventsource-stream = "0.2"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+wiremock = "0.6"
 
 [lints]
 workspace = true

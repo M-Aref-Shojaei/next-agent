@@ -11,7 +11,8 @@
 //! HTTP) can be swapped or stubbed without touching policy. That is what keeps
 //! the policy table updatable independently of the tool implementations.
 
-use crate::runner::{BrokerOutcome, ToolBroker};
+use crate::events::EventKind;
+use crate::runner::{BrokerOutcome, RunContext, ToolBroker};
 use crate::store::{AuditEntry, RuleRow, Store, StoreError};
 use crate::tools::{ToolRequest, ToolResult};
 use next_agent_permission_engine::{
@@ -31,7 +32,34 @@ pub enum Approval {
     Deny,
 }
 
-/// Resolves `Decision::Ask`. In the app this becomes the approval card.
+impl Approval {
+    /// Wire label used in `approval_resolved` events and UI commands.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::AlwaysForWorkspace => "always_for_workspace",
+            Self::Deny => "deny",
+        }
+    }
+
+    /// Parse the wire label.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "allow" => Self::Allow,
+            "always_for_workspace" => Self::AlwaysForWorkspace,
+            "deny" => Self::Deny,
+            _ => return None,
+        })
+    }
+
+    /// Every choice, in the order the approval card shows them.
+    pub const ALL: [Self; 3] = [Self::Allow, Self::Deny, Self::AlwaysForWorkspace];
+}
+
+/// Resolves `Decision::Ask`. In the app this becomes the approval card
+/// ([`ChannelApprover`](crate::control::ChannelApprover)).
 pub trait Approver {
     fn approve(&mut self, call_id: &str, request: &ToolRequest, reason: &str) -> Approval;
 }
@@ -42,6 +70,19 @@ pub trait Approver {
 /// two layers can disagree.
 pub trait ToolExecutor {
     fn execute(&mut self, call_id: &str, request: &ToolRequest) -> ToolResult;
+
+    /// Streaming form: may emit `tool_output` through `ctx.events` and must
+    /// stop (killing any child process) once `ctx` is cancelled. Default:
+    /// [`ToolExecutor::execute`].
+    fn execute_in(
+        &mut self,
+        ctx: &RunContext<'_>,
+        call_id: &str,
+        request: &ToolRequest,
+    ) -> ToolResult {
+        let _ = ctx;
+        self.execute(call_id, request)
+    }
 }
 
 /// Refuses every call. The safe default until tool implementations land.
@@ -88,6 +129,13 @@ impl<'a> SqliteBroker<'a> {
         self
     }
 
+    /// [`SqliteBroker::with_executor`] for an already-boxed executor.
+    #[must_use]
+    pub fn with_boxed_executor(mut self, executor: Box<dyn ToolExecutor + 'a>) -> Self {
+        self.executor = executor;
+        self
+    }
+
     #[must_use]
     pub fn with_approver(mut self, approver: impl Approver + 'a) -> Self {
         self.approver = Some(Box::new(approver));
@@ -101,6 +149,9 @@ impl<'a> SqliteBroker<'a> {
     }
 
     /// Replace the in-memory rules, e.g. after the user edits preferences.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the rules cannot be read.
     pub fn load_rules(&mut self) -> Result<(), StoreError> {
         let rows = self.store.rules_for(&self.context.workspace_id)?;
         self.rules = RuleSet::new(rows.iter().filter_map(row_to_rule).collect());
@@ -124,12 +175,45 @@ impl<'a> SqliteBroker<'a> {
 
 impl ToolBroker for SqliteBroker<'_> {
     fn handle(&mut self, call_id: &str, request: &ToolRequest) -> BrokerOutcome {
+        self.handle_inner(None, call_id, request)
+    }
+
+    fn handle_in(
+        &mut self,
+        ctx: &RunContext<'_>,
+        call_id: &str,
+        request: &ToolRequest,
+    ) -> BrokerOutcome {
+        self.handle_inner(Some(ctx), call_id, request)
+    }
+}
+
+impl SqliteBroker<'_> {
+    fn handle_inner(
+        &mut self,
+        ctx: Option<&RunContext<'_>>,
+        call_id: &str,
+        request: &ToolRequest,
+    ) -> BrokerOutcome {
+        let decided = |decision: &str, reason: &str| {
+            if let Some(ctx) = ctx {
+                ctx.events.emit(EventKind::PermissionDecided {
+                    call_id: call_id.to_string(),
+                    decision: decision.to_string(),
+                    reason: reason.to_string(),
+                });
+            }
+        };
         let policy_request = to_policy_request(request);
         let evaluation = explain(&policy_request, self.mode, &self.rules, &self.context);
 
         let reason = match evaluation.decision.clone() {
-            Decision::Allow { reason } => reason,
+            Decision::Allow { reason } => {
+                decided("allow", &reason);
+                reason
+            }
             Decision::Deny { reason } => {
+                decided("deny", &reason);
                 self.audit(request, "deny", &reason);
                 return BrokerOutcome {
                     decision: "deny",
@@ -138,6 +222,7 @@ impl ToolBroker for SqliteBroker<'_> {
                 };
             }
             Decision::Ask { reason } => {
+                decided("ask", &reason);
                 // Take the choice first: `approve` borrows the approver, and
                 // the arms below need `&mut self` to persist or audit.
                 let choice = self
@@ -145,9 +230,13 @@ impl ToolBroker for SqliteBroker<'_> {
                     .as_mut()
                     .map(|approver| approver.approve(call_id, request, &reason));
                 match choice {
-                    Some(Approval::Allow) => reason,
+                    Some(Approval::Allow) => {
+                        self.audit(request, "allow", "approved once by user");
+                        reason
+                    }
                     Some(Approval::AlwaysForWorkspace) => {
                         self.persist_allow_rule(request);
+                        self.audit(request, "allow", "approved for workspace by user");
                         reason
                     }
                     Some(Approval::Deny) => {
@@ -178,10 +267,26 @@ impl ToolBroker for SqliteBroker<'_> {
             self.audit(request, "allow", &reason);
         }
 
+        let result = match ctx {
+            Some(ctx) => {
+                if ctx.is_cancelled() {
+                    return BrokerOutcome {
+                        decision: "allow",
+                        reason,
+                        result: ToolResult::error(call_id, "cancelled before the tool started"),
+                    };
+                }
+                ctx.events.emit(EventKind::ToolStarted {
+                    call_id: call_id.to_string(),
+                });
+                self.executor.execute_in(ctx, call_id, request)
+            }
+            None => self.executor.execute(call_id, request),
+        };
         BrokerOutcome {
             decision: "allow",
             reason,
-            result: self.executor.execute(call_id, request),
+            result,
         }
     }
 }
@@ -217,11 +322,14 @@ fn noteworthy(mode: Mode, evaluation: &next_agent_permission_engine::Evaluation)
             .is_some_and(|class| class != CommandClass::SafeDev)
 }
 
-fn describe(request: &ToolRequest) -> String {
+/// One-line target description used in audit rows, rules and approval cards.
+#[must_use]
+pub fn describe(request: &ToolRequest) -> String {
     match request {
         ToolRequest::Read { path }
         | ToolRequest::ListDir { path }
-        | ToolRequest::Write { path, .. } => path.display().to_string(),
+        | ToolRequest::Write { path, .. }
+        | ToolRequest::ApplyPatch { path, .. } => path.display().to_string(),
         ToolRequest::Search { pattern, path } => format!("{} in {}", pattern, path.display()),
         ToolRequest::Exec { command, .. } => command.clone(),
         ToolRequest::Network { url } => url.clone(),
@@ -236,7 +344,9 @@ pub fn to_policy_request(request: &ToolRequest) -> Request {
         ToolRequest::Read { path } => Request::Read { path: path.clone() },
         ToolRequest::ListDir { path } => Request::ListDir { path: path.clone() },
         ToolRequest::Search { path, .. } => Request::Search { path: path.clone() },
-        ToolRequest::Write { path, .. } => Request::Write { path: path.clone() },
+        ToolRequest::Write { path, .. } | ToolRequest::ApplyPatch { path, .. } => {
+            Request::Write { path: path.clone() }
+        }
         ToolRequest::Exec { command, cwd } => Request::Exec {
             command: command.clone(),
             cwd: cwd.clone(),

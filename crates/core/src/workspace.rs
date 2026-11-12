@@ -123,6 +123,9 @@ pub fn normalize_lexical(path: &Path) -> PathBuf {
 
 /// Canonicalize a path that may not exist yet by canonicalizing the nearest
 /// existing ancestor and re-appending the remainder.
+///
+/// # Errors
+/// Returns the I/O error if no ancestor of `path` can be canonicalized.
 pub fn canonicalize_lenient(path: &Path) -> std::io::Result<PathBuf> {
     let path = normalize_lexical(path);
     if let Ok(canonical) = path.canonicalize() {

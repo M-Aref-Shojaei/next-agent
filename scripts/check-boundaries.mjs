@@ -11,9 +11,14 @@ import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const failures = [];
+// Owner is a file, or a directory when it ends with "/".
 const TRANSPORTS = {
   rusqlite: "crates/core/src/store.rs",
+  reqwest: "crates/core/src/router/",
+  eventsource_stream: "crates/core/src/router/",
+  keyring: "crates/core/src/router/",
 };
+const owns = (owner, rel) => (owner.endsWith("/") ? rel.startsWith(owner) : rel === owner);
 
 function walk(dir, out = []) {
   if (!existsSync(dir)) return out;
@@ -31,8 +36,9 @@ for (const file of walk("crates")) {
   const source = readFileSync(file, "utf8");
   const rel = file.replaceAll("\\", "/");
   for (const [krate, owner] of Object.entries(TRANSPORTS)) {
-    if (rel === owner) continue;
-    if (new RegExp(`^\\s*(pub\\s+)?use\\s+${krate}\\b`, "m").test(source)) {
+    if (owns(owner, rel)) continue;
+    // `use krate…` imports and fully-qualified `krate::` paths both count.
+    if (new RegExp(`(^\\s*(pub\\s+)?use\\s+${krate}\\b)|(\\b${krate}::)`, "m").test(source)) {
       failures.push(`${rel} imports ${krate}; only ${owner} may depend on it`);
     }
   }

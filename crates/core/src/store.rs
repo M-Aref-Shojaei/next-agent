@@ -223,7 +223,7 @@ impl Store {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
-    /// Persist a JSON setting.
+    /// Append one event to a task's timeline (`data` is a JSON object).
     ///
     /// # Errors
     /// Returns [`StoreError`] if the task row is missing or the sequence repeats.
@@ -251,6 +251,60 @@ impl Store {
             .prepare("SELECT kind FROM events WHERE task_id = ?1 ORDER BY seq ASC")?;
         let rows = statement.query_map(rusqlite::params![task_id], |row| row.get(0))?;
         Ok(rows.collect::<Result<Vec<String>, _>>()?)
+    }
+
+    /// A task's persisted events as `(seq, kind, data_json)`, in order —
+    /// enough to replay the timeline after a restart.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn task_events(&self, task_id: &str) -> Result<Vec<(u64, String, String)>, StoreError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT seq, kind, data FROM events WHERE task_id = ?1 ORDER BY seq ASC")?;
+        let rows = statement.query_map(rusqlite::params![task_id], |row| {
+            Ok((row.get::<_, u64>(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Record a task's lifecycle status (and executor, once known). Terminal
+    /// statuses also stamp `finished_at`.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the update fails.
+    pub fn set_task_status(
+        &self,
+        task_id: &str,
+        status: crate::task::TaskStatus,
+        executor: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE tasks SET status = ?2,
+                 executor = COALESCE(?3, executor),
+                 finished_at = CASE WHEN ?4 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE finished_at END
+             WHERE id = ?1",
+            rusqlite::params![task_id, status.as_str(), executor, status.is_terminal()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Current status of a task, if the row exists.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn task_status(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<crate::task::TaskStatus>, StoreError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT status FROM tasks WHERE id = ?1")?;
+        let mut rows = statement.query(rusqlite::params![task_id])?;
+        Ok(match rows.next()? {
+            Some(row) => crate::task::TaskStatus::parse(&row.get::<_, String>(0)?),
+            None => None,
+        })
     }
 
     /// Create a task row so events can reference it.
