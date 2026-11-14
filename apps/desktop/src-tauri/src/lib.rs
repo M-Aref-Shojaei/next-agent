@@ -1,5 +1,6 @@
 //! Tauri 2 shell for Next Agent.
 
+pub mod boards;
 pub mod commands;
 pub mod notes;
 pub mod gateway;
@@ -86,6 +87,14 @@ pub fn run() {
             overlay::overlay_set_rect,
             overlay::overlay_set_expanded,
             overlay::overlay_open_task,
+            commands::board_list,
+            commands::board_create,
+            commands::board_open,
+            commands::board_save,
+            commands::board_rename,
+            commands::board_delete,
+            commands::board_sketch,
+            commands::board_export,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Agent");

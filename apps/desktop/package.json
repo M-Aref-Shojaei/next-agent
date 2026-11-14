@@ -12,8 +12,12 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "@excalidraw/mermaid-to-excalidraw": "3.6.0",
     "@next-agent/contracts": "workspace:*",
-    "@tauri-apps/api": "^2.1.1"
+    "@tauri-apps/api": "^2.1.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",
@@ -21,6 +25,8 @@
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "^2",
     "@types/node": "^22",
+    "@types/react": "19",
+    "@types/react-dom": "19",
     "svelte": "^5.2.0",
     "svelte-check": "^4.0.0",
     "typescript": "^5.7.0",
