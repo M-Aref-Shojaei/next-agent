@@ -5,6 +5,16 @@ import { listen } from "@tauri-apps/api/event";
 import type { DiffAction } from "./diff.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 import { mockApi } from "./mock-api.ts";
+import type {
+  Combo,
+  ConnectionInput,
+  ConnectionTest,
+  GatewaySettings,
+  GatewayTarget,
+  ProviderConnection,
+  ProviderPreset,
+  UsageSummary,
+} from "./gateway.ts";
 
 export interface Workspace {
   id: string;
@@ -58,6 +68,19 @@ export interface Api {
   routerHealth(): Promise<RouterHealthReport | null>;
   /** Subscribe to router status changes; returns an unsubscribe function. */
   onRouterHealth(callback: (report: RouterHealthReport) => void): Promise<() => void>;
+  // Built-in LLM gateway (Settings → Providers, Usage).
+  gatewayPresets(): Promise<ProviderPreset[]>;
+  gatewayConnections(): Promise<ProviderConnection[]>;
+  gatewayConnectionSave(input: ConnectionInput): Promise<ProviderConnection>;
+  gatewayConnectionDelete(id: string): Promise<boolean>;
+  gatewayConnectionTest(id: string): Promise<ConnectionTest>;
+  gatewayCombos(): Promise<Combo[]>;
+  gatewayComboSave(input: Combo): Promise<Combo>;
+  gatewayComboDelete(id: string): Promise<boolean>;
+  gatewaySettingsGet(): Promise<GatewaySettings>;
+  gatewaySettingsSet(settings: GatewaySettings): Promise<void>;
+  gatewayTargets(): Promise<GatewayTarget[]>;
+  usageSummary(days: number): Promise<UsageSummary>;
 }
 
 const tauriApi: Api = {
@@ -84,6 +107,18 @@ const tauriApi: Api = {
     listen<RouterHealthReport | null>("router-health", (event) => {
       if (event.payload) callback(event.payload);
     }),
+  gatewayPresets: () => invoke("gateway_presets"),
+  gatewayConnections: () => invoke("gateway_connections"),
+  gatewayConnectionSave: (input) => invoke("gateway_connection_save", { input }),
+  gatewayConnectionDelete: (id) => invoke("gateway_connection_delete", { id }),
+  gatewayConnectionTest: (id) => invoke("gateway_connection_test", { id }),
+  gatewayCombos: () => invoke("gateway_combos"),
+  gatewayComboSave: (input) => invoke("gateway_combo_save", { input }),
+  gatewayComboDelete: (id) => invoke("gateway_combo_delete", { id }),
+  gatewaySettingsGet: () => invoke("gateway_settings_get"),
+  gatewaySettingsSet: (settings) => invoke("gateway_settings_set", { settings }),
+  gatewayTargets: () => invoke("gateway_targets"),
+  usageSummary: (days) => invoke("usage_summary", { days }),
 };
 
 export function inTauri(): boolean {

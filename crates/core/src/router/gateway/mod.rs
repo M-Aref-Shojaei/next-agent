@@ -1010,6 +1010,14 @@ impl Gateway {
         Ok(ids)
     }
 
+    /// [`Self::list_models`] from synchronous code (not from an async worker).
+    ///
+    /// # Errors
+    /// See [`Self::list_models`].
+    pub fn list_models_blocking(&self, account: &Connection) -> Result<Vec<String>, LlmError> {
+        super::block_on(self.list_models(account))
+    }
+
     /// Health of the provider behind the gateway's role (the status-bar dot).
     pub async fn health(&self) -> HealthReport {
         let started = Instant::now();
@@ -1068,5 +1076,4 @@ impl HealthProbe for Gateway {
 }
 
 #[cfg(test)]
-#[path = "gateway_tests.rs"]
 mod tests;

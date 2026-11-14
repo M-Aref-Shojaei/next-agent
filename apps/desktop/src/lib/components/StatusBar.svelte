@@ -9,8 +9,8 @@
 
 <footer class="status" aria-label="Status bar">
   <ModeBadge mode={app.mode} workspaceName={app.activeWorkspace?.name ?? ""} onselect={(m) => app.setMode(m)} />
-  <span class="item" role="status" title={app.routerDetail} aria-label="Router health: {LABEL[app.router]}">
-    <span class="dot {app.router}" aria-hidden="true"></span> router {LABEL[app.router]}
+  <span class="item" role="status" title={app.routerDetail} aria-label="Model provider health: {LABEL[app.router]}">
+    <span class="dot {app.router}" aria-hidden="true"></span> model {LABEL[app.router]}
   </span>
   <span class="item">branch {app.branch ?? "—"}</span>
   <span class="item">{app.pendingCount} pending</span>

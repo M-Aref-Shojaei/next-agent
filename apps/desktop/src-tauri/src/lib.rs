@@ -1,13 +1,15 @@
 //! Tauri 2 shell for Next Agent.
 
 pub mod commands;
+pub mod gateway;
 pub mod review;
 pub mod service;
 pub mod tasks;
 pub mod wire;
 
-use next_agent_core::router::{KeyringSecret, RouterClient, RouterSettings};
-use next_agent_process_manager::{HealthMonitor, HealthReport, HealthStatus, MonitorConfig};
+use next_agent_process_manager::{
+    HealthMonitor, HealthProbe, HealthReport, HealthStatus, MonitorConfig,
+};
 use service::AppService;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
@@ -47,22 +49,27 @@ pub fn run() {
             commands::approval_respond,
             commands::review_action,
             commands::router_health,
+            gateway::gateway_presets,
+            gateway::gateway_connections,
+            gateway::gateway_connection_save,
+            gateway::gateway_connection_delete,
+            gateway::gateway_connection_test,
+            gateway::gateway_combos,
+            gateway::gateway_combo_save,
+            gateway::gateway_combo_delete,
+            gateway::gateway_settings_get,
+            gateway::gateway_settings_set,
+            gateway::gateway_targets,
+            gateway::usage_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Agent");
 }
 
-/// Router client for the configured settings. The API key is optional for
-/// health probes: without one the router answers 401 and shows `degraded`.
-fn router_client(service: &AppService) -> Result<RouterClient, String> {
-    let settings = service
-        .store()
-        .ok()
-        .and_then(|s| RouterSettings::load(&s).ok())
-        .unwrap_or_default();
-    RouterClient::from_secret(settings.clone(), &KeyringSecret::default())
-        .or_else(|_| RouterClient::new(settings, None))
-        .map_err(|e| e.to_string())
+/// Health probe for the status-bar dot: the provider behind the `chat` role
+/// (a built-in provider, or the external router from `router.url`).
+fn health_probe(service: &AppService) -> Result<Arc<dyn HealthProbe>, String> {
+    Ok(Arc::new(service.gateway("chat")?))
 }
 
 fn publish(app: &AppHandle, service: &AppService, report: &HealthReport) {
@@ -75,11 +82,8 @@ fn publish(app: &AppHandle, service: &AppService, report: &HealthReport) {
 async fn poll_router_health(app: AppHandle, service: Arc<AppService>) {
     let mut generation = service.router_generation();
     loop {
-        let monitor = match router_client(&service) {
-            Ok(client) => Some(HealthMonitor::spawn(
-                Arc::new(client),
-                MonitorConfig::default(),
-            )),
+        let monitor = match health_probe(&service) {
+            Ok(probe) => Some(HealthMonitor::spawn(probe, MonitorConfig::default())),
             Err(error) => {
                 publish(
                     &app,

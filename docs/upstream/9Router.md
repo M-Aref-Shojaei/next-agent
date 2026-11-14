@@ -142,3 +142,18 @@ Savers only run when `tokenSaverEnabled` is on, and the header `X-9Router-Token-
   - hourly or daily chart;
   - the 20 most recent requests.
 - Rust estimate: 400–700 lines, plus a price data file.
+
+## Port status (Wave 1, LLM gateway)
+Everything lives in `crates/core/src/router/` behind `CompletionClient` and `HealthProbe`.
+
+| 9Router part | Our file | Notes |
+|---|---|---|
+| Providers, connections | `providers.rs` | Presets: OpenAI, Anthropic, Gemini, OpenRouter, DeepSeek, Groq, xAI, Mistral, Together, Fireworks, Ollama, LM Studio, 9Router, custom. Keys in the OS keychain (`provider:<id>`), rows in `llm_connections`. |
+| Translation | `translate/{mod,anthropic,gemini}.rs` | OpenAI is the pivot. Requests OpenAI → Anthropic/Gemini; responses and SSE streams back to OpenAI. |
+| Combos, fallback, cooldown | `combo.rs`, `gateway/mod.rs` | `fallback` and `round-robin`; capability reorder; fall-through rules; backoff 1 s … 240 s. |
+| Caveman / Ponytail | `savers/prompts.rs` | Our own prompt text; levels lite/full/ultra; idempotent per format. |
+| RTK | `savers/rtk.rs` | 13 detectors in 9Router's order and limits; our own output formats. |
+| Prompt caching | `savers/mod.rs` | `cache_control` on system, last tool, last assistant block. |
+| Usage, cost | `pricing.rs`, `pricing.json`, `store.rs` (`llm_usage`, `llm_usage_daily`) | Unknown models cost 0 and are flagged. A `pricing.json` in the app data folder overrides entries. |
+
+Not ported: `smart` and `fusion` strategies, OAuth providers and token refresh, the Responses API format, Wenyan Caveman levels, the custom-prompt saver, Headroom, inbound Anthropic/Gemini-format requests (we have no HTTP server; the agent always speaks OpenAI format).
