@@ -123,7 +123,8 @@ pub const MIGRATIONS: &[&str] = &[
         kind TEXT NOT NULL DEFAULT 'llm',
         models TEXT NOT NULL DEFAULT '[]',
         strategy TEXT,
-        sticky_limit INTEGER
+        sticky_limit INTEGER,
+        confidence_threshold REAL
     )",
     "CREATE TABLE IF NOT EXISTS llm_usage (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,6 +161,26 @@ pub const MIGRATIONS: &[&str] = &[
         reasoning_tokens INTEGER NOT NULL DEFAULT 0,
         cost REAL NOT NULL DEFAULT 0,
         PRIMARY KEY (day, provider, model, role)
+    )",
+    // Smart combos: the sticky model of each session (task) per combo, with
+    // its recent quality window (JSON array of booleans, `true` = bad).
+    "CREATE TABLE IF NOT EXISTS llm_smart_sticky (
+        session TEXT NOT NULL,
+        combo TEXT NOT NULL,
+        model TEXT NOT NULL,
+        quality TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        PRIMARY KEY (session, combo)
+    )",
+    "CREATE TABLE IF NOT EXISTS llm_switches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        session TEXT NOT NULL,
+        combo TEXT NOT NULL,
+        from_model TEXT NOT NULL,
+        to_model TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 1
     )",
     // --- end llm-gateway ---
 ];
@@ -891,7 +912,7 @@ pub struct ConnectionRow {
 }
 
 /// Row in `llm_combos`. `models` is a JSON array of `provider/model` strings.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ComboRow {
     pub id: String,
     pub name: String,
@@ -899,6 +920,33 @@ pub struct ComboRow {
     pub models: String,
     pub strategy: Option<String>,
     pub sticky_limit: Option<i64>,
+    /// Smart strategy: switch below this confidence (`None` = 0.8).
+    pub confidence_threshold: Option<f64>,
+}
+
+/// Row in `llm_smart_sticky`: a session's sticky model for one combo.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StickyRow {
+    pub session: String,
+    pub combo: String,
+    pub model: String,
+    /// JSON array of booleans, oldest first (`true` = bad answer).
+    pub window: String,
+}
+
+/// Row in `llm_switches`: a smart combo changed a session's model.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SwitchRow {
+    /// RFC 3339 timestamp; `None` = now. Filled on reads.
+    pub ts: Option<String>,
+    pub session: String,
+    pub combo: String,
+    pub from_model: String,
+    pub to_model: String,
+    /// `failover` or `quality:<signal>`.
+    pub reason: String,
+    /// Confidence when the switch happened (1 for failover).
+    pub confidence: f64,
 }
 
 /// One gateway request, as recorded in `llm_usage`.
@@ -951,6 +999,8 @@ pub struct UsageSummary {
     /// One entry per day that has data, oldest first (`key` = `YYYY-MM-DD`).
     pub daily: Vec<UsageTotals>,
     pub recent: Vec<UsageRow>,
+    /// Smart-combo model switches in the period, newest first.
+    pub switches: Vec<SwitchRow>,
     /// Bytes of tool output before / after RTK compression in the period.
     pub saver_bytes_before: i64,
     pub saver_bytes_after: i64,
@@ -1022,18 +1072,21 @@ impl Store {
     /// Returns [`StoreError`] if the write fails or the name is taken.
     pub fn upsert_combo(&self, row: &ComboRow) -> Result<(), StoreError> {
         self.conn.execute(
-            "INSERT INTO llm_combos (id, name, kind, models, strategy, sticky_limit)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO llm_combos (id, name, kind, models, strategy, sticky_limit,
+                confidence_threshold)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind,
                 models = excluded.models, strategy = excluded.strategy,
-                sticky_limit = excluded.sticky_limit",
+                sticky_limit = excluded.sticky_limit,
+                confidence_threshold = excluded.confidence_threshold",
             rusqlite::params![
                 row.id,
                 row.name,
                 row.kind,
                 row.models,
                 row.strategy,
-                row.sticky_limit
+                row.sticky_limit,
+                row.confidence_threshold
             ],
         )?;
         Ok(())
@@ -1045,7 +1098,8 @@ impl Store {
     /// Returns [`StoreError`] if the query fails.
     pub fn list_combos(&self) -> Result<Vec<ComboRow>, StoreError> {
         let mut statement = self.conn.prepare(
-            "SELECT id, name, kind, models, strategy, sticky_limit FROM llm_combos ORDER BY name",
+            "SELECT id, name, kind, models, strategy, sticky_limit, confidence_threshold
+             FROM llm_combos ORDER BY name",
         )?;
         let rows = statement.query_map([], |row| {
             Ok(ComboRow {
@@ -1055,6 +1109,7 @@ impl Store {
                 models: row.get(3)?,
                 strategy: row.get(4)?,
                 sticky_limit: row.get(5)?,
+                confidence_threshold: row.get(6)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -1069,6 +1124,81 @@ impl Store {
             .conn
             .execute("DELETE FROM llm_combos WHERE id = ?1", [id])?
             > 0)
+    }
+
+    /// A session's sticky model for a combo.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn get_sticky(&self, session: &str, combo: &str) -> Result<Option<StickyRow>, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT session, combo, model, quality FROM llm_smart_sticky
+             WHERE session = ?1 AND combo = ?2",
+        )?;
+        let mut rows = statement.query_map([session, combo], |row| {
+            Ok(StickyRow {
+                session: row.get(0)?,
+                combo: row.get(1)?,
+                model: row.get(2)?,
+                window: row.get(3)?,
+            })
+        })?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Insert or replace a session's sticky model.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn set_sticky(&self, row: &StickyRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO llm_smart_sticky (session, combo, model, quality) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(session, combo) DO UPDATE SET model = excluded.model,
+                quality = excluded.quality,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+            rusqlite::params![row.session, row.combo, row.model, row.window],
+        )?;
+        Ok(())
+    }
+
+    /// Record a smart-combo model switch.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn record_switch(&self, row: &SwitchRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO llm_switches (ts, session, combo, from_model, to_model, reason, confidence)
+             VALUES (COALESCE(?1, strftime('%Y-%m-%dT%H:%M:%fZ','now')), ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                row.ts,
+                row.session,
+                row.combo,
+                row.from_model,
+                row.to_model,
+                row.reason,
+                row.confidence
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn switches_since(&self, since: &str, limit: i64) -> Result<Vec<SwitchRow>, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT ts, session, combo, from_model, to_model, reason, confidence
+             FROM llm_switches WHERE substr(ts, 1, 10) >= ?1 ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = statement.query_map(rusqlite::params![since, limit], |row| {
+            Ok(SwitchRow {
+                ts: row.get(0)?,
+                session: row.get(1)?,
+                combo: row.get(2)?,
+                from_model: row.get(3)?,
+                to_model: row.get(4)?,
+                reason: row.get(5)?,
+                confidence: row.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Record one request and fold it into the daily rollup, atomically.
@@ -1230,13 +1360,16 @@ impl Store {
                 saver_bytes_after: row.get(17)?,
             })
         })?;
+        let recent_rows = rows.collect::<Result<_, _>>()?;
+        let switches = self.switches_since(&since, limit)?;
         Ok(UsageSummary {
             totals,
             by_provider,
             by_model,
             by_role,
             daily,
-            recent: rows.collect::<Result<_, _>>()?,
+            recent: recent_rows,
+            switches,
             saver_bytes_before,
             saver_bytes_after,
         })
@@ -1272,8 +1405,9 @@ mod gateway_tests {
             name: "fast".into(),
             kind: "llm".into(),
             models: r#"["openai/gpt-4o-mini"]"#.into(),
-            strategy: Some("round-robin".into()),
+            strategy: Some("smart".into()),
             sticky_limit: None,
+            confidence_threshold: Some(0.9),
         };
         store.upsert_combo(&combo).expect("combo");
         let clash = ComboRow {
@@ -1283,6 +1417,55 @@ mod gateway_tests {
         assert!(store.upsert_combo(&clash).is_err(), "names are unique");
         assert_eq!(store.list_combos().expect("list"), vec![combo]);
         assert!(store.delete_combo("k1").expect("delete"));
+    }
+
+    #[test]
+    fn sticky_choices_and_switches_persist() {
+        let store = Store::open_in_memory().expect("open");
+        assert_eq!(store.get_sticky("t1", "smart").expect("get"), None);
+        let row = StickyRow {
+            session: "t1".into(),
+            combo: "smart".into(),
+            model: "a/x".into(),
+            window: "[false,true]".into(),
+        };
+        store.set_sticky(&row).expect("set");
+        let moved = StickyRow {
+            model: "b/y".into(),
+            window: "[]".into(),
+            ..row.clone()
+        };
+        store.set_sticky(&moved).expect("replace");
+        assert_eq!(store.get_sticky("t1", "smart").expect("get"), Some(moved));
+        assert_eq!(
+            store.get_sticky("t2", "smart").expect("other session"),
+            None
+        );
+        let switch = SwitchRow {
+            session: "t1".into(),
+            combo: "smart".into(),
+            from_model: "a/x".into(),
+            to_model: "b/y".into(),
+            reason: "quality:empty".into(),
+            confidence: 0.7,
+            ..SwitchRow::default()
+        };
+        store.record_switch(&switch).expect("switch");
+        store
+            .record_switch(&SwitchRow {
+                ts: Some("2001-01-01T00:00:00Z".into()),
+                ..switch.clone()
+            })
+            .expect("old switch");
+        let week = store.usage_summary(7, 20).expect("summary");
+        assert_eq!(
+            week.switches.len(),
+            1,
+            "old switches fall outside the period"
+        );
+        assert_eq!(week.switches[0].reason, "quality:empty");
+        assert!(week.switches[0].ts.is_some());
+        assert_eq!(store.usage_summary(0, 20).expect("all").switches.len(), 2);
     }
 
     #[test]

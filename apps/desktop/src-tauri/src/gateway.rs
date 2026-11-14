@@ -11,7 +11,9 @@ use next_agent_core::router::{
     Connection, Gateway, GatewayConfig, GatewaySettings, KeySource, Pricing, StoreUsage, PRESETS,
     ROLES,
 };
-use next_agent_core::store::{ComboRow, ConnectionRow, UsageRow, UsageSummary, UsageTotals};
+use next_agent_core::store::{
+    ComboRow, ConnectionRow, SwitchRow, UsageRow, UsageSummary, UsageTotals,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -81,18 +83,34 @@ pub struct ConnectionInput {
     pub clear_key: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ComboDto {
     #[serde(default)]
     pub id: String,
     pub name: String,
     pub models: Vec<String>,
-    /// `fallback` | `round-robin` | null (global setting).
+    /// `fallback` | `round-robin` | `smart` | null (global setting).
     #[serde(default)]
     pub strategy: Option<String>,
     #[serde(default)]
     pub sticky_limit: Option<i64>,
+    /// Smart: switch models below this confidence (null = 0.8).
+    #[serde(default)]
+    pub confidence_threshold: Option<f64>,
+}
+
+impl From<ComboRow> for ComboDto {
+    fn from(row: ComboRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            models: serde_json::from_str(&row.models).unwrap_or_default(),
+            strategy: row.strategy,
+            sticky_limit: row.sticky_limit,
+            confidence_threshold: row.confidence_threshold,
+        }
+    }
 }
 
 /// Something a role or default model can point at.
@@ -176,6 +194,33 @@ impl From<&UsageRow> for RecentDto {
     }
 }
 
+/// A smart combo changing a task's model.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchDto {
+    pub ts: String,
+    pub session: String,
+    pub combo: String,
+    pub from: String,
+    pub to: String,
+    pub reason: String,
+    pub confidence: f64,
+}
+
+impl From<&SwitchRow> for SwitchDto {
+    fn from(r: &SwitchRow) -> Self {
+        Self {
+            ts: r.ts.clone().unwrap_or_default(),
+            session: r.session.clone(),
+            combo: r.combo.clone(),
+            from: r.from_model.clone(),
+            to: r.to_model.clone(),
+            reason: r.reason.clone(),
+            confidence: r.confidence,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageDto {
@@ -186,6 +231,7 @@ pub struct UsageDto {
     pub by_role: Vec<TotalsDto>,
     pub daily: Vec<TotalsDto>,
     pub recent: Vec<RecentDto>,
+    pub switches: Vec<SwitchDto>,
     pub saver_bytes_before: i64,
     pub saver_bytes_after: i64,
 }
@@ -201,6 +247,7 @@ impl UsageDto {
             by_role: all(&s.by_role),
             daily: all(&s.daily),
             recent: s.recent.iter().map(RecentDto::from).collect(),
+            switches: s.switches.iter().map(SwitchDto::from).collect(),
             saver_bytes_before: s.saver_bytes_before,
             saver_bytes_after: s.saver_bytes_after,
         }
@@ -458,13 +505,7 @@ impl AppService {
             .list_combos()
             .map_err(|e| e.to_string())?
             .into_iter()
-            .map(|row| ComboDto {
-                id: row.id,
-                name: row.name,
-                models: serde_json::from_str(&row.models).unwrap_or_default(),
-                strategy: row.strategy,
-                sticky_limit: row.sticky_limit,
-            })
+            .map(ComboDto::from)
             .collect())
     }
 
@@ -486,9 +527,13 @@ impl AppService {
         if let Some(s) = &strategy {
             if next_agent_core::router::Strategy::parse(s).is_none() {
                 return Err(format!(
-                    "unknown strategy `{s}` (use fallback or round-robin)"
+                    "unknown strategy `{s}` (use fallback, round-robin or smart)"
                 ));
             }
+        }
+        let threshold = input.confidence_threshold;
+        if threshold.is_some_and(|t| !(0.0..=1.0).contains(&t)) {
+            return Err("the confidence threshold must be between 0 and 1".into());
         }
         let id = if input.id.trim().is_empty() {
             new_id("combo")
@@ -502,18 +547,13 @@ impl AppService {
             models: serde_json::to_string(&models).map_err(|e| e.to_string())?,
             strategy: strategy.clone(),
             sticky_limit: input.sticky_limit.filter(|n| *n > 0),
+            confidence_threshold: threshold,
         };
         self.store()?
             .upsert_combo(&row)
             .map_err(|e| format!("could not save combo (is the name taken?): {e}"))?;
         self.bump_router_generation();
-        Ok(ComboDto {
-            id,
-            name: row.name,
-            models,
-            strategy,
-            sticky_limit: row.sticky_limit,
-        })
+        Ok(ComboDto::from(row))
     }
 
     pub fn gateway_combo_delete(&self, id: &str) -> Result<bool, String> {
@@ -752,17 +792,14 @@ mod tests {
                 id: String::new(),
                 name: String::new(),
                 models: vec!["a/b".into()],
-                strategy: None,
-                sticky_limit: None
+                ..ComboDto::default()
             })
             .is_err());
         assert!(svc
             .gateway_combo_save(&ComboDto {
                 id: String::new(),
                 name: "x".into(),
-                models: vec![],
-                strategy: None,
-                sticky_limit: None
+                ..ComboDto::default()
             })
             .is_err());
         assert!(svc
@@ -770,10 +807,30 @@ mod tests {
                 id: String::new(),
                 name: "x".into(),
                 models: vec!["a/b".into()],
-                strategy: Some("smart".into()),
-                sticky_limit: None
+                strategy: Some("fusion".into()),
+                ..ComboDto::default()
             })
             .is_err());
+        assert!(svc
+            .gateway_combo_save(&ComboDto {
+                name: "x".into(),
+                models: vec!["a/b".into()],
+                strategy: Some("smart".into()),
+                confidence_threshold: Some(1.5),
+                ..ComboDto::default()
+            })
+            .is_err());
+        let smart = svc
+            .gateway_combo_save(&ComboDto {
+                name: "steady".into(),
+                models: vec!["openai/gpt-4o".into(), "openai/gpt-4o-mini".into()],
+                strategy: Some("smart".into()),
+                confidence_threshold: Some(0.9),
+                ..ComboDto::default()
+            })
+            .expect("smart combo");
+        assert_eq!(smart.confidence_threshold, Some(0.9));
+        assert!(svc.gateway_combo_delete(&smart.id).expect("delete smart"));
         let combo = svc
             .gateway_combo_save(&ComboDto {
                 id: String::new(),
@@ -781,6 +838,7 @@ mod tests {
                 models: vec!["openai/gpt-4o-mini".into(), "openai/gpt-4o".into()],
                 strategy: Some("round-robin".into()),
                 sticky_limit: Some(2),
+                confidence_threshold: None,
             })
             .expect("combo");
         assert_eq!(svc.gateway_combos().expect("list"), vec![combo.clone()]);

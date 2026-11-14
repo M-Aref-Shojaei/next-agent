@@ -97,7 +97,7 @@ impl AppService {
                 root: wt.root.display().to_string(),
             });
         }
-        let (executor, agent_notice) = self.choose_executor(&plan.root);
+        let (executor, agent_notice) = self.choose_executor(&plan.root, &task_id);
         for text in plan.notices.iter().chain(agent_notice.iter()) {
             sink(StreamMessage::Notice {
                 task_id: task_id.clone(),
@@ -300,10 +300,18 @@ impl AppService {
     /// The real agent on the built-in gateway when the `chat` role (or the
     /// default model) has a usable provider, otherwise the scripted demo
     /// agent (no LLM needed). No external router is required.
-    fn choose_executor(&self, root: &Path) -> (Box<dyn AgentExecutor + Send>, Option<String>) {
+    /// Smart combos keep one model per task (`task_id` is the session).
+    fn choose_executor(
+        &self,
+        root: &Path,
+        task_id: &str,
+    ) -> (Box<dyn AgentExecutor + Send>, Option<String>) {
         match self.chat_gateway() {
             Ok(gateway) => (
-                Box::new(BuiltinExecutor::new(Arc::new(gateway), root)),
+                Box::new(BuiltinExecutor::new(
+                    Arc::new(gateway.with_session(task_id)),
+                    root,
+                )),
                 None,
             ),
             Err(why) => (

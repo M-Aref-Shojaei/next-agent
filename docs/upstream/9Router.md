@@ -151,9 +151,21 @@ Everything lives in `crates/core/src/router/` behind `CompletionClient` and `Hea
 | Providers, connections | `providers.rs` | Presets: OpenAI, Anthropic, Gemini, OpenRouter, DeepSeek, Groq, xAI, Mistral, Together, Fireworks, Ollama, LM Studio, 9Router, custom. Keys in the OS keychain (`provider:<id>`), rows in `llm_connections`. |
 | Translation | `translate/{mod,anthropic,gemini}.rs` | OpenAI is the pivot. Requests OpenAI → Anthropic/Gemini; responses and SSE streams back to OpenAI. |
 | Combos, fallback, cooldown | `combo.rs`, `gateway/mod.rs` | `fallback` and `round-robin`; capability reorder; fall-through rules; backoff 1 s … 240 s. |
+| Smart combos | `smart.rs`, `gateway/mod.rs`, `store.rs` (`llm_smart_sticky`, `llm_switches`) | Our own design (see below). |
 | Caveman / Ponytail | `savers/prompts.rs` | Our own prompt text; levels lite/full/ultra; idempotent per format. |
 | RTK | `savers/rtk.rs` | 13 detectors in 9Router's order and limits; our own output formats. |
 | Prompt caching | `savers/mod.rs` | `cache_control` on system, last tool, last assistant block. |
 | Usage, cost | `pricing.rs`, `pricing.json`, `store.rs` (`llm_usage`, `llm_usage_daily`) | Unknown models cost 0 and are flagged. A `pricing.json` in the app data folder overrides entries. |
 
-Not ported: `smart` and `fusion` strategies, OAuth providers and token refresh, the Responses API format, Wenyan Caveman levels, the custom-prompt saver, Headroom, inbound Anthropic/Gemini-format requests (we have no HTTP server; the agent always speaks OpenAI format).
+### Smart strategy (our design)
+9Router's `smart` quality signal was not captured, so we designed our own.
+- **Sticky model:** each session (the task id) keeps one model per combo. A request tries it first, then the rest of the combo in order after it, with the normal fall-through rules.
+- **When it switches:**
+  - *failover*: another model had to answer because the sticky one failed;
+  - *quality*: confidence drops below the combo's threshold (0.7, 0.8 or 0.9; default 0.8). The next model in combo order takes over with a fresh window.
+- **Quality signal:** each answer from the sticky model is good or bad. Bad means empty (no text, no tool calls), refused (`content_filter`, or a short text-only reply opening with a refusal phrase), tool-call arguments that are not valid JSON, or `finish_reason = length`.
+- **Confidence:** the share of good answers over the last 10, with answers not yet seen counting as good. So the model switches on the 2nd bad answer in the window at 0.9, the 3rd at 0.8 and the 4th at 0.7.
+- **Storage:** the sticky choice and its window go to `llm_smart_sticky`, so subagents, compaction calls and restarts in the same task reuse it. Switches go to `llm_switches` and show on the Usage page.
+- **Tests:** unit tests in `smart.rs` (each signal, window, the three thresholds, ordering) and wiremock tests in `gateway/tests.rs` (stickiness per session, failover, persistence across gateways, quality switch).
+
+Not ported: the `fusion` strategy, OAuth providers and token refresh, the Responses API format, Wenyan Caveman levels, the custom-prompt saver, Headroom, inbound Anthropic/Gemini-format requests (we have no HTTP server; the agent always speaks OpenAI format).

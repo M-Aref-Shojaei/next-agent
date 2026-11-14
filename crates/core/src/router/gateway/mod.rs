@@ -15,6 +15,12 @@
 //! - transport errors and other 5xx → next model.
 //!
 //! When everything failed: the first request-scoped error, otherwise 503.
+//!
+//! A `smart` combo starts at the session's sticky model and updates it after
+//! the answer (see [`super::smart`]); the session is the task id given by
+//! [`Gateway::with_session`]. Calls without a
+//! session share one sticky model per combo. Concurrent calls of one session
+//! may overwrite each other's quality window (last write wins).
 
 use super::client::{classify_status, describe};
 use super::combo::{reorder_by_caps, required_caps, rotate, Combo, GatewayState, Strategy};
@@ -22,9 +28,10 @@ use super::pricing::Pricing;
 use super::providers::{Connection, KeySource, ProviderKind, LEGACY_ROUTER_ID};
 use super::savers::{self, prompts::Level, Format, SaverConfig, SaverReport};
 use super::settings::RouterSettings;
+use super::smart::{self, Sticky};
 use super::translate::{anthropic, gemini, OpenAiDecoder, StreamDecoder, Usage};
 use crate::llm::{ChatRequest, Completion, CompletionClient, LlmError, StreamAccumulator};
-use crate::store::{Store, StoreError, UsageRow};
+use crate::store::{StickyRow, Store, StoreError, SwitchRow, UsageRow};
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use next_agent_process_manager::{HealthProbe, HealthReport, HealthStatus, ProbeFuture};
@@ -128,7 +135,7 @@ impl Target {
 }
 
 /// What a model name resolved to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
     pub combo: Option<Combo>,
     pub targets: Vec<Target>,
@@ -311,9 +318,18 @@ impl GatewayConfig {
     }
 }
 
-/// Where usage rows go.
+/// Where usage rows go, and where smart combos keep their sticky choices so
+/// they survive restarts and are shared by every gateway of a task.
 pub trait UsageSink: Send + Sync {
     fn record(&self, row: &UsageRow);
+
+    fn record_switch(&self, _row: &SwitchRow) {}
+
+    fn load_sticky(&self, _session: &str, _combo: &str) -> Option<Sticky> {
+        None
+    }
+
+    fn save_sticky(&self, _session: &str, _combo: &str, _sticky: &Sticky) {}
 }
 
 /// Writes usage rows to the metadata database.
@@ -333,11 +349,48 @@ impl StoreUsage {
     }
 }
 
+impl StoreUsage {
+    fn store(&self) -> std::sync::MutexGuard<'_, Store> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 impl UsageSink for StoreUsage {
     fn record(&self, row: &UsageRow) {
-        let store = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Err(error) = store.record_usage(row) {
+        if let Err(error) = self.store().record_usage(row) {
             tracing::warn!(target: "router", %error, "could not record usage");
+        }
+    }
+
+    fn record_switch(&self, row: &SwitchRow) {
+        if let Err(error) = self.store().record_switch(row) {
+            tracing::warn!(target: "router", %error, "could not record a model switch");
+        }
+    }
+
+    fn load_sticky(&self, session: &str, combo: &str) -> Option<Sticky> {
+        let row = self
+            .store()
+            .get_sticky(session, combo)
+            .map_err(
+                |error| tracing::warn!(target: "router", %error, "could not read sticky model"),
+            )
+            .ok()??;
+        Some(Sticky {
+            model: row.model,
+            window: serde_json::from_str(&row.window).unwrap_or_default(),
+        })
+    }
+
+    fn save_sticky(&self, session: &str, combo: &str, sticky: &Sticky) {
+        let row = StickyRow {
+            session: session.into(),
+            combo: combo.into(),
+            model: sticky.model.clone(),
+            window: serde_json::to_string(&sticky.window).unwrap_or_else(|_| "[]".into()),
+        };
+        if let Err(error) = self.store().set_sticky(&row) {
+            tracing::warn!(target: "router", %error, "could not save sticky model");
         }
     }
 }
@@ -358,6 +411,16 @@ impl Default for RequestOptions {
             token_saver: true,
         }
     }
+}
+
+/// A smart combo's state during one request.
+struct SmartRun {
+    session: String,
+    combo: String,
+    /// Target labels in combo order.
+    order: Vec<String>,
+    threshold: f64,
+    sticky: Option<Sticky>,
 }
 
 enum Outcome {
@@ -392,6 +455,7 @@ pub struct Gateway {
     state: Arc<GatewayState>,
     usage: Option<Arc<dyn UsageSink>>,
     role: String,
+    session: Option<String>,
     idle_timeout: Duration,
     probe_timeout: Duration,
 }
@@ -421,6 +485,7 @@ impl Gateway {
             state: GatewayState::shared(),
             usage: None,
             role: "chat".into(),
+            session: None,
             idle_timeout: Duration::from_secs(120),
             probe_timeout: Duration::from_secs(3),
         })
@@ -442,6 +507,13 @@ impl Gateway {
     #[must_use]
     pub fn with_role(mut self, role: impl Into<String>) -> Self {
         self.role = role.into();
+        self
+    }
+
+    /// Session (task id) smart combos keep their sticky model for.
+    #[must_use]
+    pub fn with_session(mut self, session: impl Into<String>) -> Self {
+        self.session = Some(session.into());
         self
     }
 
@@ -491,16 +563,33 @@ impl Gateway {
         let plan = self.config.resolve(requested, &role)?;
         let combo_name = plan.combo.as_ref().map(|c| c.name.clone());
         let mut targets = plan.targets;
+        let mut smart_run = None;
         if let Some(combo) = &plan.combo {
-            let strategy = combo
+            match combo
                 .strategy
-                .unwrap_or(self.config.settings.combo_strategy);
-            if strategy == Strategy::RoundRobin {
-                targets = rotate(
-                    &targets,
-                    self.state.next_use(&combo.name),
-                    combo.sticky_limit,
-                );
+                .unwrap_or(self.config.settings.combo_strategy)
+            {
+                Strategy::Fallback => {}
+                Strategy::RoundRobin => {
+                    targets = rotate(
+                        &targets,
+                        self.state.next_use(&combo.name),
+                        combo.sticky_limit,
+                    );
+                }
+                Strategy::Smart => {
+                    let session = self.session.clone().unwrap_or_default();
+                    let sticky = self.load_sticky(&session, &combo.name);
+                    let order: Vec<String> = targets.iter().map(Target::label).collect();
+                    targets.rotate_left(smart::start_index(&order, sticky.as_ref()));
+                    smart_run = Some(SmartRun {
+                        order,
+                        session,
+                        combo: combo.name.clone(),
+                        threshold: combo.confidence_threshold,
+                        sticky,
+                    });
+                }
             }
         }
         let needed = required_caps(&body);
@@ -543,6 +632,7 @@ impl Gateway {
                 match self.attempt(&attempt, &body, options, on_delta).await {
                     Outcome::Done(completion) => {
                         self.state.succeed(&account.id, &target.model);
+                        self.observe_smart(smart_run.take(), target, &completion);
                         return Ok(completion);
                     }
                     Outcome::Empty(completion) => {
@@ -551,6 +641,7 @@ impl Gateway {
                             Some("length" | "content_filter")
                         );
                         if last_model || final_reason {
+                            self.observe_smart(smart_run.take(), target, &completion);
                             return Ok(completion);
                         }
                         last_error = Some(LlmError::Protocol(format!(
@@ -621,6 +712,58 @@ impl Gateway {
                     error.map_or_else(String::new, |e| format!("; last error: {e}"))
                 ),
             }),
+        }
+    }
+
+    fn load_sticky(&self, session: &str, combo: &str) -> Option<Sticky> {
+        self.state.sticky(session, combo).or_else(|| {
+            let sticky = self.usage.as_ref()?.load_sticky(session, combo)?;
+            self.state.set_sticky(session, combo, sticky.clone());
+            Some(sticky)
+        })
+    }
+
+    /// Score a smart combo's answer, move the sticky model if needed, persist
+    /// it and record any switch.
+    fn observe_smart(&self, run: Option<SmartRun>, answered: &Target, completion: &Completion) {
+        let Some(SmartRun {
+            session,
+            combo,
+            order,
+            threshold,
+            mut sticky,
+        }) = run
+        else {
+            return;
+        };
+        let switch = smart::observe(
+            &mut sticky,
+            &order,
+            &answered.label(),
+            completion,
+            threshold,
+        );
+        let Some(sticky) = sticky else { return };
+        if self.state.sticky(&session, &combo).as_ref() == Some(&sticky) {
+            return; // Nothing changed (the usual case): skip the write.
+        }
+        self.state.set_sticky(&session, &combo, sticky.clone());
+        if let Some(sink) = &self.usage {
+            sink.save_sticky(&session, &combo, &sticky);
+            if let Some(switch) = &switch {
+                sink.record_switch(&SwitchRow {
+                    ts: None,
+                    session: session.clone(),
+                    combo: combo.clone(),
+                    from_model: switch.from.clone(),
+                    to_model: switch.to.clone(),
+                    reason: switch.reason.clone(),
+                    confidence: switch.confidence,
+                });
+            }
+        }
+        if let Some(switch) = switch {
+            tracing::info!(target: "router", %combo, %session, from = %switch.from, to = %switch.to, reason = %switch.reason, "smart combo switched model");
         }
     }
 

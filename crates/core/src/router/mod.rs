@@ -2,7 +2,8 @@
 //!
 //! - [`gateway`]: the built-in LLM gateway (ported from 9Router): provider
 //!   connections, OpenAI ⇄ Anthropic ⇄ Gemini translation ([`translate`]),
-//!   combos with fallback and cooldown ([`combo`]), token savers
+//!   combos with fallback and cooldown ([`combo`]), smart combos that keep a
+//!   model per task ([`smart`]), token savers
 //!   ([`savers`]), usage and cost ([`pricing`]) and model roles. Implements
 //!   [`CompletionClient`](crate::llm::CompletionClient) and
 //!   [`HealthProbe`](next_agent_process_manager::HealthProbe).
@@ -27,6 +28,7 @@ pub mod pricing;
 pub mod providers;
 pub mod savers;
 pub mod settings;
+pub mod smart;
 pub mod translate;
 
 pub use client::{RetryPolicy, RouterClient};

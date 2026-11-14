@@ -8,6 +8,9 @@
     type CavemanLevel,
     type Combo,
     type ComboStrategy,
+    DEFAULT_THRESHOLD,
+    effectiveStrategy,
+    THRESHOLDS,
     type ConnectionTest,
     type GatewaySettings,
     type GatewayTarget,
@@ -31,8 +34,9 @@
   const formPreset = $derived(presets.find((p) => p.id === form.provider));
 
   // Combo form.
-  const blankCombo = () => ({ id: "", name: "", models: "", strategy: "" as "" | ComboStrategy, stickyLimit: 1 });
+  const blankCombo = () => ({ id: "", name: "", models: "", strategy: "" as "" | ComboStrategy, stickyLimit: 1, threshold: DEFAULT_THRESHOLD });
   let comboForm = $state(blankCombo());
+  const comboIsSmart = $derived(effectiveStrategy(comboForm.strategy, settings.comboStrategy) === "smart");
 
   async function load() {
     [presets, connections, combos, targets, settings] = await Promise.all([
@@ -104,6 +108,7 @@
     comboForm = {
       id: combo.id, name: combo.name, models: combo.models.join("\n"),
       strategy: combo.strategy ?? "", stickyLimit: combo.stickyLimit ?? 1,
+      threshold: combo.confidenceThreshold ?? DEFAULT_THRESHOLD,
     };
   }
 
@@ -112,6 +117,8 @@
     const input: Combo = {
       id: comboForm.id, name: comboForm.name.trim(), models: parseList(comboForm.models),
       strategy: comboForm.strategy || null, stickyLimit: Number(comboForm.stickyLimit) || null,
+      // Kept for "use the global strategy" too, so it survives a later switch to smart.
+      confidenceThreshold: comboForm.strategy === "" || comboForm.strategy === "smart" ? Number(comboForm.threshold) : null,
     };
     void attempt(async () => {
       await api.gatewayComboSave(input);
@@ -241,7 +248,7 @@
   <section aria-labelledby="h-combos">
     <h2 id="h-combos">Combos</h2>
     {#if combos.length === 0}
-      <p class="muted">A combo is a list of models tried in order (fallback) or in rotation (round-robin).</p>
+      <p class="muted">A combo is a list of models tried in order (fallback), in rotation (round-robin), or kept per task until it fails or its answers get worse (smart).</p>
     {:else}
       <table>
         <thead><tr><th>Name</th><th>Models</th><th>Strategy</th><th></th></tr></thead>
@@ -250,7 +257,7 @@
             <tr>
               <td>{combo.name}</td>
               <td>{combo.models.join(" → ")}</td>
-              <td>{combo.strategy ?? `global (${settings.comboStrategy})`}</td>
+              <td>{combo.strategy ?? `global (${settings.comboStrategy})`}{#if effectiveStrategy(combo.strategy, settings.comboStrategy) === "smart"}<span class="muted">&nbsp;(switch below {combo.confidenceThreshold ?? DEFAULT_THRESHOLD})</span>{/if}</td>
               <td class="actions">
                 <button type="button" onclick={() => editCombo(combo)} aria-label="Edit combo {combo.name}">Edit</button>
                 <button type="button" class="danger" onclick={() => removeCombo(combo)} aria-label="Remove combo {combo.name}">Remove</button>
@@ -270,10 +277,20 @@
         <option value="">Use the global strategy</option>
         <option value="fallback">Fallback (in order)</option>
         <option value="round-robin">Round-robin</option>
+        <option value="smart">Smart (one model per task)</option>
       </select>
       {#if comboForm.strategy === "round-robin"}
         <label for="k-sticky">Uses before rotating</label>
         <input id="k-sticky" type="number" min="1" bind:value={comboForm.stickyLimit} />
+      {/if}
+      {#if comboIsSmart}
+        <label for="k-threshold">Switch when quality drops below</label>
+        <div>
+          <select id="k-threshold" bind:value={comboForm.threshold} aria-describedby="k-threshold-help">
+            {#each THRESHOLDS as t (t)}<option value={t}>{t}{t === DEFAULT_THRESHOLD ? " (default)" : ""}</option>{/each}
+          </select>
+          <p id="k-threshold-help" class="muted">Quality is the share of good answers over the last 10. Empty, refused, truncated answers and broken tool-call JSON count as bad. Higher switches sooner.</p>
+        </div>
       {/if}
       <span></span>
       <div class="buttons">
@@ -304,6 +321,7 @@
       <select id="s-strategy" bind:value={settings.comboStrategy}>
         <option value="fallback">Fallback</option>
         <option value="round-robin">Round-robin</option>
+        <option value="smart">Smart</option>
       </select>
       <span></span>
       <div class="buttons"><button type="submit" class="primary">Save token savers</button></div>

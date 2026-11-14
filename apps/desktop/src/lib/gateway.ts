@@ -2,7 +2,10 @@
 // Providers, Usage). The IPC calls live in api.ts.
 
 export type CavemanLevel = "lite" | "full" | "ultra";
-export type ComboStrategy = "fallback" | "round-robin";
+export type ComboStrategy = "fallback" | "round-robin" | "smart";
+/** Smart-combo confidence thresholds offered in the editor (0.8 is the default). */
+export const THRESHOLDS = [0.7, 0.8, 0.9] as const;
+export const DEFAULT_THRESHOLD = 0.8;
 export const ROLES = ["chat", "design", "summary", "review"] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -49,6 +52,8 @@ export interface Combo {
   models: string[];
   strategy: ComboStrategy | null;
   stickyLimit: number | null;
+  /** Smart only: switch models when answer quality drops below this. */
+  confidenceThreshold: number | null;
 }
 
 export interface GatewaySettings {
@@ -100,6 +105,18 @@ export interface UsageRecent {
   latencyMs: number;
 }
 
+/** A smart combo moving a task to another model. */
+export interface ModelSwitch {
+  ts: string;
+  session: string;
+  combo: string;
+  from: string;
+  to: string;
+  /** `failover` or `quality:<signal>` (empty, refused, bad-tool-json, truncated). */
+  reason: string;
+  confidence: number;
+}
+
 export interface UsageSummary {
   days: number;
   totals: UsageTotals;
@@ -108,6 +125,7 @@ export interface UsageSummary {
   byRole: UsageTotals[];
   daily: UsageTotals[];
   recent: UsageRecent[];
+  switches: ModelSwitch[];
   saverBytesBefore: number;
   saverBytesAfter: number;
 }
@@ -185,6 +203,29 @@ export function dailyBars(
   const max = Math.max(0, ...bars.map((b) => b.value));
   for (const bar of bars) bar.height = max > 0 ? bar.value / max : 0;
   return bars;
+}
+
+/** "2026-11-14T10:25:04.123Z" → "2026-11-14 10:25:04". */
+export function formatTs(ts: string): string {
+  return ts.replace("T", " ").slice(0, 19);
+}
+
+/** A combo's own strategy, else the global one. */
+export function effectiveStrategy(strategy: ComboStrategy | "" | null, global: ComboStrategy): ComboStrategy {
+  return strategy || global;
+}
+
+/** "quality:truncated" → "Quality: truncated answers"; "failover" → "Failover". */
+export function switchReason(reason: string): string {
+  if (reason === "failover") return "Failover (model failed)";
+  const signal = reason.startsWith("quality:") ? reason.slice("quality:".length) : reason;
+  const labels: Record<string, string> = {
+    empty: "empty answers",
+    refused: "refusals",
+    "bad-tool-json": "broken tool-call JSON",
+    truncated: "truncated answers",
+  };
+  return `Low quality: ${labels[signal] ?? signal}`;
 }
 
 /** The provider prefix of a `provider/model` target ("" for combos). */

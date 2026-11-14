@@ -2,10 +2,11 @@
 //! Combos (named model lists with a strategy), capability reordering and
 //! per-account cooldown with exponential backoff.
 //!
-//! Strategies: `fallback` (in order) and `round-robin` (rotate the start,
-//! advancing after `sticky_limit` uses). 9Router's `smart` and `fusion` are
-//! not ported.
+//! Strategies: `fallback` (in order), `round-robin` (rotate the start,
+//! advancing after `sticky_limit` uses) and `smart` (a sticky model per
+//! session, see [`super::smart`]). 9Router's `fusion` is not ported.
 
+use super::smart::{Sticky, DEFAULT_THRESHOLD};
 use crate::store::ComboRow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +21,7 @@ pub enum Strategy {
     #[default]
     Fallback,
     RoundRobin,
+    Smart,
 }
 
 impl Strategy {
@@ -28,6 +30,7 @@ impl Strategy {
         match name {
             "fallback" => Some(Self::Fallback),
             "round-robin" => Some(Self::RoundRobin),
+            "smart" => Some(Self::Smart),
             _ => None,
         }
     }
@@ -37,12 +40,13 @@ impl Strategy {
         match self {
             Self::Fallback => "fallback",
             Self::RoundRobin => "round-robin",
+            Self::Smart => "smart",
         }
     }
 }
 
 /// A named list of `provider/model` targets.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Combo {
     pub id: String,
     pub name: String,
@@ -51,6 +55,8 @@ pub struct Combo {
     pub strategy: Option<Strategy>,
     /// Round-robin: uses before advancing (≥ 1).
     pub sticky_limit: u32,
+    /// Smart: switch when confidence drops below this (0..=1).
+    pub confidence_threshold: f64,
 }
 
 impl Combo {
@@ -69,6 +75,10 @@ impl Combo {
                 .and_then(|n| u32::try_from(n).ok())
                 .unwrap_or(1)
                 .max(1),
+            confidence_threshold: row
+                .confidence_threshold
+                .filter(|t| (0.0..=1.0).contains(t))
+                .unwrap_or(DEFAULT_THRESHOLD),
         })
     }
 }
@@ -197,12 +207,14 @@ pub struct CooldownInfo {
     pub last_error: String,
 }
 
-/// Shared, in-process gateway state: account cooldowns and round-robin counters.
+/// Shared, in-process gateway state: account cooldowns, round-robin counters
+/// and smart-combo sticky choices (a cache of what the store persists).
 #[derive(Debug, Default)]
 pub struct GatewayState {
     pub policy: CooldownPolicy,
     accounts: Mutex<HashMap<String, AccountState>>,
     uses: Mutex<HashMap<String, u64>>,
+    sticky: Mutex<HashMap<(String, String), Sticky>>,
 }
 
 impl GatewayState {
@@ -297,6 +309,20 @@ impl GatewayState {
         *counter += 1;
         before
     }
+
+    /// Cached sticky choice of `session` for `combo`.
+    #[must_use]
+    pub fn sticky(&self, session: &str, combo: &str) -> Option<Sticky> {
+        let sticky = self.sticky.lock().unwrap_or_else(PoisonError::into_inner);
+        sticky
+            .get(&(session.to_string(), combo.to_string()))
+            .cloned()
+    }
+
+    pub fn set_sticky(&self, session: &str, combo: &str, value: Sticky) {
+        let mut sticky = self.sticky.lock().unwrap_or_else(PoisonError::into_inner);
+        sticky.insert((session.to_string(), combo.to_string()), value);
+    }
 }
 
 #[cfg(test)]
@@ -313,12 +339,15 @@ mod tests {
             models: r#"["a/x","b/y"]"#.into(),
             strategy: Some("round-robin".into()),
             sticky_limit: Some(0),
+            confidence_threshold: None,
         })
         .expect("combo");
         assert_eq!(combo.models, ["a/x", "b/y"]);
         assert_eq!(combo.strategy, Some(Strategy::RoundRobin));
         assert_eq!(combo.sticky_limit, 1);
-        assert_eq!(Strategy::parse("smart"), None);
+        assert!((combo.confidence_threshold - DEFAULT_THRESHOLD).abs() < 1e-9);
+        assert_eq!(Strategy::parse("smart"), Some(Strategy::Smart));
+        assert_eq!(Strategy::parse("fusion"), None);
     }
 
     #[test]

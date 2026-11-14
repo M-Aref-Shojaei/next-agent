@@ -3,11 +3,14 @@ import test from "node:test";
 import {
   dailyBars,
   defaultSettings,
+  effectiveStrategy,
   formatCost,
+  formatTs,
   formatTokens,
   parseList,
   providerOf,
   savedPercent,
+  switchReason,
   type UsageTotals,
 } from "../src/lib/gateway.ts";
 
@@ -48,4 +51,18 @@ test("lists, providers and defaults", () => {
   assert.equal(settings.tokenSaver, true);
   assert.equal(settings.caveman, null);
   assert.equal(settings.comboStrategy, "fallback");
+});
+
+test("timestamps and effective strategy", () => {
+  assert.equal(formatTs("2026-11-14T10:25:04.123Z"), "2026-11-14 10:25:04");
+  assert.equal(effectiveStrategy(null, "smart"), "smart");
+  assert.equal(effectiveStrategy("", "fallback"), "fallback");
+  assert.equal(effectiveStrategy("round-robin", "smart"), "round-robin");
+});
+
+test("switch reasons read as plain words", () => {
+  assert.equal(switchReason("failover"), "Failover (model failed)");
+  assert.equal(switchReason("quality:truncated"), "Low quality: truncated answers");
+  assert.equal(switchReason("quality:bad-tool-json"), "Low quality: broken tool-call JSON");
+  assert.equal(switchReason("quality:new-kind"), "Low quality: new-kind");
 });

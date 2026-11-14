@@ -4,8 +4,10 @@
   import {
     dailyBars,
     formatCost,
+    formatTs,
     formatTokens,
     savedPercent,
+    switchReason,
     type UsageSummary,
     type UsageTotals,
   } from "$lib/gateway.ts";
@@ -129,7 +131,7 @@
           <tbody>
             {#each usage.recent as row, i (i)}
               <tr>
-                <td>{row.ts.replace("T", " ").slice(0, 19)}</td>
+                <td>{formatTs(row.ts)}</td>
                 <td>{row.role}</td>
                 <td>{row.provider}/{row.model}{#if row.combo} <span class="muted">({row.combo})</span>{/if}</td>
                 <td class={row.status >= 200 && row.status < 300 ? "ok" : "bad"}>{row.status || "error"}</td>
@@ -143,6 +145,29 @@
         </table>
       {/if}
       <p class="muted">Costs are estimates from the price table (edit <code>pricing.json</code> in the app data folder to override). Models without a price count as $0.</p>
+    </section>
+
+    <section aria-labelledby="h-switches">
+      <h2 id="h-switches">Model switches (smart combos)</h2>
+      {#if usage.switches.length === 0}
+        <p class="muted">No smart combo changed models in this period.</p>
+      {:else}
+        <table>
+          <thead><tr><th>Time</th><th>Combo</th><th>Task</th><th>From → to</th><th>Why</th><th>Quality</th></tr></thead>
+          <tbody>
+            {#each usage.switches as row, i (i)}
+              <tr>
+                <td>{formatTs(row.ts)}</td>
+                <td>{row.combo}</td>
+                <td><code>{row.session || "—"}</code></td>
+                <td>{row.from} → {row.to}</td>
+                <td>{switchReason(row.reason)}</td>
+                <td>{row.reason === "failover" ? "—" : row.confidence.toFixed(1)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
     </section>
   {/if}
 </div>

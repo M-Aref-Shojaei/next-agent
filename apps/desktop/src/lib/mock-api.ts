@@ -232,6 +232,8 @@ export const mockApi: Api = {
       byRole: [{ ...totals, key: "chat" }],
       recent: [{ ts: new Date().toISOString(), provider: "anthropic", model: "claude-sonnet-4-5", role: "chat", combo: null,
         status: 200, promptTokens: 1200, completionTokens: 300, cachedTokens: 400, cost: 0.0081, costKnown: true, latencyMs: 2300 }],
+      switches: [{ ts: new Date().toISOString(), session: "task_mock1", combo: "steady", from: "groq/llama-3.3-70b-versatile",
+        to: "anthropic/claude-sonnet-4-5", reason: "quality:truncated", confidence: 0.7 }],
       saverBytesBefore: 120_000, saverBytesAfter: 52_000,
     };
   },

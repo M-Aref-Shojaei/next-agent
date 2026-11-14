@@ -49,6 +49,7 @@ fn combo(name: &str, models: &[&str], strategy: Option<Strategy>) -> Combo {
         models: models.iter().map(|m| (*m).to_string()).collect(),
         strategy,
         sticky_limit: 1,
+        confidence_threshold: smart::DEFAULT_THRESHOLD,
     }
 }
 
@@ -1165,6 +1166,7 @@ async fn config_loads_rows_and_reports_unknown_models() {
             models: r#"["openai/gpt-4o","nobody/x"]"#.into(),
             strategy: None,
             sticky_limit: None,
+            confidence_threshold: None,
         })
         .expect("combo");
     let settings = GatewaySettings {
@@ -1269,4 +1271,164 @@ fn completion_client_works_from_sync_code() {
         h.gateway.complete(&request, &mut |_| {}),
         Err(LlmError::Config(_))
     ));
+}
+
+// ---- smart combos ---------------------------------------------------------------
+
+fn openai_finish(text: &str, finish: &str) -> ResponseTemplate {
+    sse(&[
+        json!({"choices":[{"delta":{"role":"assistant","content":text}}]}),
+        json!({"choices":[{"delta":{},"finish_reason":finish}]}),
+    ])
+}
+
+/// Two providers, one model each, behind a `smart` combo; usage and sticky
+/// choices go to an in-memory database.
+fn smart_gateway(
+    alpha: &MockServer,
+    beta: &MockServer,
+    threshold: f64,
+    store: &Arc<StoreUsage>,
+) -> Gateway {
+    let mut smart_combo = combo("smart", &["alpha/m1", "beta/m2"], Some(Strategy::Smart));
+    smart_combo.confidence_threshold = threshold;
+    let config = GatewayConfig {
+        connections: vec![
+            conn(
+                "a",
+                "alpha",
+                ProviderKind::OpenAi,
+                &format!("{}/v1", alpha.uri()),
+                1,
+            ),
+            conn(
+                "b",
+                "beta",
+                ProviderKind::OpenAi,
+                &format!("{}/v1", beta.uri()),
+                1,
+            ),
+        ],
+        combos: vec![smart_combo],
+        settings: GatewaySettings::default(),
+        pricing: Pricing::builtin(),
+        legacy_model: None,
+    };
+    Gateway::new(
+        config,
+        Arc::new(MemoryKeys::with(&[("a", "ka"), ("b", "kb")])),
+    )
+    .expect("gateway")
+    .with_state(Arc::new(GatewayState::new(CooldownPolicy {
+        base: Duration::from_millis(1),
+        max: Duration::from_millis(2),
+    })))
+    .with_usage(store.clone())
+}
+
+async fn hits(server: &MockServer) -> usize {
+    server.received_requests().await.unwrap_or_default().len()
+}
+
+#[tokio::test]
+async fn smart_combo_sticks_per_session_fails_over_and_persists() {
+    let (alpha, beta) = (MockServer::start().await, MockServer::start().await);
+    Mock::given(method("POST"))
+        .respond_with(openai_text("from alpha"))
+        .up_to_n_times(1)
+        .mount(&alpha)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .mount(&alpha)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(openai_text("from beta"))
+        .mount(&beta)
+        .await;
+    let store = Arc::new(StoreUsage::new(Store::open_in_memory().expect("db")));
+    let task = smart_gateway(&alpha, &beta, 0.8, &store).with_session("t1");
+
+    let (first, _) = run(&task, request("smart")).await;
+    assert_eq!(first.expect("first").content, "from alpha");
+    let (second, _) = run(&task, request("smart")).await;
+    assert_eq!(second.expect("failover").content, "from beta");
+    // Alpha is the combo's first model, but the session now sticks to beta.
+    let (third, _) = run(&task, request("smart")).await;
+    assert_eq!(third.expect("sticky").content, "from beta");
+    assert_eq!(hits(&alpha).await, 2, "third call skipped alpha");
+
+    // Another session starts from the top of the combo.
+    let other = task.clone().with_session("t2");
+    run(&other, request("smart")).await.0.expect("t2");
+    assert_eq!(hits(&alpha).await, 3);
+
+    // A fresh gateway (new process state) reads the sticky choice back, as a
+    // subagent or compaction call of the same task would.
+    let restarted = smart_gateway(&alpha, &beta, 0.8, &store).with_session("t1");
+    run(&restarted, request("smart"))
+        .await
+        .0
+        .expect("restarted");
+    assert_eq!(hits(&alpha).await, 3, "still on beta after restart");
+
+    let db = store.store();
+    let sticky = db.get_sticky("t1", "smart").expect("read").expect("row");
+    assert_eq!(sticky.model, "beta/m2");
+    let switches = db.usage_summary(1, 20).expect("summary").switches;
+    let reasons: Vec<(&str, &str, &str, &str)> = switches
+        .iter()
+        .map(|s| {
+            (
+                s.session.as_str(),
+                s.from_model.as_str(),
+                s.to_model.as_str(),
+                s.reason.as_str(),
+            )
+        })
+        .collect();
+    // t2's first answer came from beta, but it had no sticky model to switch from.
+    assert_eq!(reasons, [("t1", "alpha/m1", "beta/m2", "failover")]);
+    assert_eq!(
+        db.get_sticky("t2", "smart").expect("read").map(|s| s.model),
+        Some("beta/m2".into())
+    );
+}
+
+#[tokio::test]
+async fn smart_combo_switches_when_quality_drops_below_the_threshold() {
+    let (alpha, beta) = (MockServer::start().await, MockServer::start().await);
+    Mock::given(method("POST"))
+        .respond_with(openai_finish("cut off", "length"))
+        .mount(&alpha)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(openai_text("complete"))
+        .mount(&beta)
+        .await;
+    let store = Arc::new(StoreUsage::new(Store::open_in_memory().expect("db")));
+    let gateway = smart_gateway(&alpha, &beta, 0.9, &store).with_session("task-9");
+    let ask = || {
+        let gateway = gateway.clone();
+        async move {
+            gateway
+                .chat_value(request("smart"), &RequestOptions::default(), &mut |_| {})
+                .await
+                .expect("answer")
+        }
+    };
+    // Truncated answers are still returned; the first one is tolerated.
+    assert_eq!(ask().await.content, "cut off");
+    assert_eq!(ask().await.content, "cut off");
+    // Confidence 0.8 < 0.9 after the second: the next request uses beta.
+    assert_eq!(ask().await.content, "complete");
+    assert_eq!(hits(&alpha).await, 2);
+
+    let db = store.store();
+    let switches = db.usage_summary(1, 20).expect("summary").switches;
+    assert_eq!(switches.len(), 1);
+    assert_eq!(switches[0].session, "task-9");
+    assert_eq!(switches[0].reason, "quality:truncated");
+    assert!((switches[0].confidence - 0.8).abs() < 1e-9);
+    assert_eq!(db.usage_summary(1, 20).expect("usage").totals.requests, 3);
 }
