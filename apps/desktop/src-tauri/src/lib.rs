@@ -2,8 +2,8 @@
 
 pub mod boards;
 pub mod commands;
-pub mod notes;
 pub mod gateway;
+pub mod notes;
 pub mod overlay;
 pub mod review;
 pub mod service;

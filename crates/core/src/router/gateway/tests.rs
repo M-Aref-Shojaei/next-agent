@@ -1545,7 +1545,14 @@ async fn response_cache_replays_hits_and_skips_warm_or_opted_out_requests() {
     };
     let (first, streamed_first) = run(&gateway, cold()).await;
     let (second, streamed_second) = run(&gateway, cold()).await;
-    assert_eq!(first.expect("miss"), second.expect("hit"));
+    let (first, second) = (first.expect("miss"), second.expect("hit"));
+    assert_eq!(
+        (&first.content, &first.tool_calls, &first.finish_reason),
+        (&second.content, &second.tool_calls, &second.finish_reason)
+    );
+    // The provider measured the miss; a cache hit consumed no tokens.
+    assert!(first.usage.is_some());
+    assert_eq!(second.usage, None);
     assert_eq!(streamed_first, streamed_second, "the stream is replayed");
     assert_eq!(hits(&server).await, 1, "second answer came from the cache");
 

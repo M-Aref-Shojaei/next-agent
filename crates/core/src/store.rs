@@ -6,7 +6,9 @@ use crate::workspace::Workspace;
 use std::path::Path;
 
 /// Schema version applied by [`Store::open`].
-pub const SCHEMA_VERSION: i32 = 2;
+/// 3: Wave 1 tables (agent-engine snapshots, llm-gateway connections, combos,
+/// usage, smart stickiness, response cache).
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// All schema migrations, in order. Every statement is idempotent so `open`
 /// can run the whole list on each start and converge to [`SCHEMA_VERSION`].
@@ -853,10 +855,10 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_two() {
+    fn schema_version_is_three() {
         let store = Store::open_in_memory().expect("open");
-        assert_eq!(store.schema_version().expect("version"), 2);
-        assert_eq!(SCHEMA_VERSION, 2);
+        assert_eq!(store.schema_version().expect("version"), 3);
+        assert_eq!(SCHEMA_VERSION, 3);
     }
 }
 
