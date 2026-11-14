@@ -1,11 +1,79 @@
 {
-  "$comment": "External components we build against. A version bump should only touch the owning adapter. See docs/architecture/Module Boundaries.md.",
+  "$comment": "External components we build against or port from (ADR-0009). Re-syncing a port means diffing upstream from the pinned commit. See docs/architecture/Module Boundaries.md.",
   "components": {
-    "9router": { "pin": "unversioned (user-run)", "adapter": "services/router-adapter", "checked": "2026-11-11", "risk": "high" },
-    "tauri": { "pin": "2.x", "adapter": "apps/desktop/src-tauri", "checked": "2026-11-11", "risk": "medium" },
-    "sveltekit": { "pin": "2.x", "adapter": "apps/desktop", "checked": "2026-11-11", "risk": "low" },
-    "rusqlite": { "pin": "0.32 (bundled)", "adapter": "crates/core/src/store.rs", "checked": "2026-11-11", "risk": "medium" },
-    "opencode": { "pin": "M2 (not integrated)", "adapter": "services/agent-gateway", "checked": "2026-11-11", "risk": "high" },
-    "hermes-agent": { "pin": "M2 opt (not integrated)", "adapter": "services/hermes-adapter", "checked": "2026-11-11", "risk": "high" }
+    "9router": {
+      "pin": "v0.5.119 @ 1855aa4 (studied; ported, not bundled)",
+      "licence": "MIT",
+      "adapter": "crates/core/src/router",
+      "checked": "2026-11-14",
+      "risk": "medium",
+      "role": "LLM gateway"
+    },
+    "tauri": {
+      "pin": "2.x",
+      "adapter": "apps/desktop/src-tauri",
+      "checked": "2026-11-11",
+      "risk": "medium"
+    },
+    "sveltekit": {
+      "pin": "2.x",
+      "adapter": "apps/desktop",
+      "checked": "2026-11-11",
+      "risk": "low"
+    },
+    "rusqlite": {
+      "pin": "0.32 (bundled)",
+      "adapter": "crates/core/src/store.rs",
+      "checked": "2026-11-11",
+      "risk": "medium"
+    },
+    "opencode": {
+      "pin": "dev branch (pin exact commit when porting)",
+      "licence": "MIT",
+      "adapter": "crates/core/src",
+      "checked": "2026-11-14",
+      "risk": "medium",
+      "role": "agent engine"
+    },
+    "hermes-agent": {
+      "pin": "main (pin exact commit when porting)",
+      "licence": "MIT",
+      "adapter": "crates/core/src",
+      "checked": "2026-11-14",
+      "risk": "medium",
+      "role": "memory, skills, cron"
+    },
+    "openclaw": {
+      "pin": "2026.11.3 (pin exact commit when porting)",
+      "licence": "MIT",
+      "adapter": "services/channel-gateway",
+      "checked": "2026-11-14",
+      "risk": "medium",
+      "role": "wave 2"
+    },
+    "coucou": {
+      "pin": "main (code ideas only; no assets)",
+      "licence": "MIT (code), assets excluded",
+      "adapter": "apps/desktop",
+      "checked": "2026-11-14",
+      "risk": "low",
+      "role": "apps/desktop overlay window"
+    },
+    "logseq": {
+      "pin": "master file-graph format (pin exact commit when porting)",
+      "licence": "AGPL-3.0",
+      "adapter": "packages/vault",
+      "checked": "2026-11-14",
+      "risk": "medium",
+      "role": "notes engine crate"
+    },
+    "excalidraw": {
+      "pin": "@excalidraw/excalidraw (pin exact version when adding)",
+      "licence": "MIT",
+      "adapter": "apps/desktop",
+      "checked": "2026-11-14",
+      "risk": "low",
+      "role": "apps/desktop design board"
+    }
   }
 }

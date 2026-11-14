@@ -1,10 +1,12 @@
 ---
 title: Upstream Evaluation
 tags: [upstream]
-status: todo
+status: superseded
 ---
 
 # Upstream Evaluation
+
+> **Superseded by [[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]] (2026-11-14).** Every upstream is now ported in, not run as an adapter. Research notes: [[9Router]], [[opencode]], [[Hermes Agent]], [[OpenClaw]], [[Coucou]], [[Logseq]]. Build plan: [[Built-in Upstreams Plan]].
 
 To complete in M0. For each upstream record: licence, language/runtime, maturity, what we reuse, integration mode (**reference** = read for patterns, **adapter** = run unmodified behind an interface, **fork** = vendored and patched), and risks. Fields marked *verify* are not yet confirmed.
 

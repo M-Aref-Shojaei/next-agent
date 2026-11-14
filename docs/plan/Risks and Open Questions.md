@@ -19,8 +19,8 @@ status: living
 | R8 | "Immutable" audit log on a user-owned machine can't be truly immutable | Medium | Append-only + hash chain + optional export/anchor; document the limitation |
 
 ## Open questions
-- **Q1** Licence for Next Agent itself (MIT / Apache-2.0 / AGPL)? Constrained by upstream choices.
-- **Q2** Should the router be bundled (spawned 9Router sidecar) or expected to be user-run? M1 assumption: user-run, app only health-checks.
+- **Q1** ~~Licence for Next Agent itself?~~ **Resolved:** AGPL-3.0-or-later ([[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]]).
+- **Q2** ~~Bundle the router or keep it user-run?~~ **Resolved:** neither. The chosen 9Router features are ported into the Rust core ([[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]]).
 - **Q3** Is Bun acceptable for sidecars, or Node only? Assumption: Node 22+ LTS, Bun per-service if upstream requires.
 - **Q4** Auto mode on non-git workspaces: refuse, or `git init` a shadow repo? Assumption: refuse (fall back to manual).
 - **Q5** Default merge strategy for worktree branches: squash vs merge commit?
