@@ -34,6 +34,8 @@ Goal: one self-contained app. No separate programs, no terminal setup. We extrac
 
 **Gate 1 (owner):** try real chat, the overlay and the design board. Approve the merge.
 
+> **Status 2026-11-14:** Wave 1 merged into `main` and reviewed. Waiting for the owner's hands-on test before Wave 2.
+
 ## Wave 2: features on top (4 sessions)
 
 | # | Session | Source | Model | Est. | Done when |

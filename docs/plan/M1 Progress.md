@@ -55,3 +55,44 @@ Task ledger for [[M1 Vertical Slice]]. Update this note (and the step boxes ther
 - Router health streams to the status bar through a `router-health` event. The poller rebuilds its client when the router settings change. The UI setting keys are mapped to the core's `router.base_url` and `router.default_model`.
 - Tests: 236 Rust, 211 node; clippy, `make check` and svelte-check are clean. Desktop end-to-end tests cover auto → worktree → review → vault record → merge, discard, and the non-git fallback to Manual with a denied approval. `tauri dev` launches. The window was not screenshotted (no screen-recording permission); the frontend was smoke-tested in a browser against the mock API.
 - **Left for M1 DoD:** CodeMirror merge view, an LLM summarizer for task records, a Playwright/WebDriver smoke test, a real-router run, a security review, and CI on a remote across all three OSes.
+
+### 2026-11-14 — Wave 1 of the built-in upstreams merged ([[Built-in Upstreams Plan]])
+- **LLM gateway** (from [[9Router]], [[OmniRoute]], [[OpenRouter]] docs):
+  - Providers: OpenAI-compatible, Anthropic, Gemini; keys in the keychain; translation between their formats.
+  - Combos: fallback, round-robin, smart, weighted, cost-optimized, last-good, context-optimized.
+  - Token savers: Caveman, Ponytail, RTK, Anthropic cache_control.
+  - Usage and cost tracking, cache-aware.
+  - Model roles; budget caps; exact-match response cache; per-provider circuit breaker; prompt-cache affinity.
+  - Model catalog import (manual); one reasoning setting across providers; context-overflow model switch.
+  - Real chat no longer needs an external router.
+- **Agent engine** (from [[opencode]], [[Hermes Agent]]):
+  - Context compaction; tiered edit matching; shadow-git per-step undo.
+  - Markdown agent profiles; one subagent tool; prompt-cache invariants.
+- **Notes engine** (from [[Logseq]]):
+  - `crates/graph`: Logseq Markdown parser and writer with byte-for-byte round-trip, and a SQLite index (FTS5, refs, backlinks) with a file watcher.
+  - Task records and journals now use the Logseq layout.
+  - `graph_*` commands are ready for the Wave 2 UI.
+- **Overlay** (from [[Coucou]], code ideas only, no assets):
+  - Always-on-top island with click-through and an approval queue.
+  - Notch placement on macOS; `crates/macos-panel` is the only crate allowed `unsafe`.
+- **Design board** (Excalidraw):
+  - Boards in `vault/boards/*.excalidraw`, with a wireframe library and templates.
+  - Mermaid import; PNG and SVG export; a sketch hand-off API for the future Design Studio.
+- **Integration** (coordinator):
+  - Schema v3.
+  - Gateway token counts feed compaction.
+  - Desktop wiring: undo button, agent profile picker, summary role for compaction, context window from the catalog.
+  - The topology generator ignores empty untracked folders.
+- **Reviews:**
+  - Gateway security review found 2 high, 3 medium and 6 low issues, all fixed. The cache no longer stores truncated answers and keys entries per connection. Budgets fail closed and reserve spend before a request.
+  - Board code review found 1 high (autosave could wipe a board), 4 medium and several low issues, all fixed. Also fixed: Windows reserved names, symlink escapes, no-clobber writes, licence rows.
+- **Tests:** 537 Rust and 243 node pass; clippy, fmt, `make check`, svelte-check and the build are clean.
+- **Not verified:** a real-provider chat with a live API key. Overlay behaviour on real monitors. Excalidraw's `blob:` workers inside the Tauri webview (checked only in a browser).
+- **Deferred** (from the agent-engine handover):
+  - Put the profile floor on `AgentStep::Call`.
+  - An `LlmError::ContextOverflow` type.
+  - One tool table.
+  - Snapshots inside `TaskLaunch`.
+  - Undo skips untracked files over 2 MiB.
+  - Warn when two tasks share one work tree.
+
