@@ -298,7 +298,7 @@ impl HealthProbe for RouterClient {
     }
 }
 
-fn describe(error: &reqwest::Error) -> String {
+pub(crate) fn describe(error: &reqwest::Error) -> String {
     if error.is_timeout() {
         "timed out".into()
     } else if error.is_connect() {
@@ -308,7 +308,7 @@ fn describe(error: &reqwest::Error) -> String {
     }
 }
 
-fn classify_status(status: u16, body: &str, model: &str) -> LlmError {
+pub(crate) fn classify_status(status: u16, body: &str, model: &str) -> LlmError {
     let lower = body.to_ascii_lowercase();
     let missing_model = lower.contains("model")
         && (lower.contains("not found") || lower.contains("does not exist"));

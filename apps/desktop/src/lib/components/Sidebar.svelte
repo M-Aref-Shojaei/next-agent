@@ -40,6 +40,8 @@
     {/each}
   </ul>
   <a class="settings" href="/settings">Settings</a>
+  <a class="nav" href="/settings/providers">Providers</a>
+  <a class="nav" href="/usage">Usage</a>
 </nav>
 
 <style>
@@ -52,4 +54,5 @@
   .s { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
   .s.running { background: var(--info); } .s.completed { background: var(--ok); } .s.failed { background: var(--danger); }
   .settings { margin-top: auto; color: var(--accent); }
+  .nav { color: var(--accent); }
 </style>

@@ -17,9 +17,9 @@ when you add a dependency that someone else ships, add a row here.
 | Tool enforcement | `ToolBroker` | `crates/core/src/runner.rs` | real broker (task 3), scripted brokers in tests |
 | Policy | `evaluate(req, mode, rules, ctx) -> Decision` | `crates/permission-engine` | pure function; same inputs → same decision |
 | Path sandbox | `PathResolver` | `crates/permission-engine/src/path.rs` | lexical (tests), canonicalizing (runtime) |
-| LLM transport | `CompletionClient` | `crates/core/src/llm.rs` | `RouterClient` (`crates/core/src/router/`), scripted clients in tests |
+| LLM transport | `CompletionClient` | `crates/core/src/llm.rs` | `Gateway` (built-in LLM gateway, `crates/core/src/router/gateway/`), `RouterClient` (one external OpenAI-compatible router), scripted clients in tests |
 | Tool execution | `ToolExecutor` | `crates/core/src/broker.rs` | `LocalTools` (`local_tools.rs`), stubs in tests |
-| Health probing | `HealthProbe` | `crates/process-manager` | `RouterClient`, scripted probes in tests |
+| Health probing | `HealthProbe` | `crates/process-manager` | `Gateway` (provider behind the `chat` role), `RouterClient`, scripted probes in tests |
 | Git isolation | `WorktreeProvider` | `crates/core` (task 4) | git CLI, no-op for non-git workspaces |
 | Task records | `TaskRecorder` | `crates/core` (task 5) | vault Markdown, JSON export |
 | Notes graph | `Graph`, `Document`, `Index` | `crates/graph` | Logseq 0.10.9 Markdown file graph; SQLite index cache |

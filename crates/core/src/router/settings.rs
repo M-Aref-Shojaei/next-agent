@@ -160,6 +160,12 @@ impl KeyringSecret {
         }
     }
 
+    /// Keychain entry holding one gateway connection's API key.
+    #[must_use]
+    pub fn for_connection(connection_id: &str) -> Self {
+        Self::new("dev.nextagent.desktop", format!("provider:{connection_id}"))
+    }
+
     fn entry(&self) -> Result<keyring::Entry, SecretError> {
         keyring::Entry::new(&self.service, &self.account).map_err(|e| SecretError(e.to_string()))
     }

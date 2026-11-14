@@ -47,13 +47,16 @@
   {#if message}<p role="status">{message}</p>{/if}
 
   <section aria-labelledby="h-router">
-    <h2 id="h-router">Router</h2>
+    <h2 id="h-router">Models and providers</h2>
+    <p>Providers, API keys, the default model, combos, token savers and model roles are on the
+      <a href="/settings/providers">Providers</a> page. See token and cost reports on <a href="/usage">Usage</a>.</p>
+    <h3>External router (optional)</h3>
     <form onsubmit={saveRouter}>
       <label for="router">Base URL</label>
       <input id="router" bind:value={routerUrl} />
       <button type="submit">Save</button>
     </form>
-    <p class="muted">API key (OS keychain) and model selection arrive with Step 6.</p>
+    <p class="muted">Only needed for an external OpenAI-compatible router such as 9Router; the built-in gateway works without it.</p>
   </section>
 
   <section aria-labelledby="h-vault">

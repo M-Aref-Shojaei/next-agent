@@ -147,6 +147,11 @@ impl AppService {
         }
     }
 
+    /// Tell the health poller that provider settings changed.
+    pub(crate) fn bump_router_generation(&self) {
+        self.router_generation.send_modify(|g| *g += 1);
+    }
+
     /// Changes whenever router settings change.
     #[must_use]
     pub fn router_generation(&self) -> watch::Receiver<u64> {

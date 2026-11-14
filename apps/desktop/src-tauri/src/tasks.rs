@@ -8,7 +8,7 @@
 use crate::review::{diff_dto, ReviewOutcome};
 use crate::service::{mode_name, parse_mode, AppService, Sink, TaskRequest};
 use crate::wire::{envelope, StreamMessage};
-use next_agent_core::router::{KeyringSecret, ReqwestFetcher, RouterClient, RouterSettings};
+use next_agent_core::router::ReqwestFetcher;
 use next_agent_core::vault::{FileStat, TaskDoc, TaskMeta, VaultWriter};
 use next_agent_core::{
     context_for, spawn_task, AgentEvent, AgentExecutor, AgentStep, Approval, BuiltinExecutor,
@@ -97,7 +97,7 @@ impl AppService {
                 root: wt.root.display().to_string(),
             });
         }
-        let (executor, agent_notice) = self.choose_executor(&plan.root);
+        let (executor, agent_notice) = self.choose_executor(&plan.root, &task_id);
         for text in plan.notices.iter().chain(agent_notice.iter()) {
             sink(StreamMessage::Notice {
                 task_id: task_id.clone(),
@@ -280,7 +280,7 @@ impl AppService {
         self.store()?
             .create_task(id.as_str(), &workspace.id, &title, &request.prompt, name)
             .map_err(|e| e.to_string())?;
-        let model = self.router_settings().default_model.unwrap_or_default();
+        let model = self.chat_target();
         Ok(Plan {
             spec: TaskSpec {
                 id,
@@ -297,37 +297,28 @@ impl AppService {
         })
     }
 
-    /// The router-backed agent when the router is up and a model is set,
-    /// otherwise the scripted demo agent (no LLM needed).
-    fn choose_executor(&self, root: &Path) -> (Box<dyn AgentExecutor + Send>, Option<String>) {
-        let settings = self.router_settings();
-        let healthy = self
-            .health()
-            .is_some_and(|h| h.status == "ok" || h.status == "degraded");
-        if healthy && settings.default_model.is_some() {
-            match RouterClient::from_secret(settings, &KeyringSecret::default()) {
-                Ok(client) => {
-                    return (Box::new(BuiltinExecutor::new(Arc::new(client), root)), None)
-                }
-                Err(e) => {
-                    return (
-                        Box::new(MockExecutor::new(demo_script(root))),
-                        Some(format!(
-                            "Router client unavailable ({e}); running the scripted demo agent."
-                        )),
-                    )
-                }
-            }
+    /// The real agent on the built-in gateway when the `chat` role (or the
+    /// default model) has a usable provider, otherwise the scripted demo
+    /// agent (no LLM needed). No external router is required.
+    /// Smart combos keep one model per task (`task_id` is the session).
+    fn choose_executor(
+        &self,
+        root: &Path,
+        task_id: &str,
+    ) -> (Box<dyn AgentExecutor + Send>, Option<String>) {
+        match self.chat_gateway() {
+            Ok(gateway) => (
+                Box::new(BuiltinExecutor::new(
+                    Arc::new(gateway.with_session(task_id)),
+                    root,
+                )),
+                None,
+            ),
+            Err(why) => (
+                Box::new(MockExecutor::new(demo_script(root))),
+                Some(format!("Running the scripted demo agent because {why}.")),
+            ),
         }
-        let why = if healthy {
-            "no default model is set in Settings"
-        } else {
-            "the router is not reachable"
-        };
-        (
-            Box::new(MockExecutor::new(demo_script(root))),
-            Some(format!("Running the scripted demo agent because {why}.")),
-        )
     }
 
     /// Checkpoint + diff the worktree, write the vault record, remember the task.
@@ -445,13 +436,6 @@ impl AppService {
             .document_task(&store, &doc, None)
             .map_err(|e| e.to_string())?;
         Ok(Some(outcome.record_path.display().to_string()))
-    }
-
-    fn router_settings(&self) -> RouterSettings {
-        self.store()
-            .ok()
-            .and_then(|s| RouterSettings::load(&s).ok())
-            .unwrap_or_default()
     }
 }
 
