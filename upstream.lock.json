@@ -132,6 +132,22 @@
       "checked": "2026-11-14",
       "risk": "low",
       "role": "Mermaid import onto the Design board"
+    },
+    "d3-force": {
+      "pin": "d3-force 3.0.1 (exact; @types/d3-force 3.0.10 dev)",
+      "licence": "ISC",
+      "adapter": "apps/desktop/src/lib/notes/GraphView.svelte",
+      "checked": "2026-11-14",
+      "risk": "low",
+      "role": "Notes graph view force layout"
+    },
+    "mermaid": {
+      "pin": "mermaid 11.17.2 (exact)",
+      "licence": "MIT",
+      "adapter": "apps/desktop/src/lib/notes/Mermaid.svelte",
+      "checked": "2026-11-14",
+      "risk": "low",
+      "role": "Mermaid blocks in notes (lazy chunk, securityLevel strict)"
     }
   }
 }

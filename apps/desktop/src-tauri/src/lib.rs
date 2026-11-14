@@ -70,6 +70,13 @@ pub fn run() {
             notes::graph_journals,
             notes::graph_save_page,
             notes::graph_rebuild,
+            // --- notes-ui ---
+            notes::graph_pages,
+            notes::graph_graph,
+            notes::graph_query,
+            notes::graph_journal_name,
+            notes::graph_block,
+            // --- end notes-ui ---
             gateway::gateway_presets,
             gateway::gateway_connections,
             gateway::gateway_connection_save,

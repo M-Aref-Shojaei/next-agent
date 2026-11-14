@@ -4,8 +4,8 @@
 #![allow(clippy::needless_pass_by_value, clippy::missing_errors_doc)] // Tauri commands take owned args.
 
 use next_agent_graph::{
-    Backlink, BlockNode, Document, FileKind, Graph, GraphWatcher, Index, IndexStats, JournalEntry,
-    PageView, SearchHit,
+    parse_date, Backlink, BlockNode, Date, Document, FileKind, Graph, GraphData, GraphWatcher,
+    Index, IndexStats, JournalEntry, PageListItem, PageView, QueryEnv, SearchHit,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,8 @@ pub type ChangeListener = Arc<dyn Fn(Vec<String>) + Send + Sync>;
 const DEFAULT_SEARCH_LIMIT: usize = 50;
 const DEFAULT_JOURNALS: usize = 30;
 const UNLINKED_LIMIT: usize = 100;
+const QUERY_LIMIT: usize = 300;
+const GRAPH_EDGES: usize = 20_000;
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// What `graph_open` returns.
@@ -31,6 +33,14 @@ pub struct GraphInfo {
     /// Whether a `logseq/config.edn` had to be created.
     pub created_config: bool,
     pub stats: IndexStats,
+}
+
+/// The block a `((uuid))` points at.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockRefDto {
+    pub page: String,
+    pub content: String,
 }
 
 /// Linked and unlinked references of a page.
@@ -240,6 +250,47 @@ impl NotesService {
         })
     }
 
+    /// Every page, for the all-pages list.
+    pub fn pages(&self) -> Result<Vec<PageListItem>, String> {
+        self.with(|_, index| index.all_pages().map_err(|e| e.to_string()))
+    }
+
+    /// Page nodes and links for the graph view.
+    pub fn graph_data(&self) -> Result<GraphData, String> {
+        self.with(|_, index| index.graph_data(GRAPH_EDGES).map_err(|e| e.to_string()))
+    }
+
+    /// The block that carries `id:: uuid`, if the graph has one.
+    pub fn block(&self, uuid: &str) -> Result<Option<BlockRefDto>, String> {
+        self.with(|_, index| {
+            Ok(index
+                .block_by_uuid(&uuid.to_lowercase())
+                .map_err(|e| e.to_string())?
+                .map(|(page, content)| BlockRefDto { page, content }))
+        })
+    }
+
+    /// The page name of a journal day (`yyyyMMdd`) in the graph's format.
+    pub fn journal_name(&self, day: i64) -> Result<String, String> {
+        let date = Date::from_int(day).ok_or("not a date")?;
+        self.with(|graph, _| Ok(graph.journal_title(date)))
+    }
+
+    /// Run a simple `{{query …}}`; `today` is `yyyyMMdd` in the user's clock.
+    pub fn query(&self, text: &str, today: i64) -> Result<Vec<Backlink>, String> {
+        let today = Date::from_int(today).ok_or("today is not a date")?;
+        self.with(|graph, index| {
+            let format = graph.config().journal_title_format.clone();
+            let env = QueryEnv {
+                today,
+                parse_journal: &|s| parse_date(&format, s),
+            };
+            index
+                .query(text, &env, QUERY_LIMIT)
+                .map_err(|e| e.to_string())
+        })
+    }
+
     /// Drop the index and rebuild it from the files.
     pub fn rebuild(&self) -> Result<IndexStats, String> {
         self.with(|graph, index| index.rebuild(graph).map_err(|e| e.to_string()))
@@ -287,6 +338,33 @@ pub fn graph_save_page(
 ) -> Result<PageView, String> {
     notes.save_page(&name, tree)
 }
+
+// --- notes-ui ---
+#[tauri::command]
+pub fn graph_pages(notes: Notes) -> Result<Vec<PageListItem>, String> {
+    notes.pages()
+}
+
+#[tauri::command]
+pub fn graph_graph(notes: Notes) -> Result<GraphData, String> {
+    notes.graph_data()
+}
+
+#[tauri::command]
+pub fn graph_block(notes: Notes, uuid: String) -> Result<Option<BlockRefDto>, String> {
+    notes.block(&uuid)
+}
+
+#[tauri::command]
+pub fn graph_journal_name(notes: Notes, day: i64) -> Result<String, String> {
+    notes.journal_name(day)
+}
+
+#[tauri::command]
+pub fn graph_query(notes: Notes, text: String, today: i64) -> Result<Vec<Backlink>, String> {
+    notes.query(&text, today)
+}
+// --- end notes-ui ---
 
 #[tauri::command]
 pub fn graph_rebuild(notes: Notes) -> Result<IndexStats, String> {
@@ -458,6 +536,107 @@ mod tests {
             Some("pages/%2E.___..___etc___passwd.md")
         );
         assert!(graph.join("pages/%2E.___..___etc___passwd.md").is_file());
+    }
+
+    #[test]
+    fn queries_pages_and_graph_data() {
+        let (_dir, notes, _) = opened();
+        let block = |c: &str| BlockNode {
+            content: c.into(),
+            ..BlockNode::default()
+        };
+        notes
+            .save_page(
+                "Query Lab",
+                vec![
+                    block("TODO [#A] Water [[Tomatoes]]"),
+                    block("DOING Weed [[Tomatoes]]\nowner:: [[Sam]]"),
+                    block("DONE Plant [[Tomatoes]]"),
+                    block("TODO Pay rent"),
+                    block("TODO 100% done_ish"),
+                ],
+            )
+            .expect("save");
+        let q = |text: &str| -> Vec<String> {
+            notes
+                .query(text, 20_261_114)
+                .expect(text)
+                .into_iter()
+                .map(|b| b.content.lines().next().unwrap_or("").to_string())
+                .collect()
+        };
+        assert_eq!(
+            q("{{query (and [[Tomatoes]] (page \"Query Lab\") (task TODO DOING))}}"),
+            ["TODO [#A] Water [[Tomatoes]]", "DOING Weed [[Tomatoes]]"]
+        );
+        assert_eq!(
+            q("(and [[tomatoes]] (page \"query lab\") (not (task DONE)))").len(),
+            2
+        );
+        assert_eq!(
+            q("(and (page \"Query Lab\") (priority A))"),
+            ["TODO [#A] Water [[Tomatoes]]"]
+        );
+        assert_eq!(
+            q("(and (page \"query lab\") (or (task DONE) \"rent\"))").len(),
+            2
+        );
+        assert_eq!(
+            q("(and (page \"Query Lab\") (property owner Sam))"),
+            ["DOING Weed [[Tomatoes]]"]
+        );
+        assert_eq!(q("(and (page \"Query Lab\") (property owner))").len(), 1);
+        assert_eq!(q("\"100%\""), ["TODO 100% done_ish"]);
+        assert_eq!(q("\"100_\"").len(), 0, "LIKE wildcards are escaped");
+        // The fixture's journal days: Nov 13 and Nov 14, 2026.
+        let between = notes
+            .query("(between [[Nov 13th, 2026]] today)", 20_261_114)
+            .expect("between");
+        assert_ne!(between.len(), 0);
+        assert!(between.iter().all(|b| b.journal_day.is_some()));
+        assert!(notes.query("(between -1d today)", 20_261_114).is_ok());
+        assert!(notes.query("(nope)", 20_261_114).is_err());
+        assert!(notes.query("[[x]]", 5).is_err());
+        // Quote injection stays data.
+        assert_eq!(q("\"'); DROP TABLE blocks; --\"").len(), 0);
+        assert!(notes.search("water", None).is_ok());
+        assert_eq!(
+            notes.journal_name(20_261_115).expect("name"),
+            "Nov 15th, 2026"
+        );
+        assert!(notes.journal_name(20_261_399).is_err());
+        let referenced = notes.page("Block Refs").expect("page");
+        let target = referenced
+            .blocks
+            .iter()
+            .find_map(|b| b.uuid.clone())
+            .or_else(|| {
+                notes.page("Dune").expect("dune").blocks[0].children[0]
+                    .uuid
+                    .clone()
+            })
+            .expect("a block with an id");
+        let hit = notes.block(&target).expect("block").expect("found");
+        assert!(!hit.page.is_empty() && !hit.content.is_empty());
+        assert!(notes
+            .block("00000000-0000-4000-8000-000000000000")
+            .expect("block")
+            .is_none());
+
+        let pages = notes.pages().expect("pages");
+        let lab = pages.iter().find(|p| p.name == "Query Lab").expect("lab");
+        assert_eq!(lab.blocks, 5);
+        let tomatoes = notes.graph_data().expect("graph");
+        assert!(tomatoes
+            .edges
+            .iter()
+            .any(|e| e.source == "query lab" && e.target == "tomatoes"));
+        let t = tomatoes
+            .nodes
+            .iter()
+            .find(|n| n.id == "tomatoes")
+            .expect("node");
+        assert!(t.missing && t.degree >= 1);
     }
 
     #[test]

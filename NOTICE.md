@@ -25,6 +25,8 @@ It re-implements or ports selected features from the open-source projects below 
 | Onlook | https://github.com/onlook-dev/onlook | Apache-2.0 | © Onlook contributors (*verify holder*) | Mapping elements to their source and writing visual edits back to code, for the Design Studio |
 | OpenUI | https://github.com/wandb/openui | Apache-2.0 | © Weights & Biases (*verify holder*) | Converting HTML to React, Svelte or Web Components |
 | Logseq | https://github.com/logseq/logseq | AGPL-3.0 | Logseq contributors | Markdown graph format (blocks, properties, refs, journals), triple-lowbar file names, outliner behaviour, backlinks, queries, graph view. Studied tag 0.10.9 @ c67b8b5 (`crates/graph`, `packages/vault`) |
+| d3-force | https://github.com/d3/d3-force | ISC | © 2010-2026 Mike Bostock (with d3-dispatch, d3-quadtree, d3-timer, same licence) | Force layout of the Notes graph view (npm 3.0.1, exact). Canvas drawing is our own. Unmodified; licence text ships in the package. |
+| Mermaid | https://github.com/mermaid-js/mermaid | MIT | © 2014-2022 Knut Sveidqvist | Rendering ```` ```mermaid ```` blocks in notes (npm 11.17.2, exact). Lazy-loaded chunk, `securityLevel: "strict"`, bundled with the app so the CSP needs no remote script. Unmodified. |
 
 ## MIT licence text (applies to code ported from the MIT projects above)
 

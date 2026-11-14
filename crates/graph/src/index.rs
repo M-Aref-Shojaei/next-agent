@@ -19,6 +19,7 @@ use crate::inline::{self, BlockInfo, Ref};
 use crate::layout::{FileKind, Graph, GraphError};
 use crate::model::BlockNode;
 use crate::parse::{Block, Document};
+use crate::query::{self, Arg, GraphData, GraphEdge, GraphNode, PageListItem, QueryEnv};
 
 /// Bump when the schema changes; older caches are dropped and rebuilt.
 const SCHEMA_VERSION: &str = "3";
@@ -82,6 +83,8 @@ pub enum IndexError {
     Db(String),
     #[error(transparent)]
     Graph(#[from] GraphError),
+    #[error("query: {0}")]
+    Query(String),
 }
 
 impl From<rusqlite::Error> for IndexError {
@@ -896,6 +899,127 @@ fn index_file_tx(tx: &rusqlite::Transaction<'_>, graph: &Graph, rel: &str) -> Re
         params![rel, stamp(&meta).0, stamp(&meta).1],
     )?;
     Ok(FileResult::Indexed)
+}
+
+impl Index {
+    /// Run a simple query (see the module docs): matching blocks, journals
+    /// first (newest first), then pages by name.
+    ///
+    /// # Errors
+    /// [`IndexError::Query`] for a query that does not parse, SQLite failures.
+    pub fn query(&self, text: &str, env: &QueryEnv, limit: usize) -> Result<Vec<Backlink>> {
+        let compiled = query::compile(text, env, &|name| Ok(self.target_names(name)?.0))?;
+        let cond = compiled.condition;
+        let statement = format!(
+            "SELECT b.id, b.uuid, b.content, p.name, p.journal_day, b.parent_id
+             FROM blocks b JOIN pages p ON p.id = b.page_id
+             WHERE b.ord >= 0 AND {cond}
+             ORDER BY p.journal_day IS NULL, p.journal_day DESC, p.name_lc, b.ord
+             LIMIT {}",
+            limit.min(1000)
+        );
+        let values: Vec<rusqlite::types::Value> = compiled
+            .args
+            .into_iter()
+            .map(|a| match a {
+                Arg::Text(s) => s.into(),
+                Arg::Int(n) => n.into(),
+            })
+            .collect();
+        let args: Vec<&dyn rusqlite::ToSql> =
+            values.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        self.backlink_rows(&statement, &args, usize::MAX, |_| true)
+    }
+
+    /// Every page with its size and how many blocks link to it.
+    ///
+    /// # Errors
+    /// SQLite failures.
+    pub fn all_pages(&self) -> Result<Vec<PageListItem>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.name, p.journal_day,
+                    (SELECT count(*) FROM blocks b WHERE b.page_id = p.id AND b.ord >= 0),
+                    (SELECT count(*) FROM refs r WHERE r.dst_page_lc = p.name_lc
+                       AND r.src_page != p.id)
+             FROM pages p ORDER BY p.name_lc",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(PageListItem {
+                name: r.get(0)?,
+                journal_day: r.get(1)?,
+                blocks: r.get(2)?,
+                backlinks: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Pages and the page-to-page links between them, for the graph view.
+    /// Pages that are linked but have no file appear as `missing` nodes.
+    ///
+    /// # Errors
+    /// SQLite failures.
+    pub fn graph_data(&self, max_edges: usize) -> Result<GraphData> {
+        let mut nodes: Vec<GraphNode> = Vec::new();
+        let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, name_lc, journal_day FROM pages ORDER BY name_lc")?;
+        for row in stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })? {
+            let (name, lc, day) = row?;
+            at.insert(lc.clone(), nodes.len());
+            nodes.push(GraphNode {
+                id: lc,
+                name,
+                journal: day.is_some(),
+                missing: false,
+                degree: 0,
+            });
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT p.name_lc, r.dst_page_lc FROM refs r
+             JOIN pages p ON p.id = r.src_page
+             WHERE r.dst_page_lc IS NOT NULL AND p.name_lc != r.dst_page_lc
+             ORDER BY 1, 2 LIMIT ?1",
+        )?;
+        let mut edges = Vec::new();
+        let limit = i64::try_from(max_edges).unwrap_or(i64::MAX);
+        for row in stmt.query_map([limit], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })? {
+            let (src, dst) = row?;
+            let dst_at = if let Some(i) = at.get(&dst) {
+                *i
+            } else {
+                // Alias or a page nobody wrote yet: show it under its own name.
+                let i = nodes.len();
+                at.insert(dst.clone(), i);
+                nodes.push(GraphNode {
+                    id: dst.clone(),
+                    name: dst.clone(),
+                    journal: false,
+                    missing: true,
+                    degree: 0,
+                });
+                i
+            };
+            if let Some(&src_at) = at.get(&src) {
+                nodes[src_at].degree += 1;
+                nodes[dst_at].degree += 1;
+                edges.push(GraphEdge {
+                    source: src,
+                    target: dst,
+                });
+            }
+        }
+        Ok(GraphData { nodes, edges })
+    }
 }
 
 #[cfg(test)]
