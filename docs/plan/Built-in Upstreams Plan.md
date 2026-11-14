@@ -55,6 +55,7 @@ Goal: one self-contained app. No separate programs, no terminal setup. We extrac
 | 12 | CI on macOS, Windows and Linux; signed builds; a "first run" setup screen with no terminal | Sonnet | 2–3 h |
 
 ## Not planned (recorded so nothing is forgotten)
+- 9Router `fusion` combo strategy (parallel panel and judge model): skipped for now. `smart` is kept: the owner wants it, and it was added to session 1 before merge.
 - Penpot (MPL-2.0): a full Figma-style design tool, but it needs its own server (Postgres, Redis), so it can't be built in. The Excalidraw board and the AI Design Studio cover the need.
 - Open Design's video, PPTX and image generation, plugin marketplace and cloud features.
 - Open Design's UI and UX (the owner found serious flaws). We keep only its mechanics.
