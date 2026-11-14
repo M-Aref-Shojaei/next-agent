@@ -230,8 +230,8 @@ impl LocalTools {
         }
     }
 
-    fn apply_patch(call_id: &str, path: &Path, diff: &str) -> ToolResult {
-        let original = match read_text(path) {
+    fn apply_patch(&self, call_id: &str, path: &Path, diff: &str) -> ToolResult {
+        let original = match read_text(path, self.limits.max_read_bytes) {
             Ok(text) => text.unwrap_or_default(),
             Err(result) => return result.for_call(call_id),
         };
@@ -262,13 +262,14 @@ impl LocalTools {
     }
 
     fn edit(
+        &self,
         call_id: &str,
         path: &Path,
         old_string: &str,
         new_string: &str,
         replace_all: bool,
     ) -> ToolResult {
-        let original = match read_text(path) {
+        let original = match read_text(path, self.limits.max_read_bytes) {
             Ok(Some(text)) => text,
             Ok(None) => {
                 return ToolResult::error(
@@ -454,13 +455,13 @@ impl ToolExecutor for LocalTools {
             ToolRequest::ListDir { path } => self.list_dir(call_id, path),
             ToolRequest::Search { pattern, path } => self.search(ctx, call_id, pattern, path),
             ToolRequest::Write { path, contents } => Self::write_file(call_id, path, contents),
-            ToolRequest::ApplyPatch { path, patch } => Self::apply_patch(call_id, path, patch),
+            ToolRequest::ApplyPatch { path, patch } => self.apply_patch(call_id, path, patch),
             ToolRequest::Edit {
                 path,
                 old_string,
                 new_string,
                 replace_all,
-            } => Self::edit(call_id, path, old_string, new_string, *replace_all),
+            } => self.edit(call_id, path, old_string, new_string, *replace_all),
             ToolRequest::Exec { command, cwd } => self.run_command(ctx, call_id, command, cwd),
             ToolRequest::Network { url } => self.http_fetch(call_id, url),
             ToolRequest::AskUser { .. } => ToolResult::error(
@@ -471,8 +472,28 @@ impl ToolExecutor for LocalTools {
     }
 }
 
-/// Read a UTF-8 file for editing: `Ok(None)` when it does not exist.
-fn read_text(path: &Path) -> Result<Option<String>, ToolResult> {
+/// Read a UTF-8 file for editing: `Ok(None)` when it does not exist. Same
+/// directory and size checks as `read_file`.
+fn read_text(path: &Path, limit: u64) -> Result<Option<String>, ToolResult> {
+    match fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => {
+            return Err(ToolResult::error(
+                "",
+                format!("{} is a directory", path.display()),
+            ))
+        }
+        Ok(meta) if meta.len() > limit => {
+            return Err(ToolResult::error(
+                "",
+                format!(
+                    "{} is {} bytes; the edit limit is {limit} bytes",
+                    path.display(),
+                    meta.len()
+                ),
+            ))
+        }
+        _ => {}
+    }
     match fs::read(path) {
         Ok(bytes) => String::from_utf8(bytes)
             .map(Some)

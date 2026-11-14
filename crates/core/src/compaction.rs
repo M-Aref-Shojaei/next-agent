@@ -157,12 +157,16 @@ pub fn build_prompt(update: bool) -> String {
 /// Characters / 4, rounded (upstream `Token.estimate`).
 #[must_use]
 pub fn estimate_tokens(text: &str) -> u64 {
+    tokens_for_chars(text.chars().count())
+}
+
+fn tokens_for_chars(chars: usize) -> u64 {
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
     )]
-    let tokens = (text.chars().count() as f64 / CHARS_PER_TOKEN).round() as u64;
+    let tokens = (chars as f64 / CHARS_PER_TOKEN).round() as u64;
     tokens
 }
 
@@ -174,10 +178,9 @@ pub fn estimate_message(message: &ChatMessage) -> u64 {
         .tool_calls
         .iter()
         .map(|call| {
-            estimate_tokens(&format!(
-                "{}{}",
-                call.function.name, call.function.arguments
-            ))
+            tokens_for_chars(
+                call.function.name.chars().count() + call.function.arguments.chars().count(),
+            )
         })
         .sum();
     text + calls
@@ -276,12 +279,11 @@ pub fn is_context_overflow(error: &LlmError) -> bool {
             "context length",
             "context_length",
             "context window",
-            "too long",
-            "too many tokens",
             "maximum context",
             "prompt is too long",
-            "exceeds the maximum",
-            "token limit",
+            "input is too long",
+            "too many tokens",
+            "too many input tokens",
         ]
         .iter()
         .any(|needle| body.contains(needle))
@@ -373,7 +375,10 @@ pub fn split_conversation(messages: &[ChatMessage], keep: u64) -> Option<usize> 
         })
         .collect();
     if entries.is_empty() {
-        return None;
+        // Nothing since the checkpoint, but its verbatim tail may be what
+        // overflows: summarise the checkpoint itself and keep nothing.
+        let kept_recent = previous_checkpoint(messages).is_some_and(|c| !c.recent.is_empty());
+        return kept_recent.then_some(messages.len());
     }
     // Drop the oldest entries until the rest fit, but keep the newest one.
     let mut total = 0;
@@ -1032,6 +1037,15 @@ mod tests {
             body: "bad json".into()
         }));
         assert!(!is_context_overflow(&LlmError::Unauthorized));
+        for unrelated in [
+            "tool name too long",
+            "max_tokens exceeds the maximum of 4096",
+        ] {
+            assert!(!is_context_overflow(&LlmError::Http {
+                status: 400,
+                body: unrelated.into()
+            }));
+        }
     }
 
     #[test]
@@ -1217,6 +1231,28 @@ mod tests {
         assert!(body.contains("[User]: earlier"));
         assert!(body.contains("Update the existing checkpoint"));
         assert_eq!(out.messages.len(), 2);
+    }
+
+    #[test]
+    fn an_oversized_checkpoint_can_be_compacted_again() {
+        let messages = vec![
+            ChatMessage::system("s"),
+            ChatMessage::user(checkpoint_text(
+                "## Objective\n- x",
+                &"[Tool result]: y".repeat(500),
+            )),
+        ];
+        assert_eq!(split_conversation(&messages, 1_000), Some(2));
+        let client = Mock::new(vec![Ok(text(SUMMARY))]);
+        let config = CompactionConfig {
+            window: 100_000,
+            keep: 1_000,
+        };
+        let out = compact(&client, "m", &messages, &[], &config, Reason::Overflow).expect("ok");
+        assert!(out.tokens_after < out.tokens_before);
+        assert!(previous_checkpoint(&out.messages).is_some_and(|c| c.recent.is_empty()));
+        // A checkpoint without kept text and nothing after it: nothing to do.
+        assert_eq!(split_conversation(&out.messages, 1_000), None);
     }
 
     #[test]

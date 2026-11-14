@@ -93,6 +93,18 @@ pub enum Floor {
     Deny(String),
 }
 
+impl Floor {
+    /// The stricter of two floors: deny beats ask beats none.
+    #[must_use]
+    pub fn strictest(a: Option<Self>, b: Option<Self>) -> Option<Self> {
+        match (a, b) {
+            (Some(Self::Deny(r)), _) | (_, Some(Self::Deny(r))) => Some(Self::Deny(r)),
+            (Some(Self::Ask(r)), _) | (_, Some(Self::Ask(r))) => Some(Self::Ask(r)),
+            _ => None,
+        }
+    }
+}
+
 /// Broker verdict for one call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrokerOutcome {

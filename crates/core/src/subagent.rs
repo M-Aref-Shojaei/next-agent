@@ -27,6 +27,27 @@ pub const TOOL: &str = "subagent";
 /// subagent tool itself is removed once the depth limit is reached).
 pub const BLOCKLIST: [&str; 4] = ["ask_user", "clarify", "memory", "cron"];
 
+/// Profiles the `subagent` tool may spawn.
+pub fn spawnable(profiles: &[AgentProfile]) -> impl Iterator<Item = &AgentProfile> {
+    profiles.iter().filter(|p| p.mode.subagent())
+}
+
+/// [`BLOCKLIST`] as a deny-only profile, appended to every child's chain.
+#[must_use]
+pub fn blocklist_profile() -> AgentProfile {
+    let mut text = String::from("---\npermissions:\n");
+    for tool in BLOCKLIST {
+        text.push_str("  ");
+        text.push_str(tool);
+        text.push_str(": deny\n");
+    }
+    text.push_str("---\n");
+    let mut profile = crate::profiles::parse_profile("subagent-blocklist", &text)
+        .unwrap_or_else(|error| unreachable!("static blocklist profile parses: {error}"));
+    profile.builtin = true;
+    profile
+}
+
 /// Limits for subagents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubagentLimits {
@@ -211,7 +232,7 @@ pub fn result_json(reports: &[Report]) -> String {
 /// `OpenAI` function schema for the tool, listing the spawnable profiles.
 #[must_use]
 pub fn tool_schema(profiles: &[AgentProfile], limits: &SubagentLimits) -> Value {
-    let agents: Vec<&AgentProfile> = profiles.iter().filter(|p| p.mode.subagent()).collect();
+    let agents: Vec<&AgentProfile> = spawnable(profiles).collect();
     let names: Vec<&str> = agents.iter().map(|p| p.name.as_str()).collect();
     let listing = agents
         .iter()

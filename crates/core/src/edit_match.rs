@@ -256,18 +256,21 @@ pub fn find(source: &str, old: &str, new: &str) -> Found {
     }
 }
 
-/// Apply replacements last to first so earlier offsets stay valid.
+/// Apply non-overlapping, ascending replacements in one forward pass.
 #[must_use]
 pub fn replace_matches(
     source: &str,
     matches: &[Match],
     mut render: impl FnMut(&str) -> String,
 ) -> String {
-    let mut out = source.to_string();
-    for m in matches.iter().rev() {
-        let replacement = render(&source[m.start..m.end]);
-        out.replace_range(m.start..m.end, &replacement);
+    let mut out = String::with_capacity(source.len());
+    let mut copied = 0;
+    for m in matches {
+        out.push_str(&source[copied..m.start]);
+        out.push_str(&render(&source[m.start..m.end]));
+        copied = m.end;
     }
+    out.push_str(&source[copied..]);
     out
 }
 
@@ -650,7 +653,9 @@ pub fn apply_unified_patch(source: &str, patch: &str) -> Result<Patched, String>
         }
         #[allow(clippy::cast_possible_wrap)]
         let start = hunk.old_range().start() as isize + shift;
-        if old.is_empty() {
+        if old == new {
+            // Context-only hunk: nothing to change.
+        } else if old.is_empty() {
             text = insert_at_line(&text, start, &new.replace('\n', ending), ending);
         } else {
             let found = find(&text, &old, &new);
@@ -742,6 +747,14 @@ mod tests {
         // Force the fuzzy path by giving the file CRLF-free but wrong offsets.
         let out = apply_unified_patch(source, patch).expect("patch");
         assert_eq!(out.text, "x\nsame\nx\nfiller\nfiller\nx\nCHANGED\nx\n");
+    }
+
+    #[test]
+    fn context_only_hunks_are_no_ops_even_on_crlf() {
+        let source = "a\r\nb\r\nc\r\n";
+        let patch = "@@ -1,1 +1,1 @@\n a\n@@ -3,1 +3,1 @@\n-c\n+C\n";
+        let out = apply_unified_patch(source, patch).expect("patch");
+        assert_eq!(out.text, "a\r\nb\r\nC\r\n");
     }
 
     #[test]

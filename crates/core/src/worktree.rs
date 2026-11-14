@@ -688,22 +688,24 @@ pub struct ShadowRepo {
 }
 
 impl ShadowRepo {
-    /// Where the shadow repository for `work_tree` lives under `data_dir`.
+    /// Where the shadow repository for `work_tree` and `scope` (a task id, so two tasks on
+    /// one work tree never share an index or lock) lives under `data_dir`.
     #[must_use]
-    pub fn location(data_dir: &Path, work_tree: &Path) -> PathBuf {
-        let key = crate::hash::sha256_hex(work_tree.to_string_lossy().as_bytes());
+    pub fn location(data_dir: &Path, work_tree: &Path, scope: &str) -> PathBuf {
+        let seed = format!("{}\0{scope}", work_tree.to_string_lossy());
+        let key = crate::hash::sha256_hex(seed.as_bytes());
         data_dir.join("snapshot").join(&key[..16])
     }
 
-    /// Open (initialising on first use) the shadow repository for `work_tree`.
+    /// Open (initialising on first use) the shadow repository for `work_tree` and `scope`.
     ///
     /// # Errors
     /// [`WorktreeError::NotAGitRepo`] if `work_tree` does not exist, or git failures.
-    pub fn open(data_dir: &Path, work_tree: &Path) -> Result<Self> {
+    pub fn open(data_dir: &Path, work_tree: &Path, scope: &str) -> Result<Self> {
         let work_tree = work_tree
             .canonicalize()
             .map_err(|_| WorktreeError::NotAGitRepo(work_tree.to_path_buf()))?;
-        let git_dir = Self::location(data_dir, &work_tree);
+        let git_dir = Self::location(data_dir, &work_tree, scope);
         let repo = Self { git_dir, work_tree };
         if !repo.git_dir.join("HEAD").exists() {
             std::fs::create_dir_all(&repo.git_dir).map_err(|e| WorktreeError::Git {
@@ -783,14 +785,8 @@ impl ShadowRepo {
     /// # Errors
     /// Git failures.
     pub fn files(&self, from: &str, to: Option<&str>) -> Result<Vec<String>> {
-        let current;
-        let to = if let Some(tree) = to {
-            tree
-        } else {
-            current = self.capture()?;
-            &current
-        };
-        let out = self.git(&["diff", "--name-only", "--no-renames", "-z", from, to])?;
+        let to = self.target(to)?;
+        let out = self.git(&["diff", "--name-only", "--no-renames", "-z", from, &to])?;
         Ok(nul_list(&out))
     }
 
@@ -799,13 +795,7 @@ impl ShadowRepo {
     /// # Errors
     /// Git failures.
     pub fn diff(&self, from: &str, to: Option<&str>) -> Result<StructuredDiff> {
-        let current;
-        let to = if let Some(tree) = to {
-            tree
-        } else {
-            current = self.capture()?;
-            &current
-        };
+        let to = self.target(to)?;
         let raw = self.git(&[
             "diff",
             "--no-color",
@@ -813,9 +803,17 @@ impl ShadowRepo {
             "--no-renames",
             "-U3",
             from,
-            to,
+            &to,
         ])?;
         Ok(parse_unified_diff(&raw))
+    }
+
+    /// `to`, or a fresh capture of the work tree when `None`.
+    fn target(&self, to: Option<&str>) -> Result<String> {
+        match to {
+            Some(tree) => Ok(tree.to_owned()),
+            None => self.capture(),
+        }
     }
 
     /// Restore `paths` to their content in `tree`. A path absent from `tree` is removed.
@@ -888,7 +886,12 @@ impl ShadowRepo {
         }
         for component in relative.components() {
             match component {
-                std::path::Component::Normal(name) if name == ".git" => return reject(".git"),
+                // Case-insensitive: `.GIT` is the same directory on macOS and Windows.
+                std::path::Component::Normal(name)
+                    if name.to_string_lossy().eq_ignore_ascii_case(".git") =>
+                {
+                    return reject(".git")
+                }
                 std::path::Component::Normal(_) => {}
                 _ => return reject("not a plain relative path"),
             }
@@ -896,17 +899,8 @@ impl ShadowRepo {
         // A symlinked directory on the way must not lead outside. The final component may
         // itself be a symlink (restoring the link, not its target), so only its parent counts.
         let full = self.work_tree.join(relative);
-        let mut probe = full
-            .parent()
-            .map_or_else(|| full.clone(), Path::to_path_buf);
-        while probe.symlink_metadata().is_err() {
-            match probe.parent() {
-                Some(parent) => probe = parent.to_path_buf(),
-                None => break,
-            }
-        }
-        let anchor = probe;
-        match anchor.canonicalize() {
+        let parent = full.parent().unwrap_or(&full);
+        match crate::workspace::canonicalize_lenient(parent) {
             Ok(real) if real.starts_with(&self.work_tree) => Ok(()),
             _ => reject("outside"),
         }
@@ -1509,7 +1503,7 @@ mod tests {
         let repo = init_repo();
         let data = TempDir::new();
         let before = snapshot(repo.path());
-        let shadow = ShadowRepo::open(data.path(), repo.path()).unwrap();
+        let shadow = ShadowRepo::open(data.path(), repo.path(), "t1").unwrap();
         assert!(shadow.git_dir.starts_with(data.path()));
         let tree = shadow.capture().unwrap();
         assert_eq!(tree.len(), 40);
@@ -1545,7 +1539,7 @@ mod tests {
         std::fs::write(repo.path().join(".next-agent/agents/a.md"), "x").unwrap();
         let big = vec![b'x'; usize::try_from(SNAPSHOT_MAX_UNTRACKED_BYTES).unwrap() + 1];
         std::fs::write(repo.path().join("big.dat"), big).unwrap();
-        let shadow = ShadowRepo::open(data.path(), repo.path()).unwrap();
+        let shadow = ShadowRepo::open(data.path(), repo.path(), "t1").unwrap();
         let tree = shadow.capture().unwrap();
         let listed = shadow
             .git(&["ls-tree", "-r", "--name-only", &tree])
@@ -1562,13 +1556,15 @@ mod tests {
     fn shadow_restore_rejects_paths_outside_the_work_tree() {
         let repo = init_repo();
         let data = TempDir::new();
-        let shadow = ShadowRepo::open(data.path(), repo.path()).unwrap();
+        let shadow = ShadowRepo::open(data.path(), repo.path(), "t1").unwrap();
         let tree = shadow.capture().unwrap();
         for bad in [
             "../escape.txt",
             "/etc/passwd",
             "a/../../x",
             ".git/config",
+            ".GIT/hooks/pre-commit",
+            "sub/.Git/x",
             "",
         ] {
             let err = shadow.restore(&tree, &[bad.to_string()]).unwrap_err();
@@ -1597,10 +1593,12 @@ mod tests {
     #[test]
     fn shadow_repo_location_is_keyed_by_work_tree() {
         let data = Path::new("/data");
-        let a = ShadowRepo::location(data, Path::new("/w/one"));
-        let b = ShadowRepo::location(data, Path::new("/w/two"));
+        let a = ShadowRepo::location(data, Path::new("/w/one"), "t1");
+        let b = ShadowRepo::location(data, Path::new("/w/two"), "t1");
+        let other_task = ShadowRepo::location(data, Path::new("/w/one"), "t2");
         assert_ne!(a, b);
+        assert_ne!(a, other_task);
         assert!(a.starts_with("/data/snapshot"));
-        assert_eq!(a, ShadowRepo::location(data, Path::new("/w/one")));
+        assert_eq!(a, ShadowRepo::location(data, Path::new("/w/one"), "t1"));
     }
 }

@@ -235,6 +235,29 @@ fn tool_call_round_trip_then_done() {
 }
 
 #[test]
+fn duplicate_tool_call_ids_are_made_unique() {
+    let client = Scripted::new(vec![
+        calls(vec![
+            call("call_0", "read_file", r#"{"path":"a"}"#),
+            call("call_0", "read_file", r#"{"path":"b"}"#),
+        ]),
+        text("done"),
+    ]);
+    let mut executor = BuiltinExecutor::new(client.clone(), "/w");
+    let mut broker = Recording::default();
+    let events = run_task(&mut executor, &mut broker, &spec("auto"), &|| false);
+    assert_eq!(events.last().map(|e| e.kind.kind()), Some("task_completed"));
+    let ids: Vec<&str> = broker.calls.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["call_0", "call_0_1"]);
+    let seen = client.seen.lock().expect("lock");
+    validate_transcript(&seen[1].messages).expect("invariants");
+    assert_eq!(
+        Floor::strictest(Some(Floor::Ask("a".into())), Some(Floor::Deny("d".into()))),
+        Some(Floor::Deny("d".into()))
+    );
+}
+
+#[test]
 fn router_errors_fail_the_task() {
     let client = Scripted::new(vec![Err(LlmError::Unauthorized)]);
     let mut executor = BuiltinExecutor::new(client, "/w");

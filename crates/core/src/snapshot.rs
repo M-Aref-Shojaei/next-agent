@@ -44,19 +44,18 @@ pub struct GitSnapshots {
 
 impl GitSnapshots {
     /// Snapshots of `work_tree` (the task's sandbox root: the worktree in
-    /// `auto` mode, the workspace otherwise) stored under `data_dir`.
+    /// `auto` mode, the workspace otherwise) for `task_id`, stored under
+    /// `data_dir`. Each task gets its own shadow repository, so concurrent
+    /// tasks never contend for one index. (Undo still restores the shared
+    /// work tree, so undoing one task can revert another task's later edits
+    /// to the same files; the UI should warn when tasks overlap.)
     ///
     /// # Errors
     /// Git failures, or a missing work tree.
-    pub fn open(data_dir: &Path, work_tree: &Path) -> Result<Self, WorktreeError> {
+    pub fn open(data_dir: &Path, work_tree: &Path, task_id: &str) -> Result<Self, WorktreeError> {
         Ok(Self {
-            repo: ShadowRepo::open(data_dir, work_tree)?,
+            repo: ShadowRepo::open(data_dir, work_tree, task_id)?,
         })
-    }
-
-    #[must_use]
-    pub fn repo(&self) -> &ShadowRepo {
-        &self.repo
     }
 }
 
@@ -176,7 +175,9 @@ mod tests {
                 context_for(work.clone(), "ws".into(), None),
             )
             .with_executor(LocalTools::new())
-            .with_snapshots(Box::new(GitSnapshots::open(&data, &work).expect("open")))
+            .with_snapshots(Box::new(
+                GitSnapshots::open(&data, &work, "t1").expect("open"),
+            ))
             .for_task("t1");
             let edit = ToolRequest::Edit {
                 path: work.join("a.txt"),

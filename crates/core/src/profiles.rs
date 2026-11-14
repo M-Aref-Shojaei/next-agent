@@ -177,10 +177,9 @@ impl AgentProfile {
     /// Whether the profile never mutates (no writes, no commands).
     #[must_use]
     pub fn read_only(&self) -> bool {
-        !self.offers("write_file", "write_file")
-            && !self.offers("apply_patch", "write_file")
-            && !self.offers("edit", "write_file")
-            && !self.offers("run_command", "run_command")
+        READ_ONLY_TOOLS
+            .iter()
+            .all(|tool| !self.offers(tool, policy_kind(tool)))
     }
 
     /// Merge `other` (a workspace file reusing this name) into this profile,
@@ -227,8 +226,7 @@ pub fn floor_for(chain: &[AgentProfile], request: &ToolRequest) -> Option<Floor>
 }
 
 /// [`floor_for`] by tool name and policy kind.
-#[must_use]
-pub fn floor_for_tool(chain: &[AgentProfile], name: &str, kind: &str) -> Option<Floor> {
+fn floor_for_tool(chain: &[AgentProfile], name: &str, kind: &str) -> Option<Floor> {
     let strictest = chain
         .iter()
         .map(|profile| (profile.permission(name, kind), profile.name.as_str()))
@@ -380,8 +378,11 @@ pub fn load_profiles(workspace_root: &Path) -> (Vec<AgentProfile>, Vec<ProfileEr
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return (profiles, errors);
     };
+    // Regular files only: a symlink (e.g. `leak.md -> ~/.aws/credentials`)
+    // would otherwise put an arbitrary local file into a prompt.
     let mut files: Vec<_> = entries
         .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
         .collect();
@@ -663,6 +664,17 @@ mod tests {
         assert!(find(&profiles, "explore").expect("explore").read_only());
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].name, "BAD");
+        #[cfg(unix)]
+        {
+            let secret = root.join("secret.txt");
+            std::fs::write(&secret, "TOKEN=hunter2").expect("w");
+            std::os::unix::fs::symlink(&secret, dir.join("leak.md")).expect("link");
+            let (profiles, _) = load_profiles(&root);
+            assert!(
+                find(&profiles, "leak").is_none(),
+                "symlinked profile was loaded"
+            );
+        }
         let (none, no_errors) = load_profiles(&root.join("missing"));
         assert_eq!(none.len(), 4);
         assert_eq!(no_errors, Vec::<ProfileError>::new());

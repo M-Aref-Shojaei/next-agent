@@ -95,9 +95,16 @@ impl Exit {
 }
 
 enum ChildState {
+    /// Not started yet: the first turn runs when the child is first driven,
+    /// after its `subagent_started` event and with cancellation checked.
+    Starting(TaskSpec),
     Ready(AgentStep),
-    Waiting { outer: String, inner: String },
-    Finished,
+    Waiting {
+        outer: String,
+        inner: String,
+    },
+    /// `None` only while a step is being taken.
+    Finished(Option<Report>),
 }
 
 struct Child {
@@ -113,7 +120,6 @@ struct SubagentRun {
     children: Vec<Child>,
     cursor: usize,
     pending: VecDeque<EventKind>,
-    reports: Vec<Option<Report>>,
 }
 
 /// Built-in agent loop over an OpenAI-compatible router.
@@ -137,7 +143,7 @@ pub struct BuiltinExecutor {
     role_resolver: Option<RoleResolver>,
     // Prompt-cache invariants.
     tools: Vec<Value>,
-    system_hash: Option<String>,
+    system_prompt: String,
     // Compaction.
     compaction: CompactionConfig,
     summary_client: Option<(Arc<dyn CompletionClient>, Option<String>)>,
@@ -146,7 +152,6 @@ pub struct BuiltinExecutor {
     auto_failures: usize,
     // Steps cap.
     exit: Exit,
-    summarised: bool,
     // Subagents.
     depth: usize,
     limits: SubagentLimits,
@@ -192,7 +197,7 @@ impl BuiltinExecutor {
             chain: Vec::new(),
             role_resolver: None,
             tools: Vec::new(),
-            system_hash: None,
+            system_prompt: String::new(),
             compaction: CompactionConfig {
                 window: DEFAULT_CONTEXT_WINDOW,
                 ..CompactionConfig::default()
@@ -202,7 +207,6 @@ impl BuiltinExecutor {
             compactions: 0,
             auto_failures: 0,
             exit: Exit::Running,
-            summarised: false,
             depth: 0,
             limits: SubagentLimits::default(),
             spec: None,
@@ -303,7 +307,8 @@ impl BuiltinExecutor {
 
     /// Send the conversation (after the cache-invariant check), compacting
     /// and retrying once if the provider says the prompt is too long.
-    fn request(&mut self, tools: &[Value]) -> Result<Completion, AgentStep> {
+    /// `with_tools: false` sends no tool schemas (the final summary turn).
+    fn request(&mut self, with_tools: bool) -> Result<Completion, AgentStep> {
         let mut retried = false;
         loop {
             if let Err(error) = self.check_invariants() {
@@ -315,7 +320,11 @@ impl BuiltinExecutor {
             let request = ChatRequest {
                 model: self.model.clone(),
                 messages: self.messages.clone(),
-                tools: tools.to_vec(),
+                tools: if with_tools {
+                    self.tools.clone()
+                } else {
+                    Vec::new()
+                },
             };
             let events = self.events.clone();
             let mut on_delta = |text: &str| {
@@ -352,7 +361,7 @@ impl BuiltinExecutor {
             .first()
             .and_then(|m| m.content.as_deref())
             .unwrap_or_default();
-        if self.system_hash.as_deref() != Some(&crate::hash::sha256_hex(system.as_bytes())) {
+        if system != self.system_prompt {
             return Err("the system prompt changed during the task".into());
         }
         validate_transcript(&self.messages)
@@ -430,8 +439,7 @@ impl BuiltinExecutor {
                 Err(_) => self.auto_failures += 1,
             }
         }
-        let tools = self.tools.clone();
-        let completion = match self.request(&tools) {
+        let completion = match self.request(true) {
             Ok(completion) => completion,
             Err(step) => return step,
         };
@@ -442,10 +450,9 @@ impl BuiltinExecutor {
     /// The steps cap was reached: one last request without tools, asking for
     /// a summary (injected as a user message, never into the system prompt).
     fn final_summary_turn(&mut self) -> AgentStep {
-        if self.summarised {
+        if self.exit == Exit::MaxSteps {
             return self.done();
         }
-        self.summarised = true;
         self.exit = Exit::MaxSteps;
         compaction::push_user(
             &mut self.messages,
@@ -454,7 +461,7 @@ impl BuiltinExecutor {
                 self.budget
             ),
         );
-        let completion = match self.request(&[]) {
+        let completion = match self.request(false) {
             Ok(completion) => completion,
             Err(step) => return step,
         };
@@ -485,14 +492,24 @@ impl BuiltinExecutor {
     fn absorb(&mut self, completion: &Completion) {
         let text = completion.content.trim().to_string();
         let index = self.messages.len();
-        self.messages.push(ChatMessage::assistant(
-            (!completion.content.is_empty()).then(|| completion.content.clone()),
-            completion.tool_calls.clone(),
-        ));
+        // Some providers repeat ids across parallel calls; make them unique
+        // so every result pairs with exactly one call.
+        let mut tool_calls = completion.tool_calls.clone();
+        let mut seen: HashSet<String> = HashSet::new();
+        for (position, call) in tool_calls.iter_mut().enumerate() {
+            if call.id.is_empty() || !seen.insert(call.id.clone()) {
+                call.id = format!("{}_{position}", call.id);
+                seen.insert(call.id.clone());
+            }
+        }
         if let Some(usage) = completion.usage {
             self.anchor = Some((index, usage));
         }
-        self.finished = completion.tool_calls.is_empty();
+        self.messages.push(ChatMessage::assistant(
+            (!completion.content.is_empty()).then(|| completion.content.clone()),
+            tool_calls.clone(),
+        ));
+        self.finished = tool_calls.is_empty();
         if !text.is_empty() {
             let kind = if self.finished && self.plan_mode {
                 EventKind::PlanProposed {
@@ -504,7 +521,7 @@ impl BuiltinExecutor {
             self.queue.push_back(Queued::Emit(kind));
             self.last_text = text;
         }
-        for call in &completion.tool_calls {
+        for call in &tool_calls {
             let queued = self.classify(call);
             self.queue.push_back(queued);
         }
@@ -522,16 +539,9 @@ impl BuiltinExecutor {
                     self.own_profile()
                 ));
             }
-            let raw = call.function.arguments.trim();
-            let args: Value = if raw.is_empty() {
-                json!({})
-            } else {
-                match serde_json::from_str(raw) {
-                    Ok(args) => args,
-                    Err(error) => return invalid(format!("arguments are not JSON: {error}")),
-                }
-            };
-            return match subagent::parse_tasks(&args, &self.limits) {
+            return match parse_args(&call.function.arguments)
+                .and_then(|args| subagent::parse_tasks(&args, &self.limits))
+            {
                 Ok(tasks) => Queued::Subagent {
                     call_id: call.id.clone(),
                     tasks,
@@ -540,10 +550,7 @@ impl BuiltinExecutor {
             };
         }
         match parse_call(call, &self.root) {
-            Ok(request)
-                if !profiles::chain_offers(&self.chain, request.name(), request.kind())
-                    || (self.depth > 0 && subagent::BLOCKLIST.contains(&request.name())) =>
-            {
+            Ok(request) if !profiles::chain_offers(&self.chain, request.name(), request.kind()) => {
                 invalid(format!(
                     "tool `{}` is not available to the `{}` agent",
                     request.name(),
@@ -615,10 +622,7 @@ impl BuiltinExecutor {
             match profiles::find(&self.profiles, &task.agent) {
                 Some(profile) if profile.mode.subagent() => chosen.push(profile.clone()),
                 _ => {
-                    let available: Vec<&str> = self
-                        .profiles
-                        .iter()
-                        .filter(|p| p.mode.subagent())
+                    let available: Vec<&str> = subagent::spawnable(&self.profiles)
                         .map(|p| p.name.as_str())
                         .collect();
                     self.messages.push(ChatMessage::tool(
@@ -643,12 +647,11 @@ impl BuiltinExecutor {
             children: Vec::new(),
             cursor: 0,
             pending: VecDeque::new(),
-            reports: Vec::new(),
         };
         for (task, profile) in tasks.iter().zip(chosen) {
             self.sub_counter += 1;
             let id = format!("{}sub{}", self.id_prefix, self.sub_counter);
-            let mut exec = Box::new(self.child_executor(&profile, &id));
+            let exec = Box::new(self.child_executor(&profile, &id));
             let spec = TaskSpec {
                 id: parent_spec.id.clone(),
                 prompt: subagent::child_prompt(task),
@@ -662,15 +665,13 @@ impl BuiltinExecutor {
                 goal: crate::runner::truncate(&task.goal, 500),
                 depth: self.depth + 1,
             });
-            let first = exec.start(&spec);
             run.children.push(Child {
                 id,
                 agent: profile.name.clone(),
                 schema: task.output_schema.clone(),
                 exec,
-                state: ChildState::Ready(first),
+                state: ChildState::Starting(spec),
             });
-            run.reports.push(None);
         }
         self.active = Some(run);
     }
@@ -680,6 +681,9 @@ impl BuiltinExecutor {
         child.profiles.clone_from(&self.profiles);
         child.profile = Some(profile.clone());
         child.ancestors.clone_from(&self.chain);
+        // Tools a child never inherits, as one more profile in its chain so
+        // offering, refusing and floors all agree.
+        child.ancestors.push(subagent::blocklist_profile());
         child.role_resolver.clone_from(&self.role_resolver);
         child.compaction = self.compaction;
         child.summary_client.clone_from(&self.summary_client);
@@ -702,12 +706,13 @@ impl BuiltinExecutor {
         for offset in 0..count {
             let index = (run.cursor + offset) % count;
             let child = &mut run.children[index];
-            if !matches!(child.state, ChildState::Ready(_)) {
-                continue;
-            }
-            let ChildState::Ready(step) = std::mem::replace(&mut child.state, ChildState::Finished)
-            else {
-                continue;
+            let step = match std::mem::replace(&mut child.state, ChildState::Finished(None)) {
+                ChildState::Ready(step) => step,
+                ChildState::Starting(spec) => child.exec.start(&spec),
+                other => {
+                    child.state = other;
+                    continue;
+                }
             };
             run.cursor = (index + 1) % count;
             match step {
@@ -748,7 +753,7 @@ impl BuiltinExecutor {
                         schema_valid: report.schema_valid,
                         steps: report.steps,
                     };
-                    run.reports[index] = Some(report);
+                    child.state = ChildState::Finished(Some(report));
                     return Some(AgentStep::Emit(event));
                 }
             }
@@ -766,7 +771,14 @@ impl BuiltinExecutor {
             });
         }
         let run = self.active.take()?;
-        let reports: Vec<Report> = run.reports.into_iter().flatten().collect();
+        let reports: Vec<Report> = run
+            .children
+            .into_iter()
+            .filter_map(|child| match child.state {
+                ChildState::Finished(report) => report,
+                _ => None,
+            })
+            .collect();
         self.messages.push(ChatMessage::tool(
             run.call_id,
             subagent::result_json(&reports),
@@ -798,15 +810,6 @@ fn relabel(id: &str, kind: EventKind) -> EventKind {
             text: format!("[{id}] {markdown}"),
         },
         other => other,
-    }
-}
-
-/// Deny beats ask beats nothing.
-fn strictest(a: Option<Floor>, b: Option<Floor>) -> Option<Floor> {
-    match (a, b) {
-        (Some(Floor::Deny(r)), _) | (_, Some(Floor::Deny(r))) => Some(Floor::Deny(r)),
-        (Some(Floor::Ask(r)), _) | (_, Some(Floor::Ask(r))) => Some(Floor::Ask(r)),
-        _ => None,
     }
 }
 
@@ -847,7 +850,6 @@ impl AgentExecutor for BuiltinExecutor {
         self.active = None;
         self.turns = 0;
         self.finished = false;
-        self.summarised = false;
         self.exit = Exit::Running;
         self.anchor = None;
         self.last_text.clear();
@@ -858,7 +860,7 @@ impl AgentExecutor for BuiltinExecutor {
             &self.limits,
         );
         let system = system_prompt(spec.mode, &self.root, &profile, self.depth);
-        self.system_hash = Some(crate::hash::sha256_hex(system.as_bytes()));
+        self.system_prompt.clone_from(&system);
         self.messages = vec![
             ChatMessage::system(system),
             ChatMessage::user(spec.prompt.clone()),
@@ -869,7 +871,7 @@ impl AgentExecutor for BuiltinExecutor {
     fn floor(&self, call_id: &str, request: &ToolRequest) -> Option<Floor> {
         let own = profiles::floor_for(&self.chain, request);
         match self.child_waiting(call_id) {
-            Some((child, inner)) => strictest(own, child.exec.floor(inner, request)),
+            Some((child, inner)) => Floor::strictest(own, child.exec.floor(inner, request)),
             None => own,
         }
     }
@@ -882,7 +884,7 @@ impl AgentExecutor for BuiltinExecutor {
                 });
                 if let Some(child) = target {
                     if let ChildState::Waiting { inner, .. } =
-                        std::mem::replace(&mut child.state, ChildState::Finished)
+                        std::mem::replace(&mut child.state, ChildState::Finished(None))
                     {
                         let mut forwarded = result.clone();
                         forwarded.call_id = inner;
@@ -1081,7 +1083,7 @@ pub fn tool_schemas_for(
             profiles::chain_offers(chain, name, profiles::policy_kind(name))
         })
         .collect();
-    if offer_subagent && profiles.iter().any(|p| p.mode.subagent()) {
+    if offer_subagent && subagent::spawnable(profiles).next().is_some() {
         tools.push(subagent::tool_schema(profiles, limits));
     }
     tools
@@ -1092,12 +1094,7 @@ pub fn tool_schemas_for(
 /// # Errors
 /// Returns a message for unknown tools, malformed JSON or missing arguments.
 pub fn parse_call(call: &ToolCall, root: &Path) -> Result<ToolRequest, String> {
-    let raw = call.function.arguments.trim();
-    let args: Value = if raw.is_empty() {
-        json!({})
-    } else {
-        serde_json::from_str(raw).map_err(|error| format!("arguments are not JSON: {error}"))?
-    };
+    let args = parse_args(&call.function.arguments)?;
     let text = |key: &str| -> Result<String, String> {
         args.get(key)
             .and_then(Value::as_str)
@@ -1146,6 +1143,15 @@ pub fn parse_call(call: &ToolCall, root: &Path) -> Result<ToolRequest, String> {
         "http_fetch" => ToolRequest::Network { url: text("url")? },
         other => return Err(format!("unknown tool `{other}`")),
     })
+}
+
+/// Tool-call arguments as JSON; empty arguments are `{}`.
+fn parse_args(raw: &str) -> Result<Value, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(json!({}));
+    }
+    serde_json::from_str(raw).map_err(|error| format!("arguments are not JSON: {error}"))
 }
 
 fn resolve(root: &Path, value: &str) -> PathBuf {
