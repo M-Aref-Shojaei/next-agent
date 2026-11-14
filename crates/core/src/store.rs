@@ -104,6 +104,64 @@ pub const MIGRATIONS: &[&str] = &[
     "CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
         BEFORE DELETE ON audit_log
         BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END",
+    // --- llm-gateway ---
+    // Provider connections. Secrets (API keys) are never stored here: they
+    // live in the OS keychain, one entry per connection id.
+    "CREATE TABLE IF NOT EXISTS llm_connections (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        auth_type TEXT NOT NULL DEFAULT 'api_key',
+        name TEXT NOT NULL,
+        priority INTEGER NOT NULL DEFAULT 100,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        data TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    )",
+    "CREATE TABLE IF NOT EXISTS llm_combos (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL DEFAULT 'llm',
+        models TEXT NOT NULL DEFAULT '[]',
+        strategy TEXT,
+        sticky_limit INTEGER
+    )",
+    "CREATE TABLE IF NOT EXISTS llm_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        connection_id TEXT,
+        role TEXT NOT NULL DEFAULT '',
+        combo TEXT,
+        endpoint TEXT NOT NULL DEFAULT 'chat',
+        status INTEGER NOT NULL,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        cost REAL NOT NULL DEFAULT 0,
+        cost_known INTEGER NOT NULL DEFAULT 0,
+        latency_ms INTEGER NOT NULL DEFAULT 0,
+        saver_bytes_before INTEGER NOT NULL DEFAULT 0,
+        saver_bytes_after INTEGER NOT NULL DEFAULT 0
+    )",
+    "CREATE INDEX IF NOT EXISTS llm_usage_by_ts ON llm_usage(ts DESC)",
+    "CREATE TABLE IF NOT EXISTS llm_usage_daily (
+        day TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        role TEXT NOT NULL,
+        requests INTEGER NOT NULL DEFAULT 0,
+        failures INTEGER NOT NULL DEFAULT 0,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        cost REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, provider, model, role)
+    )",
+    // --- end llm-gateway ---
 ];
 
 /// Handle to the metadata database.
@@ -814,3 +872,470 @@ pub struct AuditVerification {
     /// `seq` of the first inconsistent row, when `ok` is false.
     pub broken_at: Option<i64>,
 }
+
+// --- llm-gateway ---------------------------------------------------------------
+// Storage for the built-in LLM gateway (`crate::router`): provider
+// connections, combos and usage. Kept in one block so parallel branches merge
+// cleanly.
+
+/// Row in `llm_connections`. `data` is non-secret JSON (base URL, models…).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionRow {
+    pub id: String,
+    pub provider: String,
+    pub auth_type: String,
+    pub name: String,
+    pub priority: i64,
+    pub is_active: bool,
+    pub data: String,
+}
+
+/// Row in `llm_combos`. `models` is a JSON array of `provider/model` strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComboRow {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub models: String,
+    pub strategy: Option<String>,
+    pub sticky_limit: Option<i64>,
+}
+
+/// One gateway request, as recorded in `llm_usage`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UsageRow {
+    /// RFC 3339 timestamp; `None` = now. Filled on reads.
+    pub ts: Option<String>,
+    pub provider: String,
+    pub model: String,
+    pub connection_id: Option<String>,
+    pub role: String,
+    pub combo: Option<String>,
+    pub endpoint: String,
+    /// HTTP status (0 = transport error).
+    pub status: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub reasoning_tokens: i64,
+    /// Estimated USD.
+    pub cost: f64,
+    /// Whether the model had a price entry (otherwise `cost` is 0).
+    pub cost_known: bool,
+    pub latency_ms: i64,
+    pub saver_bytes_before: i64,
+    pub saver_bytes_after: i64,
+}
+
+/// Aggregated numbers for one group (a provider, model, role or day).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UsageTotals {
+    pub key: String,
+    pub requests: i64,
+    pub failures: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cost: f64,
+}
+
+/// Result of [`Store::usage_summary`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UsageSummary {
+    pub totals: UsageTotals,
+    pub by_provider: Vec<UsageTotals>,
+    pub by_model: Vec<UsageTotals>,
+    pub by_role: Vec<UsageTotals>,
+    /// One entry per day that has data, oldest first (`key` = `YYYY-MM-DD`).
+    pub daily: Vec<UsageTotals>,
+    pub recent: Vec<UsageRow>,
+    /// Bytes of tool output before / after RTK compression in the period.
+    pub saver_bytes_before: i64,
+    pub saver_bytes_after: i64,
+}
+
+impl Store {
+    /// Insert or replace a provider connection.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn upsert_connection(&self, row: &ConnectionRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO llm_connections (id, provider, auth_type, name, priority, is_active, data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET provider = excluded.provider,
+                auth_type = excluded.auth_type, name = excluded.name,
+                priority = excluded.priority, is_active = excluded.is_active,
+                data = excluded.data",
+            rusqlite::params![
+                row.id,
+                row.provider,
+                row.auth_type,
+                row.name,
+                row.priority,
+                row.is_active,
+                row.data
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// All connections, by priority then name.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn list_connections(&self) -> Result<Vec<ConnectionRow>, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, provider, auth_type, name, priority, is_active, data
+             FROM llm_connections ORDER BY priority ASC, name ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(ConnectionRow {
+                id: row.get(0)?,
+                provider: row.get(1)?,
+                auth_type: row.get(2)?,
+                name: row.get(3)?,
+                priority: row.get(4)?,
+                is_active: row.get(5)?,
+                data: row.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Delete a connection; `false` if it did not exist.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn delete_connection(&self, id: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM llm_connections WHERE id = ?1", [id])?
+            > 0)
+    }
+
+    /// Insert or replace a combo (names are unique).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails or the name is taken.
+    pub fn upsert_combo(&self, row: &ComboRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO llm_combos (id, name, kind, models, strategy, sticky_limit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind,
+                models = excluded.models, strategy = excluded.strategy,
+                sticky_limit = excluded.sticky_limit",
+            rusqlite::params![
+                row.id,
+                row.name,
+                row.kind,
+                row.models,
+                row.strategy,
+                row.sticky_limit
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// All combos by name.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn list_combos(&self) -> Result<Vec<ComboRow>, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, name, kind, models, strategy, sticky_limit FROM llm_combos ORDER BY name",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(ComboRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                kind: row.get(2)?,
+                models: row.get(3)?,
+                strategy: row.get(4)?,
+                sticky_limit: row.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Delete a combo; `false` if it did not exist.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn delete_combo(&self, id: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM llm_combos WHERE id = ?1", [id])?
+            > 0)
+    }
+
+    /// Record one request and fold it into the daily rollup, atomically.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn record_usage(&self, row: &UsageRow) -> Result<(), StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO llm_usage (ts, provider, model, connection_id, role, combo, endpoint,
+                status, prompt_tokens, completion_tokens, cached_tokens, cache_creation_tokens,
+                reasoning_tokens, cost, cost_known, latency_ms, saver_bytes_before,
+                saver_bytes_after)
+             VALUES (COALESCE(?1, strftime('%Y-%m-%dT%H:%M:%fZ','now')), ?2, ?3, ?4, ?5, ?6, ?7,
+                ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            rusqlite::params![
+                row.ts,
+                row.provider,
+                row.model,
+                row.connection_id,
+                row.role,
+                row.combo,
+                row.endpoint,
+                row.status,
+                row.prompt_tokens,
+                row.completion_tokens,
+                row.cached_tokens,
+                row.cache_creation_tokens,
+                row.reasoning_tokens,
+                row.cost,
+                row.cost_known,
+                row.latency_ms,
+                row.saver_bytes_before,
+                row.saver_bytes_after
+            ],
+        )?;
+        let failed = i64::from(!(200..300).contains(&row.status));
+        tx.execute(
+            "INSERT INTO llm_usage_daily (day, provider, model, role, requests, failures,
+                prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens, cost)
+             VALUES (substr(COALESCE(?1, strftime('%Y-%m-%dT%H:%M:%fZ','now')), 1, 10),
+                ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(day, provider, model, role) DO UPDATE SET
+                requests = requests + 1,
+                failures = failures + excluded.failures,
+                prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+                completion_tokens = completion_tokens + excluded.completion_tokens,
+                cached_tokens = cached_tokens + excluded.cached_tokens,
+                reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens,
+                cost = cost + excluded.cost",
+            rusqlite::params![
+                row.ts,
+                row.provider,
+                row.model,
+                row.role,
+                failed,
+                row.prompt_tokens,
+                row.completion_tokens,
+                row.cached_tokens,
+                row.reasoning_tokens,
+                row.cost
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Usage for the last `days` days including today (`0` = all time), with
+    /// the `recent` most recent requests.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a query fails.
+    pub fn usage_summary(&self, days: u32, recent: usize) -> Result<UsageSummary, StoreError> {
+        // `date('now', '-0 days')` is today, so N days = offset N-1.
+        let since = if days == 0 {
+            "0000-00-00".to_string()
+        } else {
+            let offset = format!("-{} days", days - 1);
+            self.conn
+                .query_row("SELECT date('now', ?1)", [offset], |row| row.get(0))?
+        };
+        let group = |column: &str| -> Result<Vec<UsageTotals>, StoreError> {
+            let sql = format!(
+                "SELECT {column}, SUM(requests), SUM(failures), SUM(prompt_tokens),
+                    SUM(completion_tokens), SUM(cached_tokens), SUM(reasoning_tokens), SUM(cost)
+                 FROM llm_usage_daily WHERE day >= ?1 GROUP BY {column}
+                 ORDER BY {}",
+                if column == "day" {
+                    "day ASC"
+                } else {
+                    "SUM(cost) DESC, SUM(requests) DESC"
+                }
+            );
+            let mut statement = self.conn.prepare(&sql)?;
+            let rows = statement.query_map([&since], |row| {
+                Ok(UsageTotals {
+                    key: row.get(0)?,
+                    requests: row.get(1)?,
+                    failures: row.get(2)?,
+                    prompt_tokens: row.get(3)?,
+                    completion_tokens: row.get(4)?,
+                    cached_tokens: row.get(5)?,
+                    reasoning_tokens: row.get(6)?,
+                    cost: row.get(7)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        };
+        let by_provider = group("provider")?;
+        let by_model = group("model")?;
+        let by_role = group("role")?;
+        let daily = group("day")?;
+        let mut totals = UsageTotals {
+            key: "total".into(),
+            ..UsageTotals::default()
+        };
+        for day in &daily {
+            totals.requests += day.requests;
+            totals.failures += day.failures;
+            totals.prompt_tokens += day.prompt_tokens;
+            totals.completion_tokens += day.completion_tokens;
+            totals.cached_tokens += day.cached_tokens;
+            totals.reasoning_tokens += day.reasoning_tokens;
+            totals.cost += day.cost;
+        }
+        let (saver_bytes_before, saver_bytes_after) = self.conn.query_row(
+            "SELECT COALESCE(SUM(saver_bytes_before), 0), COALESCE(SUM(saver_bytes_after), 0)
+             FROM llm_usage WHERE substr(ts, 1, 10) >= ?1",
+            [&since],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let mut statement = self.conn.prepare(
+            "SELECT ts, provider, model, connection_id, role, combo, endpoint, status,
+                prompt_tokens, completion_tokens, cached_tokens, cache_creation_tokens,
+                reasoning_tokens, cost, cost_known, latency_ms, saver_bytes_before,
+                saver_bytes_after
+             FROM llm_usage WHERE substr(ts, 1, 10) >= ?1 ORDER BY id DESC LIMIT ?2",
+        )?;
+        let limit = i64::try_from(recent).unwrap_or(i64::MAX);
+        let rows = statement.query_map(rusqlite::params![since, limit], |row| {
+            Ok(UsageRow {
+                ts: row.get(0)?,
+                provider: row.get(1)?,
+                model: row.get(2)?,
+                connection_id: row.get(3)?,
+                role: row.get(4)?,
+                combo: row.get(5)?,
+                endpoint: row.get(6)?,
+                status: row.get(7)?,
+                prompt_tokens: row.get(8)?,
+                completion_tokens: row.get(9)?,
+                cached_tokens: row.get(10)?,
+                cache_creation_tokens: row.get(11)?,
+                reasoning_tokens: row.get(12)?,
+                cost: row.get(13)?,
+                cost_known: row.get(14)?,
+                latency_ms: row.get(15)?,
+                saver_bytes_before: row.get(16)?,
+                saver_bytes_after: row.get(17)?,
+            })
+        })?;
+        Ok(UsageSummary {
+            totals,
+            by_provider,
+            by_model,
+            by_role,
+            daily,
+            recent: rows.collect::<Result<_, _>>()?,
+            saver_bytes_before,
+            saver_bytes_after,
+        })
+    }
+}
+
+#[cfg(test)]
+mod gateway_tests {
+    use super::*;
+
+    #[test]
+    fn connections_and_combos_round_trip() {
+        let store = Store::open_in_memory().expect("open");
+        let row = ConnectionRow {
+            id: "c1".into(),
+            provider: "openai".into(),
+            auth_type: "api_key".into(),
+            name: "Work".into(),
+            priority: 2,
+            is_active: true,
+            data: r#"{"models":["gpt-4o"]}"#.into(),
+        };
+        store.upsert_connection(&row).expect("insert");
+        let mut changed = row.clone();
+        changed.priority = 1;
+        store.upsert_connection(&changed).expect("update");
+        assert_eq!(store.list_connections().expect("list"), vec![changed]);
+        assert!(store.delete_connection("c1").expect("delete"));
+        assert!(!store.delete_connection("c1").expect("delete again"));
+
+        let combo = ComboRow {
+            id: "k1".into(),
+            name: "fast".into(),
+            kind: "llm".into(),
+            models: r#"["openai/gpt-4o-mini"]"#.into(),
+            strategy: Some("round-robin".into()),
+            sticky_limit: None,
+        };
+        store.upsert_combo(&combo).expect("combo");
+        let clash = ComboRow {
+            id: "k2".into(),
+            ..combo.clone()
+        };
+        assert!(store.upsert_combo(&clash).is_err(), "names are unique");
+        assert_eq!(store.list_combos().expect("list"), vec![combo]);
+        assert!(store.delete_combo("k1").expect("delete"));
+    }
+
+    #[test]
+    fn usage_rolls_up_by_day_provider_model_and_role() {
+        let store = Store::open_in_memory().expect("open");
+        let base = UsageRow {
+            provider: "openai".into(),
+            model: "gpt-4o".into(),
+            role: "chat".into(),
+            endpoint: "chat".into(),
+            status: 200,
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            cost: 0.5,
+            cost_known: true,
+            saver_bytes_before: 1000,
+            saver_bytes_after: 400,
+            ..UsageRow::default()
+        };
+        store.record_usage(&base).expect("one");
+        store.record_usage(&base).expect("two");
+        store
+            .record_usage(&UsageRow {
+                provider: "anthropic".into(),
+                model: "claude".into(),
+                role: "review".into(),
+                status: 429,
+                cost: 0.0,
+                ..base.clone()
+            })
+            .expect("three");
+        store
+            .record_usage(&UsageRow {
+                ts: Some("2001-01-01T00:00:00Z".into()),
+                ..base.clone()
+            })
+            .expect("old");
+        let week = store.usage_summary(7, 20).expect("summary");
+        assert_eq!(week.totals.requests, 3);
+        assert_eq!(week.totals.failures, 1);
+        assert_eq!(week.totals.prompt_tokens, 300);
+        assert!((week.totals.cost - 1.0).abs() < 1e-9);
+        assert_eq!(week.by_provider[0].key, "openai");
+        assert_eq!(week.by_provider[0].requests, 2);
+        assert_eq!(week.by_role.len(), 2);
+        assert_eq!(week.daily.len(), 1);
+        assert_eq!(week.recent.len(), 3);
+        assert_eq!(week.recent[0].provider, "anthropic", "newest first");
+        assert_eq!(week.saver_bytes_before, 3000);
+        let all = store.usage_summary(0, 2).expect("all");
+        assert_eq!(all.totals.requests, 4);
+        assert_eq!(all.daily[0].key, "2001-01-01");
+        assert_eq!(all.recent.len(), 2);
+    }
+}
+// --- end llm-gateway -----------------------------------------------------------
