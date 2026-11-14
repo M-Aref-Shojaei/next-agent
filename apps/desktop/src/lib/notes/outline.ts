@@ -225,6 +225,8 @@ export function mergeWithPrevious(tree: Tree, id: string): { tree: OBlock[]; foc
   if (at <= 0) return null;
   const loc = locate(tree, id)!;
   if (loc.block.children.length > 0) return null;
+  // Its `id::` would vanish and break ((refs)) to it: only an empty block may go.
+  if (loc.block.content !== editableText(loc.block.content) && editableText(loc.block.content) !== "") return null;
   const prevId = order[at - 1]!;
   const prev = locate(tree, prevId)!.block;
   const prevText = editableText(prev.content);

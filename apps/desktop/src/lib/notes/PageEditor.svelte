@@ -63,7 +63,8 @@
   // The index changed (an external edit, or our own save echoing back).
   $effect(() => {
     const v = ctx.version();
-    if (v > 0 && current) void load(current, "idle");
+    // Only a change to this page's file (or an unknown one) is worth a re-read.
+    if (v > 0 && current && (!view?.file || notes.changed.includes(view.file))) void load(current, "idle");
   });
 
   onDestroy(() => void outliner.flush());

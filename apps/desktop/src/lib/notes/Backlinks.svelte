@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from "$lib/api.ts";
-  import type { Backlink, Backlinks } from "./types.ts";
+  import type { Backlinks } from "./types.ts";
+  import { groupByPage } from "./group.ts";
   import BlockBody from "./BlockBody.svelte";
   import { useNotes } from "./ctx.ts";
 
@@ -21,10 +22,8 @@
     return () => (live = false);
   });
 
-  const group = (rows: Backlink[]) =>
-    Object.entries(rows.reduce<Record<string, Backlink[]>>((acc, r) => ((acc[r.page] ??= []).push(r), acc), {}));
-  const linked = $derived(group(refs.linked));
-  const unlinked = $derived(group(refs.unlinked));
+  const linked = $derived(groupByPage(refs.linked));
+  const unlinked = $derived(groupByPage(refs.unlinked));
 </script>
 
 <section class="refs" aria-label="References">

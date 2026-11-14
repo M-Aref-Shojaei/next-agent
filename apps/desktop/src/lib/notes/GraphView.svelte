@@ -236,6 +236,10 @@
     };
   });
 
+  // Links changed (own saves, external edits): reload the graph.
+  $effect(() => {
+    if (ctx.version() > 0) void load();
+  });
   $effect(() => {
     void showJournals;
     void showMissing;

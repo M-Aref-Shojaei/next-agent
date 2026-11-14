@@ -124,6 +124,11 @@ test("backspace on an empty block removes it; first block and blocks with childr
   assert.equal(mergeWithPrevious(withKids, withKids[1]!.id), null);
 });
 
+test("a block carrying an id:: is not merged away", () => {
+  const t = fromNodes([node("a"), node("b\nid:: 6502a8f1-0000-4000-8000-000000000001")]);
+  assert.equal(mergeWithPrevious(t, t[1]!.id), null);
+});
+
 test("merging skips children of a collapsed block", () => {
   const t = fromNodes([node("a\ncollapsed:: true", node("hidden")), node("b")]);
   const out = mergeWithPrevious(t, t[1]!.id)!;

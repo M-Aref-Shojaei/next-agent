@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from "$lib/api.ts";
   import type { Backlink } from "./types.ts";
+  import { groupByPage } from "./group.ts";
   import BlockBody from "./BlockBody.svelte";
   import { useNotes } from "./ctx.ts";
 
@@ -30,11 +31,7 @@
     return () => (live = false);
   });
 
-  const groups = $derived(
-    Object.entries(
-      rows.reduce<Record<string, Backlink[]>>((acc, r) => ((acc[r.page] ??= []).push(r), acc), {}),
-    ),
-  );
+  const groups = $derived(groupByPage(rows));
 </script>
 
 <div class="query">
