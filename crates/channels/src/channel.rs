@@ -102,6 +102,13 @@ pub trait Channel: Send + Sync {
         }
     }
 
+    /// Scope for idempotency keys: the channel id plus whatever identifies
+    /// the bot account, so a new bot behind the same channel (a replaced
+    /// token) does not collide with the old bot's message ids.
+    fn key_scope(&self) -> String {
+        self.config().id.clone()
+    }
+
     /// How a sender is shown on a pairing request (`pairing`).
     fn pairing_label(&self, message: &Inbound) -> String {
         if message.sender_label.is_empty() {

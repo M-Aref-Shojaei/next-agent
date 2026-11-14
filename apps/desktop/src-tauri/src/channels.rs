@@ -72,14 +72,7 @@ pub struct ChannelService {
 }
 
 fn health_now(state: HealthState, detail: &str) -> Health {
-    Health {
-        state,
-        detail: detail.to_string(),
-        restarts: 0,
-        since: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs()),
-    }
+    Health::new(state, detail, 0)
 }
 
 fn new_id() -> String {
@@ -91,8 +84,10 @@ fn new_id() -> String {
 
 impl ChannelService {
     /// Production wiring: keychain secrets, the real Bot API.
-    #[must_use]
-    pub fn new(app: Arc<AppService>, emit: UiEmit) -> Arc<Self> {
+    ///
+    /// # Errors
+    /// The database cannot be opened.
+    pub fn new(app: Arc<AppService>, emit: UiEmit) -> Result<Arc<Self>, String> {
         Self::with(
             app,
             emit,
@@ -102,9 +97,16 @@ impl ChannelService {
     }
 
     /// Injected secrets and API base (tests).
-    #[must_use]
-    pub fn with(app: Arc<AppService>, emit: UiEmit, secrets: Secrets, base_url: &str) -> Arc<Self> {
-        let state = Arc::new(StoreState::new(app.db_path()));
+    ///
+    /// # Errors
+    /// The database cannot be opened.
+    pub fn with(
+        app: Arc<AppService>,
+        emit: UiEmit,
+        secrets: Secrets,
+        base_url: &str,
+    ) -> Result<Arc<Self>, String> {
+        let state = Arc::new(StoreState::open(app.db_path())?);
         let runner = Arc::new(DesktopRunner {
             app: Arc::clone(&app),
             emit: Arc::clone(&emit),
@@ -119,7 +121,7 @@ impl ChannelService {
                 notify("channel-activity", json!({ "channelId": channel_id }));
             }
         });
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             app,
             hub,
             state,
@@ -128,7 +130,7 @@ impl ChannelService {
             emit,
             running: tokio::sync::Mutex::default(),
             health: Arc::default(),
-        })
+        }))
     }
 
     fn configs(&self) -> Result<Vec<ChannelConfig>, String> {
@@ -749,7 +751,8 @@ mod tests {
                 ) as Arc<dyn SecretStore>
             }),
             base,
-        );
+        )
+        .expect("service");
         Fx {
             service,
             events,

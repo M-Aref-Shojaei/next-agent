@@ -298,7 +298,10 @@ impl Hub {
         };
         if !self
             .state
-            .claim(&outbound::inbound_key(channel_id, &message.event_id), "")
+            .claim(
+                &outbound::inbound_key(&channel.key_scope(), &message.event_id),
+                "",
+            )
             .unwrap_or(true)
         {
             return Handled::Duplicate;
@@ -656,9 +659,15 @@ impl Hub {
             "completed" if outcome.answer.trim().is_empty() => "Done.".to_string(),
             "completed" => outcome.answer.clone(),
             "cancelled" => "Stopped.".to_string(),
-            "refused" => format!("Cannot run this request: {}", outcome.answer),
+            "refused" => {
+                "This request could not be started. The owner can see why in the desktop app."
+                    .to_string()
+            }
             _ => format!("The task failed: {}", clip(&outcome.answer, 500)),
         };
+        if outcome.status == "refused" {
+            self.log(&channel_id, "system", "error", &peer, &outcome.answer, None);
+        }
         match preview.finish(&text).await {
             Ok(_) => self.log(&channel_id, "out", "message", &peer, &text, task_id.clone()),
             Err(error) => self.log(

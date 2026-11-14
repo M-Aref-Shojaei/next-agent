@@ -36,7 +36,8 @@ pub struct Health {
 }
 
 impl Health {
-    fn new(state: HealthState, detail: impl Into<String>, restarts: u32) -> Self {
+    #[must_use]
+    pub fn new(state: HealthState, detail: impl Into<String>, restarts: u32) -> Self {
         Self {
             state,
             detail: detail.into(),

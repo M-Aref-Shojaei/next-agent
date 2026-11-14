@@ -73,6 +73,12 @@ impl TelegramApi {
         })
     }
 
+    /// The bot's numeric id: the part of the token before `:` (public).
+    #[must_use]
+    pub fn bot_id(&self) -> &str {
+        self.token.split(':').next().unwrap_or_default()
+    }
+
     #[must_use]
     pub fn poll_timeout(&self) -> Duration {
         self.poll

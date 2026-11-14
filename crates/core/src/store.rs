@@ -259,6 +259,7 @@ pub const MIGRATIONS: &[&str] = &[
         value TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
     )",
+    "CREATE INDEX IF NOT EXISTS channel_idempotency_by_age ON channel_idempotency(created_at)",
     "CREATE TABLE IF NOT EXISTS channel_activity (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),

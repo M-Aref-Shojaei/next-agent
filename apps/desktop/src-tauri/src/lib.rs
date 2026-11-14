@@ -51,7 +51,8 @@ pub fn run() {
                 Arc::new(move |name, payload| {
                     let _ = emitter.emit(name, payload);
                 }),
-            );
+            )
+            .map_err(std::io::Error::other)?;
             app.manage(Arc::clone(&channels));
             tauri::async_runtime::spawn(async move { channels.start_all().await });
             tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));

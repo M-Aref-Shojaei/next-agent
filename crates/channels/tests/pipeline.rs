@@ -212,7 +212,7 @@ fn channel_tasks_can_never_enter_bypass() {
 #[test]
 fn sqlite_state_round_trips() {
     let fx = fixture("state");
-    let state = StoreState::new(&fx.db);
+    let state = StoreState::open(&fx.db).expect("state");
     assert!(state.claim("in:ch:1", "").expect("claim"));
     assert!(!state.claim("in:ch:1", "").expect("again"));
     state

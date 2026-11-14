@@ -260,3 +260,27 @@ async fn unchanged_edit_is_not_an_error_and_rate_limits_are_transient() {
         }
     );
 }
+
+#[tokio::test]
+async fn idempotency_keys_are_scoped_to_the_bot() {
+    let server = MockServer::start().await;
+    let first = channel(&server);
+    assert_eq!(first.key_scope(), "ch_1:123456");
+    let config = ChannelConfig {
+        id: "ch_1".into(),
+        workspace_id: "ws".into(),
+        ..ChannelConfig::default()
+    };
+    let replaced = TelegramChannel::new(
+        config,
+        &server.uri(),
+        "777:ZYXwvuTSRqpoNMLkjiHGFedcba_0123",
+        Duration::from_secs(0),
+    )
+    .expect("channel");
+    assert_ne!(
+        first.key_scope(),
+        replaced.key_scope(),
+        "a new bot must not reuse the old bot's keys"
+    );
+}

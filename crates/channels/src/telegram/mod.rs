@@ -161,6 +161,12 @@ impl Channel for TelegramChannel {
         &self.config
     }
 
+    fn key_scope(&self) -> String {
+        // The token's numeric prefix is the bot's id (not secret).
+        let bot = self.api.bot_id();
+        format!("{}:{bot}", self.config.id)
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             text_chunk_limit: TELEGRAM_TEXT_LIMIT,

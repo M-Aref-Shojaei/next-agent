@@ -12,19 +12,20 @@ use std::time::{Duration, Instant};
 /// Shortest gap between two preview edits (Telegram rate-limits edits).
 pub const PREVIEW_THROTTLE: Duration = Duration::from_millis(1_500);
 
-/// Idempotency key of chunk `part` of the reply to `message`.
+/// Idempotency key of chunk `part` of the reply to `message`. `scope` is
+/// [`Channel::key_scope`].
 #[must_use]
-pub fn reply_key(channel_id: &str, message: &Inbound, part: usize) -> String {
+pub fn reply_key(scope: &str, message: &Inbound, part: usize) -> String {
     format!(
-        "out:{channel_id}:{}:{}:{part}",
+        "out:{scope}:{}:{}:{part}",
         message.chat_id, message.message_id
     )
 }
 
-/// Idempotency key of an inbound event.
+/// Idempotency key of an inbound event. `scope` is [`Channel::key_scope`].
 #[must_use]
-pub fn inbound_key(channel_id: &str, event_id: &str) -> String {
-    format!("in:{channel_id}:{event_id}")
+pub fn inbound_key(scope: &str, event_id: &str) -> String {
+    format!("in:{scope}:{event_id}")
 }
 
 /// Send `text` as a reply to `message`, chunked. A chunk whose key was
@@ -51,10 +52,10 @@ async fn send_chunks(
     first_part: usize,
 ) -> Result<usize, ChannelError> {
     let limit = channel.capabilities().text_chunk_limit;
-    let channel_id = channel.config().id.clone();
+    let scope = channel.key_scope();
     let mut sent = 0;
     for (index, chunk) in chunk_text(text, limit).into_iter().enumerate() {
-        let key = reply_key(&channel_id, message, first_part + index);
+        let key = reply_key(&scope, message, first_part + index);
         if state.claimed(&key).ok().flatten().is_some() {
             continue;
         }
@@ -165,14 +166,14 @@ impl<'a> Preview<'a> {
         let Some(target) = self.sent.clone() else {
             return send_reply(self.channel, self.state, self.message, text).await;
         };
-        let channel_id = self.channel.config().id.clone();
+        let scope = self.channel.key_scope();
         let limit = self.channel.capabilities().text_chunk_limit;
         let chunks = chunk_text(text, limit);
         let first = chunks
             .first()
             .cloned()
             .unwrap_or_else(|| "(no answer)".into());
-        let first_key = reply_key(&channel_id, self.message, 0);
+        let first_key = reply_key(&scope, self.message, 0);
         if self.state.claimed(&first_key).ok().flatten().is_none() {
             self.channel.edit(target.clone(), first).await?;
             let _ = self.state.claim(&first_key, &target.message_id);

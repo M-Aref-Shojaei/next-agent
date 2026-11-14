@@ -21,6 +21,12 @@ pub fn sender_allowed(allow: &[String], sender: &str) -> bool {
             .any(|entry| entry == WILDCARD || entry == sender)
 }
 
+/// Whether `sender` is listed by id (no wildcard).
+fn listed(allow: &[String], sender: &str) -> bool {
+    let sender = sender.trim();
+    !sender.is_empty() && allow.iter().any(|entry| entry == sender)
+}
+
 /// Outcome for a direct message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DmAccess {
@@ -34,7 +40,7 @@ pub enum DmAccess {
 /// Decide a DM. `allow` is the stored allow-list (paired + manual entries).
 #[must_use]
 pub fn dm_access(policy: DmPolicy, allow: &[String], sender: &str) -> DmAccess {
-    let listed = allow.iter().any(|entry| entry == sender.trim()) && !sender.trim().is_empty();
+    let listed = listed(allow, sender);
     match policy {
         DmPolicy::Disabled => DmAccess::Deny("direct messages are disabled"),
         DmPolicy::Open if allow.iter().any(|e| e == WILDCARD) => DmAccess::Allow,
@@ -79,8 +85,9 @@ pub fn group_access(config: &ChannelConfig, allow: &[String], facts: &GroupFacts
         }
         GroupPolicy::Allowlist | GroupPolicy::Open => {}
     }
-    // A reply to the bot does not stand in for authorisation.
-    if !sender_allowed(allow, &facts.sender_id) {
+    // A reply to the bot does not stand in for authorisation, and the `*`
+    // that opens DMs does not open groups: group senders must be listed.
+    if !listed(allow, &facts.sender_id) {
         return GroupAccess::Skip("sender is not on the allow-list");
     }
     if config.require_mention && !(facts.mentioned || facts.reply_to_bot) {
@@ -209,9 +216,10 @@ mod tests {
             group_access(&cfg, &list(&["42"]), &facts("42", false, false)),
             GroupAccess::Allow
         );
+        // `*` (for open DMs) does not admit unknown group senders.
         assert_eq!(
             group_access(&cfg, &list(&["*"]), &facts("9", false, false)),
-            GroupAccess::Allow
+            GroupAccess::Skip("sender is not on the allow-list")
         );
     }
 }

@@ -8,7 +8,7 @@ use next_agent_core::store::{ChannelActivityRow, ChannelAllowRow, ChannelPairing
 use next_agent_core::Store;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
 /// A sender allowed to talk to the bot.
@@ -154,23 +154,26 @@ impl ChannelState for MemoryState {
 }
 
 /// [`ChannelState`] over the app's SQLite store (tables in the `channels`
-/// block of `crates/core/src/store.rs`). Opens a connection per call, like
-/// the rest of the app, so it is `Send + Sync` without holding one.
-#[derive(Debug, Clone)]
+/// block of `crates/core/src/store.rs`), on one long-lived connection.
+#[derive(Debug)]
 pub struct StoreState {
-    db_path: PathBuf,
+    store: Mutex<Store>,
 }
 
 impl StoreState {
-    #[must_use]
-    pub fn new(db_path: impl Into<PathBuf>) -> Self {
-        Self {
-            db_path: db_path.into(),
-        }
+    /// Open the database (and apply migrations) once.
+    ///
+    /// # Errors
+    /// The database cannot be opened.
+    pub fn open(db_path: impl AsRef<Path>) -> Result<Self, String> {
+        Ok(Self {
+            store: Mutex::new(Store::open(db_path).map_err(|e| e.to_string())?),
+        })
     }
 
-    fn store(&self) -> Result<Store, String> {
-        Store::open(&self.db_path).map_err(|e| e.to_string())
+    #[allow(clippy::unnecessary_wraps)]
+    fn store(&self) -> Result<std::sync::MutexGuard<'_, Store>, String> {
+        Ok(self.store.lock().unwrap_or_else(PoisonError::into_inner))
     }
 }
 
