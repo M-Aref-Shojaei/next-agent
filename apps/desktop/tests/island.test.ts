@@ -66,10 +66,10 @@ test("hover peeks to compact and never opens the panel by itself", () => {
   timers.advance(60_000);
   assert.equal(fsm.state, "petit", "resting on it does not expand");
   fsm.mouseLeft();
-  timers.advance(179_999);
+  timers.advance(14_999);
   assert.equal(fsm.state, "petit");
   timers.advance(1);
-  assert.equal(fsm.state, "hidden", "hides after the absence delay");
+  assert.equal(fsm.state, "hidden", "a hover peek folds 15 s after the pointer leaves, like Coucou");
   assert.deepEqual(seen, [
     ["hidden", "petit"],
     ["petit", "hidden"],
@@ -80,7 +80,7 @@ test("re-entering cancels the hide timer", () => {
   const { fsm, timers } = machine();
   fsm.mouseEntered();
   fsm.mouseLeft();
-  timers.advance(100_000);
+  timers.advance(10_000);
   fsm.mouseEntered();
   timers.advance(500_000);
   assert.equal(fsm.state, "petit");
