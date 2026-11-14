@@ -42,7 +42,7 @@ A local-first AI workstation: coding agents working on a local repo, a Markdown 
 - [[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]]
 
 ## Upstream
-- [[Upstream Evaluation]] (superseded) · [[9Router]] · [[opencode]] · [[Hermes Agent]] · [[OpenClaw]] · [[Coucou]] · [[Logseq]] · [[Open Design]] · [[Design Studio Sources]] — opencode, 9router, openclaw, hermes-agent, coucou, Logseq
+- [[Upstream Evaluation]] (superseded) · [[9Router]] · [[OpenRouter]] · [[opencode]] · [[Hermes Agent]] · [[OpenClaw]] · [[Coucou]] · [[Logseq]] · [[Open Design]] · [[Design Studio Sources]] — opencode, 9router, openclaw, hermes-agent, coucou, Logseq
 - [[Diagramming and Topology]] — tools for box diagrams and dependency maps of this project
 
 ## Guides & reference
