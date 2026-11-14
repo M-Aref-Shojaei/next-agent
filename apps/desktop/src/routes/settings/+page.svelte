@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type AuditStatus, type Rule } from "$lib/api.ts";
+  import { api, type AuditStatus, type OverlayInfo, type OverlaySettings, type Rule } from "$lib/api.ts";
   import { app } from "$lib/app.svelte.ts";
 
   let routerUrl = $state("");
@@ -8,12 +8,25 @@
   let rules = $state<Rule[]>([]);
   let audit = $state<AuditStatus | null>(null);
   let message = $state("");
+  let overlay = $state<OverlayInfo | null>(null);
 
   async function load() {
     routerUrl = (await api.settingGet("router.url")) ?? "";
     vaultPath = (await api.vaultGet()) ?? "";
     rules = app.activeWorkspaceId ? await api.rulesList(app.activeWorkspaceId) : [];
     audit = await api.auditVerify();
+    overlay = await api.overlayInfo().catch(() => null);
+  }
+  async function saveOverlay(patch: Partial<OverlaySettings>) {
+    if (!overlay) return;
+    const next = { ...overlay.settings, ...patch };
+    try {
+      await api.overlaySetSettings(next);
+      overlay = { ...overlay, settings: next };
+      message = "Overlay settings saved.";
+    } catch (e) {
+      message = String(e);
+    }
   }
   onMount(() => void load().catch((e) => (message = String(e))));
 
@@ -55,6 +68,40 @@
     </form>
     <p class="muted">API key (OS keychain) and model selection arrive with Step 6.</p>
   </section>
+
+  {#if overlay}
+    <section aria-labelledby="h-overlay">
+      <h2 id="h-overlay">Overlay</h2>
+      <p class="muted">An always-on-top island showing the active task and pending approvals.</p>
+      <label>
+        <input
+          type="checkbox"
+          checked={overlay.settings.enabled}
+          onchange={(e) => saveOverlay({ enabled: e.currentTarget.checked })}
+        />
+        Show the overlay
+      </label>
+      <label for="ov-pos">Position</label>
+      <select
+        id="ov-pos"
+        value={overlay.settings.position}
+        onchange={(e) => saveOverlay({ position: e.currentTarget.value as OverlaySettings["position"] })}
+      >
+        <option value="top-center">Top centre</option>
+        <option value="top-left">Top left corner</option>
+        <option value="top-right">Top right corner</option>
+      </select>
+      <label for="ov-mon">Monitor</label>
+      <select
+        id="ov-mon"
+        value={overlay.settings.monitor ?? ""}
+        onchange={(e) => saveOverlay({ monitor: e.currentTarget.value || null })}
+      >
+        <option value="">Follow the cursor (then primary)</option>
+        {#each overlay.monitors as name (name)}<option value={name}>{name}</option>{/each}
+      </select>
+    </section>
+  {/if}
 
   <section aria-labelledby="h-vault">
     <h2 id="h-vault">Vault</h2>

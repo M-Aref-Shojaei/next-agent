@@ -36,6 +36,31 @@ export interface ReviewOutcome {
   files: string[];
 }
 
+export interface OverlaySettings {
+  enabled: boolean;
+  position: "top-center" | "top-left" | "top-right";
+  monitor: string | null;
+}
+export interface OverlayInfo {
+  settings: OverlaySettings;
+  monitors: string[];
+  /** False on macOS: the page paints an opaque island. */
+  transparent: boolean;
+  /** Notch size in points (macOS), if any. */
+  notch: [number, number] | null;
+}
+export interface OverlayRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+export interface TaskStarted {
+  taskId: string;
+  title: string;
+  mode: string;
+}
+
 export interface Api {
   workspaceOpen(path: string): Promise<Workspace>;
   workspaceList(): Promise<Workspace[]>;
@@ -58,6 +83,20 @@ export interface Api {
   routerHealth(): Promise<RouterHealthReport | null>;
   /** Subscribe to router status changes; returns an unsubscribe function. */
   onRouterHealth(callback: (report: RouterHealthReport) => void): Promise<() => void>;
+  overlayInfo(): Promise<OverlayInfo>;
+  overlaySetSettings(settings: OverlaySettings): Promise<void>;
+  /** Island rectangle (CSS px, window-relative) used for click-through. */
+  overlaySetRect(rect: OverlayRect | null): Promise<void>;
+  overlaySetExpanded(expanded: boolean): Promise<void>;
+  /** Focus the main window on a task. */
+  overlayOpenTask(taskId: string): Promise<void>;
+  /** Every sequenced task event, broadcast to all windows. */
+  onTaskStream(callback: (message: StreamMessage) => void): Promise<() => void>;
+  onTaskStarted(callback: (started: TaskStarted) => void): Promise<() => void>;
+  /** Pointer entered/left the overlay island (the window is click-through otherwise). */
+  onOverlayPointer(callback: (inside: boolean) => void): Promise<() => void>;
+  /** The overlay asked the main window to show a task. */
+  onFocusTask(callback: (taskId: string) => void): Promise<() => void>;
 }
 
 const tauriApi: Api = {
@@ -84,6 +123,15 @@ const tauriApi: Api = {
     listen<RouterHealthReport | null>("router-health", (event) => {
       if (event.payload) callback(event.payload);
     }),
+  overlayInfo: () => invoke("overlay_info"),
+  overlaySetSettings: (settings) => invoke("overlay_set_settings", { settings }),
+  overlaySetRect: (rect) => invoke("overlay_set_rect", { rect }),
+  overlaySetExpanded: (expanded) => invoke("overlay_set_expanded", { expanded }),
+  overlayOpenTask: (taskId) => invoke("overlay_open_task", { taskId }),
+  onTaskStream: (callback) => listen<StreamMessage>("task-stream", (e) => callback(e.payload)),
+  onTaskStarted: (callback) => listen<TaskStarted>("task-started", (e) => callback(e.payload)),
+  onOverlayPointer: (callback) => listen<boolean>("overlay-pointer", (e) => callback(e.payload)),
+  onFocusTask: (callback) => listen<string>("focus-task", (e) => callback(e.payload)),
 };
 
 export function inTauri(): boolean {

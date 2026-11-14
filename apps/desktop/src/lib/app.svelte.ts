@@ -55,6 +55,12 @@ class AppStore {
       // Health is informational; never block startup on it.
     }
     try {
+      // The overlay asks us to show a task.
+      await api.onFocusTask((id) => this.selectTask(id));
+    } catch {
+      // Optional.
+    }
+    try {
       this.workspaces = await api.workspaceList();
       this.activeWorkspaceId ??= this.workspaces[0]?.id ?? null;
     } catch (e) {

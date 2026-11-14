@@ -1,6 +1,7 @@
 <script lang="ts">
   import "../app.css";
   import { onMount } from "svelte";
+  import { page } from "$app/state";
   import { app } from "$lib/app.svelte.ts";
   import { shouldCycleMode } from "$lib/shortcuts.ts";
   import Sidebar from "$lib/components/Sidebar.svelte";
@@ -8,7 +9,12 @@
 
   let { children } = $props();
 
-  onMount(() => void app.init());
+  // The overlay is its own window: no sidebar, status bar or app state.
+  const bare = $derived(page.url.pathname.startsWith("/overlay"));
+
+  onMount(() => {
+    if (!bare) void app.init();
+  });
 
   function onkeydown(event: KeyboardEvent) {
     const focused = document.activeElement instanceof HTMLElement && document.activeElement.hasAttribute("data-chat-input");
@@ -21,6 +27,9 @@
 
 <svelte:window {onkeydown} />
 
+{#if bare}
+  {@render children()}
+{:else}
 <div class="shell">
   <Sidebar />
   <main>
@@ -29,6 +38,7 @@
   </main>
   <StatusBar />
 </div>
+{/if}
 
 <style>
   .shell { display: grid; grid-template-columns: 230px 1fr; grid-template-rows: 1fr auto; height: 100vh; }

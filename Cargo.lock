@@ -2351,6 +2351,7 @@ name = "next-agent-desktop"
 version = "0.1.0"
 dependencies = [
  "next-agent-core",
+ "next-agent-macos-panel",
  "next-agent-permission-engine",
  "next-agent-process-manager",
  "serde",
@@ -2359,6 +2360,15 @@ dependencies = [
  "tauri-build",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "next-agent-macos-panel"
+version = "0.1.0"
+dependencies = [
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
 ]
 
 [[package]]
