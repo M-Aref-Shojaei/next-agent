@@ -74,6 +74,14 @@
       "checked": "2026-11-14",
       "risk": "low",
       "role": "apps/desktop design board"
+    },
+    "open-design": {
+      "pin": "main (pin exact commit when porting)",
+      "licence": "Apache-2.0",
+      "adapter": "apps/desktop",
+      "role": "AI Design Studio",
+      "checked": "2026-11-14",
+      "risk": "medium"
     }
   }
 }

@@ -12,6 +12,7 @@ It re-implements or ports selected features from the open-source projects below 
 | OpenClaw | https://github.com/openclaw/openclaw | MIT | © 2026 OpenClaw Foundation | Channel adapter design, DM pairing and allow-lists, session routing, group gating, outbound chunking, scheduler |
 | Coucou | https://github.com/Louis-CFM/coucou | MIT (code only) | © 2026 Louis Raillé | Overlay window technique: notch/corner placement, click-through, approval queue. **Not** the Coucou name, the Mochi character, icons, sounds or other assets, which are excluded from its MIT licence. |
 | Excalidraw | https://github.com/excalidraw/excalidraw | MIT | © Excalidraw contributors (*verify holder*) | Embedded as a library for the Design board (npm `@excalidraw/excalidraw`) |
+| Open Design | https://github.com/nexu-io/open-design | Apache-2.0 (some bundled templates MIT, see its README) | © Open Design contributors (*verify holder in its NOTICE*) | DESIGN.md design-system format, AI design generation flow (sandboxed HTML artifacts), direction picker, self-critique, design templates (each licence checked before use). Files we derive from it state that we changed them, as Apache-2.0 §4 requires. |
 | Logseq | https://github.com/logseq/logseq | AGPL-3.0 | Logseq contributors | Markdown graph format (blocks, properties, refs, journals), outliner behaviour, backlinks, queries, graph view |
 
 ## MIT licence text (applies to code ported from the MIT projects above)

@@ -11,7 +11,7 @@ status: proposed
 - Resolves Q1 (licence) in [[Risks and Open Questions]].
 
 ## Context
-The owner wants one app that works on its own. They don't want to start 9Router, Logseq or any other tool separately, or run terminal commands. The upstreams are 9Router (MIT, Node), opencode (TS/Bun), Hermes agent (Python), OpenClaw (TS), Coucou and Logseq (AGPL-3.0, ClojureScript). Bundling their runtimes would mean shipping Node, Bun and Python and managing several processes, which conflicts with ADR-0007. The owner only wants specific parts of each. For 9Router, those are the "caveman" mode, token reduction, model combos, providers and usage reports. The project will be published free on GitHub.
+The owner wants one app that works on its own. They don't want to start 9Router, Logseq or any other tool separately, or run terminal commands. The upstreams are 9Router (MIT, Node), opencode (TS/Bun), Hermes agent (Python), OpenClaw (TS), Coucou, Logseq (AGPL-3.0, ClojureScript) and Open Design (Apache-2.0, Next.js and Node). Bundling their runtimes would mean shipping Node, Bun and Python and managing several processes, which conflicts with ADR-0007. The owner only wants specific parts of each. For 9Router, those are the "caveman" mode, token reduction, model combos, providers and usage reports. The project will be published free on GitHub.
 
 ## Decision
 1. **Licence: AGPL-3.0-or-later** for Next Agent. That lets us port code from Logseq (AGPL) and include MIT-licensed code with attribution.
