@@ -49,3 +49,11 @@ status: researched
 - Each approval has a timeout of about 115 s.
 - An approval is cleared when its session stops, its session sends a new prompt, or its session ends.
 - An approval matches its result by (session, tool, input key).
+
+## Implementation status (Wave 1, overlay)
+- Rust: `apps/desktop/src-tauri/src/overlay.rs` (placement, monitor choice, click-through state machine, `task-stream` fan-out, window + commands); `crates/macos-panel` (notch detection, window level, collection behaviour via objc2; the only crate allowed `unsafe`, for one pointer deref).
+- Frontend: route `/overlay`, `lib/overlay-model.ts` (FIFO queue, max 5 visible), settings section in `/settings`.
+- Task events reach the overlay through the Tauri event `task-stream` (events only) emitted next to the per-task Channel; `task-started` carries title and mode. Approvals are answered through the existing `approval_respond` command.
+- macOS: the webview is **opaque** (a transparent webview needs Tauri's private `macos-private-api` flag, which we do not enable). The island is a dark rectangle that blends with the notch. A true NSPanel (`.nonactivatingPanel`) needs an NSWindow subclass swap and was skipped; we use `focusable(false)` plus level `mainMenu+3`.
+- Linux input region / layer-shell: skipped. The cursor poll toggles `set_ignore_cursor_events`, which works on X11 and most XWayland setups; native Wayland compositors may ignore it.
+- Not verified without a display: everything in the window runtime (placement on real monitors, click-through, notch panel behaviour, animations).

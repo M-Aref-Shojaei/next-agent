@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod notes;
 pub mod gateway;
+pub mod overlay;
 pub mod review;
 pub mod service;
 pub mod tasks;
@@ -38,6 +39,7 @@ pub fn run() {
                 let _ = handle.emit("graph-changed", files);
             }));
             app.manage(notes);
+            overlay::init(app.handle(), &service);
             tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
             Ok(())
         })
@@ -79,6 +81,11 @@ pub fn run() {
             gateway::gateway_catalog_refresh,
             gateway::gateway_cache_count,
             gateway::gateway_cache_clear,
+            overlay::overlay_info,
+            overlay::overlay_set_settings,
+            overlay::overlay_set_rect,
+            overlay::overlay_set_expanded,
+            overlay::overlay_open_task,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Agent");

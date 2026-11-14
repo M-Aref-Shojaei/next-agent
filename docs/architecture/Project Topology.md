@@ -22,6 +22,7 @@ flowchart LR
     next_agent_permission_engine["permission-engine<br/><small>crates/permission-engine</small>"]
     next_agent_process_manager["process-manager<br/><small>crates/process-manager</small>"]
     next_agent_graph["graph<br/><small>crates/graph</small>"]
+    next_agent_macos_panel["macos-panel<br/><small>crates/macos-panel</small>"]
   end
   subgraph ts["TypeScript packages"]
     direction TB
@@ -31,6 +32,7 @@ flowchart LR
   end
   subgraph planned["Planned (no code yet)"]
     direction TB
+    ui["ui<br/><small>packages/ui</small>"]
     agent_gateway["agent-gateway<br/><small>services/agent-gateway</small>"]
     channel_gateway["channel-gateway<br/><small>services/channel-gateway</small>"]
     hermes_adapter["hermes-adapter<br/><small>services/hermes-adapter</small>"]
@@ -67,10 +69,12 @@ flowchart LR
   class next_agent_permission_engine rust
   class next_agent_process_manager rust
   class next_agent_graph rust
+  class next_agent_macos_panel rust
   class next_agent_desktop rust
   class ts_desktop ts
   class ts_contracts ts
   class ts_policy ts
+  class ui planned
   class ts_vault ts
   class agent_gateway planned
   class channel_gateway planned
@@ -89,10 +93,12 @@ flowchart LR
 | permission-engine | Rust crate | `crates/permission-engine` | — | core, desktop backend (Tauri) | policy |
 | process-manager | Rust crate | `crates/process-manager` | — | core, desktop backend (Tauri) | — |
 | graph | Rust crate | `crates/graph` | — | core, desktop backend (Tauri) | vault |
+| macos-panel | Rust crate | `crates/macos-panel` | — | — | — |
 | desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph | desktop UI | — |
 | desktop UI | TS package | `apps/desktop` | contracts, desktop backend (Tauri) | — | — |
 | contracts | TS package | `packages/contracts` | — | desktop UI | core |
 | policy | TS package | `packages/policy` | — | — | permission-engine |
+| ui | planned (stub) | `packages/ui` | — | — | — |
 | vault | TS package | `packages/vault` | — | — | core, graph |
 | agent-gateway | planned (stub) | `services/agent-gateway` | — | — | — |
 | channel-gateway | planned (stub) | `services/channel-gateway` | — | — | — |

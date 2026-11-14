@@ -256,4 +256,28 @@ export const mockApi: Api = {
     cacheEntries = 0;
     return removed;
   },
+  async overlayInfo() {
+    return {
+      settings: { enabled: true, position: "top-center" as const, monitor: null },
+      monitors: ["Mock display"],
+      transparent: true,
+      notch: null,
+    };
+  },
+  async overlaySetSettings() {},
+  async overlaySetRect() {},
+  async overlaySetExpanded() {},
+  async overlayOpenTask() {},
+  async onTaskStream() {
+    return () => {};
+  },
+  async onTaskStarted() {
+    return () => {};
+  },
+  async onOverlayPointer() {
+    return () => {};
+  },
+  async onFocusTask() {
+    return () => {};
+  },
 };

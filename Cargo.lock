@@ -2394,6 +2394,7 @@ version = "0.1.0"
 dependencies = [
  "next-agent-core",
  "next-agent-graph",
+ "next-agent-macos-panel",
  "next-agent-permission-engine",
  "next-agent-process-manager",
  "serde",
@@ -2416,6 +2417,15 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "next-agent-macos-panel"
+version = "0.1.0"
+dependencies = [
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
 ]
 
 [[package]]

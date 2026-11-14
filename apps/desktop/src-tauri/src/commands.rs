@@ -8,6 +8,7 @@ use crate::service::{
 use crate::wire::StreamMessage;
 use std::sync::Arc;
 use tauri::ipc::Channel;
+use tauri::Emitter;
 use tauri::State;
 
 type Svc<'a> = State<'a, Arc<AppService>>;
@@ -59,21 +60,34 @@ pub fn audit_verify(service: Svc) -> Result<AuditStatus, String> {
 
 #[tauri::command]
 pub fn task_start(
+    app: tauri::AppHandle,
     service: Svc,
     workspace_id: String,
     prompt: String,
     mode: String,
     on_event: Channel<StreamMessage>,
 ) -> Result<String, String> {
-    let sink: Sink = Arc::new(move |message| {
+    let direct: Sink = Arc::new(move |message| {
         let _ = on_event.send(message);
     });
+    // Same stream for the overlay window: broadcast alongside the Channel.
+    let handle = app.clone();
+    let broadcast: Sink = Arc::new(move |message| {
+        let _ = handle.emit("task-stream", &message);
+    });
+    let sink = crate::overlay::fanout(direct, broadcast);
+    let title: String = prompt.chars().take(60).collect();
     let request = TaskRequest {
         workspace_id,
         prompt,
-        mode,
+        mode: mode.clone(),
     };
-    Arc::clone(&service).task_start(&request, sink)
+    let id = Arc::clone(&service).task_start(&request, sink)?;
+    let _ = app.emit(
+        "task-started",
+        serde_json::json!({ "taskId": id, "title": title, "mode": mode }),
+    );
+    Ok(id)
 }
 
 #[tauri::command]
