@@ -392,7 +392,9 @@
 </div>
 
 <style>
-  .page { padding: 20px 28px; overflow: auto; max-width: 900px; display: grid; gap: 14px; align-content: start; }
+  .page { padding: 20px 28px; overflow: auto; flex: 1; min-height: 0; max-width: 900px; display: grid; gap: 14px; align-content: start; }
+  input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
+  .tools label, .grid > label:has(input[type="checkbox"]) { display: flex; align-items: center; }
   section { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--panel); }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
   th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
