@@ -2,9 +2,8 @@
   // Svelte wrapper around the Excalidraw React island: mounts on onMount,
   // unmounts on destroy, follows the light/dark tokens.
   import { onMount } from "svelte";
-  import type { ExcalidrawImperativeAPI } from "$lib/boards/excalidraw.ts";
+  import type { BoardProps, ExcalidrawImperativeAPI } from "$lib/boards/excalidraw.ts";
   import type { Island } from "$lib/boards/island.ts";
-  import type { BoardProps } from "$lib/boards/excalidraw.ts";
 
   interface Props {
     scene: unknown;

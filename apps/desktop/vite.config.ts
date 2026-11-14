@@ -30,7 +30,7 @@ function excalidrawFonts(): Plugin {
       });
     },
     generateBundle() {
-      if (!existsSync(FONT_DIR)) return;
+      if (this.environment?.name === "ssr" || !existsSync(FONT_DIR)) return; // client build only
       for (const file of walk(FONT_DIR)) {
         this.emitFile({
           type: "asset",

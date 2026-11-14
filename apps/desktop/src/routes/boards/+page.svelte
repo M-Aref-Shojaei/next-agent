@@ -141,7 +141,8 @@
     const e = await loadEngine();
     void e.installLibrary(boardApiNext).catch(fail);
     if (pendingTemplate) {
-      const items = placeAt(reId(pendingTemplate, "t-"), e.viewportCentre(boardApiNext).x, e.viewportCentre(boardApiNext).y);
+      const centre = e.viewportCentre(boardApiNext);
+      const items = placeAt(reId(pendingTemplate, "t-"), centre.x, centre.y);
       pendingTemplate = null;
       await e.insertSkeletons(boardApiNext, items, true);
       saver?.schedule(true);
