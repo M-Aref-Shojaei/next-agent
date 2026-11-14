@@ -13,6 +13,8 @@ It re-implements or ports selected features from the open-source projects below 
 | Coucou | https://github.com/Louis-CFM/coucou | MIT (code only) | © 2026 Louis Raillé | Overlay window technique: notch/corner placement, click-through, approval queue. **Not** the Coucou name, the Mochi character, icons, sounds or other assets, which are excluded from its MIT licence. |
 | Excalidraw | https://github.com/excalidraw/excalidraw | MIT | © Excalidraw contributors (*verify holder*) | Embedded as a library for the Design board (npm `@excalidraw/excalidraw`) |
 | Open Design | https://github.com/nexu-io/open-design | Apache-2.0 (some bundled templates MIT, see its README) | © Open Design contributors (*verify holder in its NOTICE*) | DESIGN.md design-system format, AI design generation flow (sandboxed HTML artifacts), direction picker, self-critique, design templates (each licence checked before use). Files we derive from it state that we changed them, as Apache-2.0 §4 requires. |
+| Onlook | https://github.com/onlook-dev/onlook | Apache-2.0 | © Onlook contributors (*verify holder*) | Mapping elements to their source and writing visual edits back to code, for the Design Studio |
+| OpenUI | https://github.com/wandb/openui | Apache-2.0 | © Weights & Biases (*verify holder*) | Converting HTML to React, Svelte or Web Components |
 | Logseq | https://github.com/logseq/logseq | AGPL-3.0 | Logseq contributors | Markdown graph format (blocks, properties, refs, journals), outliner behaviour, backlinks, queries, graph view |
 
 ## MIT licence text (applies to code ported from the MIT projects above)

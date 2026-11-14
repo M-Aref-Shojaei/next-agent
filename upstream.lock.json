@@ -82,6 +82,22 @@
       "role": "AI Design Studio",
       "checked": "2026-11-14",
       "risk": "medium"
+    },
+    "onlook": {
+      "pin": "main (pin exact commit when porting)",
+      "licence": "Apache-2.0",
+      "adapter": "apps/desktop",
+      "role": "Design Studio: visual edit to code",
+      "checked": "2026-11-14",
+      "risk": "medium"
+    },
+    "openui": {
+      "pin": "main (pin exact commit when porting)",
+      "licence": "Apache-2.0",
+      "adapter": "apps/desktop",
+      "role": "Design Studio: HTML to framework",
+      "checked": "2026-11-14",
+      "risk": "low"
     }
   }
 }

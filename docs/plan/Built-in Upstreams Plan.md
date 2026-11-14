@@ -6,7 +6,7 @@ status: proposed
 
 # Built-in Upstreams Plan
 
-Goal: one self-contained app. No separate programs, no terminal setup. We extract the parts of each upstream we want, rebuild them inside Next Agent and credit the source ([[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]], `NOTICE.md`). The research behind each part is in [[9Router]], [[opencode]], [[Hermes Agent]], [[OpenClaw]], [[Coucou]], [[Logseq]] and [[Open Design]].
+Goal: one self-contained app. No separate programs, no terminal setup. We extract the parts of each upstream we want, rebuild them inside Next Agent and credit the source ([[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]], `NOTICE.md`). The research behind each part is in [[9Router]], [[opencode]], [[Hermes Agent]], [[OpenClaw]], [[Coucou]], [[Logseq]], [[Open Design]] and [[Design Studio Sources]].
 
 ## How the work runs
 - Each **session** is a separate Claude Code session with its own git branch and worktree. Sessions in the same wave work in parallel on separate areas.
@@ -42,7 +42,7 @@ Goal: one self-contained app. No separate programs, no terminal setup. We extrac
 | 7 | **Memory and skills**: SKILL.md skills (list, view, manage, curator); curated memory (`MEMORY.md`, `USER.md`); session store with FTS search tool; background review after each task; cron jobs. | Hermes | Opus | 4–6 h | The agent saves and reuses skills and memories across sessions. Scheduled jobs run. |
 | 8 | **Channels core and Telegram**: channel trait and supervisor; DM pairing and allow-lists; session routing; group gating; outbound chunking; approvals on desktop or overlay only; channel tasks never in bypass mode. | OpenClaw | Opus | 4–6 h | Message the agent on Telegram after pairing. Approvals appear on the desktop. |
 
-| 9 | **AI Design Studio**: each workspace has a `DESIGN.md` design system plus `tokens.css`, generated from the project's existing CSS and editable. The agent on the `design` model role produces HTML prototypes in a sandboxed preview with web, mobile and desktop frames. Includes a five-direction picker, a self-critique step, chat to iterate, and sending a board sketch to the studio as input. "Implement this" hands the result to the coding agent. Next Agent's own `DESIGN.md` is created from `apps/desktop/src/app.css`. | Open Design (Apache-2.0) | Opus | 4–6 h | Pick a model for the design role, ask for a screen, get on-brand prototypes in the project's design system, iterate, then hand off to the coding agent. |
+| 9 | **AI Design Studio** (our own UX; mechanics from four tools, see [[Design Studio Sources]]):<br>• **Design system:** `DESIGN.md` plus `tokens.css` per workspace, generated from the project's CSS. *(Open Design)*<br>• **Generate:** the agent on the `design` model role offers 3–5 directions as sandboxed HTML previews in web, mobile and desktop frames, and critiques itself before showing them. *(Open Design)*<br>• **Edit the real app:** run the project in the preview. Click an element to jump to its source; changes to styles or layout are written back to the code in a task worktree. *(Onlook)*<br>• **Convert:** HTML prototype to the project's framework (Svelte, React and others). *(OpenUI)*<br>• Board sketch → studio, and **Implement this** → coding agent. | Open Design, Onlook, OpenUI (all Apache-2.0) | Opus | 6–8 h | Pick a model for design, ask for a screen, get on-brand directions, choose one, then refine it visually on the running app with changes landing in the code. |
 
 **Gate 2 (owner):** try notes, skills and memory, Telegram, and the Design Studio. Approve the merge.
 
@@ -57,6 +57,8 @@ Goal: one self-contained app. No separate programs, no terminal setup. We extrac
 ## Not planned (recorded so nothing is forgotten)
 - Penpot (MPL-2.0): a full Figma-style design tool, but it needs its own server (Postgres, Redis), so it can't be built in. The Excalidraw board and the AI Design Studio cover the need.
 - Open Design's video, PPTX and image generation, plugin marketplace and cloud features.
+- Open Design's UI and UX (the owner found serious flaws). We keep only its mechanics.
+- Figma `.fig` import via open-pencil (MIT, Tauri, early stage): later, once that project is stable.
 - tldraw: its licence requires a watermark and a paid production key, so we don't use it.
 - WhatsApp's unofficial protocol: risk of account bans. Use the official Cloud API later if needed.
 - Logseq whiteboards, PDF annotation, Datalog queries, plugin API.
