@@ -66,10 +66,10 @@ test("hover peeks to compact and never opens the panel by itself", () => {
   timers.advance(60_000);
   assert.equal(fsm.state, "petit", "resting on it does not expand");
   fsm.mouseLeft();
-  timers.advance(14_999);
+  timers.advance(179_999);
   assert.equal(fsm.state, "petit");
   timers.advance(1);
-  assert.equal(fsm.state, "hidden", "a hover peek folds 15 s after the pointer leaves, like Coucou");
+  assert.equal(fsm.state, "hidden", "hides after the absence delay");
   assert.deepEqual(seen, [
     ["hidden", "petit"],
     ["petit", "hidden"],
@@ -80,7 +80,7 @@ test("re-entering cancels the hide timer", () => {
   const { fsm, timers } = machine();
   fsm.mouseEntered();
   fsm.mouseLeft();
-  timers.advance(10_000);
+  timers.advance(100_000);
   fsm.mouseEntered();
   timers.advance(500_000);
   assert.equal(fsm.state, "petit");
@@ -184,7 +184,7 @@ const mac: IslandInfo = {
 };
 const pc: IslandInfo = { ...mac, hasNotch: false, width: 184, height: 32, compactExtra: 104, panel: [720, 320], platform: "windows" };
 
-test("Mac notch sizes: rest = notch + two 26 pt wings, compact = notch + 160, expanded = 640×160", () => {
+test("Mac notch sizes: rest = notch + two 26 pt wings (owner's orb), compact = notch + 160, expanded = 640×160", () => {
   assert.deepEqual(islandSize(mac, "hidden", "empty"), { w: 237, h: 32 });
   assert.deepEqual(islandSize(mac, "compact", "empty"), { w: 345, h: 32 });
   assert.deepEqual(islandSize(mac, "expanded", "approval"), { w: 640, h: 160 });
@@ -272,27 +272,4 @@ test("Tracked shrinks along the 340 ms curve and grows on the spring", () => {
   assert.equal(t.animating, true);
   for (let i = 0; i < 200; i++) t.step(1 / 60, 0);
   assert.equal(t.value, 640);
-});
-
-test("owner's cycle: click opens, leave → 15 s → compact → 15 s → rest", () => {
-  const { fsm, timers, seen } = machine();
-  fsm.mouseEntered(); // hover: compact with details
-  fsm.click(); // full panel
-  assert.equal(fsm.state, "home");
-  fsm.mouseLeft();
-  timers.advance(14_999);
-  assert.equal(fsm.state, "home");
-  timers.advance(1);
-  assert.equal(fsm.state, "petit", "panel folds to compact after 15 s");
-  fsm.mouseLeft(); // the page re-reports "outside" after each transition
-  timers.advance(14_999);
-  assert.equal(fsm.state, "petit");
-  timers.advance(1);
-  assert.equal(fsm.state, "hidden", "compact returns to rest after 15 more seconds");
-  assert.deepEqual(seen, [
-    ["hidden", "petit"],
-    ["petit", "home"],
-    ["home", "petit"],
-    ["petit", "hidden"],
-  ]);
 });

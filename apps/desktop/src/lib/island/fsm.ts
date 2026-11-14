@@ -29,12 +29,6 @@ export class IslandStateMachine {
   /** petit → hidden delay, seconds (AppState.absenceInterval default: 3 min). */
   petitToHiddenDelay = 3 * 60;
   /**
-   * A peek that a hover opened folds back to hidden this long after the
-   * pointer leaves (seconds) — the owner's observed Coucou behaviour. Peeks the
-   * app opened for work (`reveal`) keep `petitToHiddenDelay`.
-   */
-  hoverPeekHideDelay = 15;
-  /**
    * Opt-in (Settings → General → Behavior): hovering opens the island, and an island
    * opened that way folds shortly after the pointer leaves. Off: hover only peeks.
    */
@@ -44,8 +38,6 @@ export class IslandStateMachine {
 
   private homeDelay = 15;
   private byHover = false;
-  /** The current `petit` was opened by the pointer, not by work. */
-  private peekByHover = false;
   private petitHideWork: unknown = null;
   private homeCollapseWork: unknown = null;
   private timers: Timers;
@@ -90,7 +82,6 @@ export class IslandStateMachine {
           this.state = "home";
         } else {
           this.cancelTimers();
-          this.peekByHover = true;
           this.transition("petit");
         }
         break;
@@ -146,7 +137,6 @@ export class IslandStateMachine {
   /** The app folded the island itself (the close button, an answered approval). */
   collapse() {
     this.byHover = false;
-    this.peekByHover = true;
     if (this.state !== "home") return;
     this.cancelTimers();
     this.transition("petit");
@@ -156,7 +146,6 @@ export class IslandStateMachine {
   reveal() {
     if (this.state !== "hidden") return;
     this.cancelTimers();
-    this.peekByHover = false;
     this.transition("petit");
     this.schedulePetitHide();
   }
@@ -173,9 +162,8 @@ export class IslandStateMachine {
     this.petitHideWork = this.timers.set(() => {
       this.petitHideWork = null;
       if (this.state !== "petit" || this.held()) return;
-      this.peekByHover = false;
       this.transition("hidden");
-    }, (this.peekByHover ? this.hoverPeekHideDelay : this.petitToHiddenDelay) * 1000);
+    }, this.petitToHiddenDelay * 1000);
   }
 
   private scheduleHomeCollapse() {
@@ -185,9 +173,6 @@ export class IslandStateMachine {
       this.homeCollapseWork = null;
       if (this.state !== "home" || this.held()) return;
       this.byHover = false;
-      // Owner's change: after the panel folds, the compact island returns to
-      // rest on the short (15 s) peek timer, not the 3-minute absence timer.
-      this.peekByHover = true;
       this.transition("petit");
     }, delay * 1000);
   }

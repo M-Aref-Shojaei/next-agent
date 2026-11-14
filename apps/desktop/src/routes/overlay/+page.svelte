@@ -139,8 +139,7 @@
   fsm.onTransition = (_from, to) => {
     switch (to) {
       case "hidden":
-        // Owner's change: always return to rest (the orb beside the notch).
-        setMode("hidden");
+        setMode(live.length > 0 ? "compact" : "hidden");
         break;
       case "petit":
         setMode("compact");
@@ -241,12 +240,15 @@
     }
   }
 
-  // AppState.syncMode, with the owner's change: a starting task brings the
-  // compact island back (through the FSM, so its timers stay right); the
-  // island returns to rest only on the 15 s timers, never instantly.
+  // AppState.syncMode: no live task folds the compact island away; a task brings it back.
   $effect(() => {
     const count = live.length;
-    if (count > 0 && mode === "hidden") fsm.reveal();
+    if (count === 0 && mode === "compact" && !wasInIsland) {
+      fsm.hiddenExternally();
+      setMode("hidden");
+    } else if (count > 0 && mode === "hidden") {
+      setMode("compact");
+    }
   });
 
   // hookExpand for an approval; the card leaves once it is answered.
