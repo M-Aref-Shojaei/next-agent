@@ -34,7 +34,7 @@ use super::cache::{self, Entry, ResponseCacheSettings};
 use super::client::{classify_status, describe};
 use super::combo::{
     reorder_by_caps, required_caps, rotate, sort_known, weighted_order, Combo, GatewayState,
-    Strategy,
+    Reservation, Strategy,
 };
 use super::pricing::Pricing;
 use super::providers::{Connection, KeySource, ProviderKind, LEGACY_ROUTER_ID};
@@ -88,6 +88,9 @@ pub struct GatewaySettings {
     pub reasoning: BTreeMap<String, ReasoningSetting>,
     pub budgets: Vec<Budget>,
     pub budget_action: BudgetAction,
+    /// While any budget applies, refuse models without a known price (their
+    /// spend would count as $0).
+    pub budget_refuse_unpriced: bool,
 }
 
 impl Default for GatewaySettings {
@@ -106,6 +109,7 @@ impl Default for GatewaySettings {
             reasoning: BTreeMap::new(),
             budgets: Vec::new(),
             budget_action: BudgetAction::Block,
+            budget_refuse_unpriced: true,
         }
     }
 }
@@ -378,10 +382,13 @@ pub trait UsageSink: Send + Sync {
 
     fn record_cache_hit(&self, _row: &CacheHitRow) {}
 
-    /// Spend today (`monthly = false`) or this month, for a role or overall;
-    /// `None` when unknown (budgets are then not enforced).
-    fn spend(&self, _role: Option<&str>, _monthly: bool) -> Option<f64> {
-        None
+    /// Spend today (`monthly = false`) or this month, for a role or overall.
+    /// `Ok(None)`: this sink does not track spend (budgets are not enforced).
+    ///
+    /// # Errors
+    /// The spend could not be read; budgets then fail closed.
+    fn spend(&self, _role: Option<&str>, _monthly: bool) -> Result<Option<f64>, String> {
+        Ok(None)
     }
 }
 
@@ -481,11 +488,11 @@ impl UsageSink for StoreUsage {
         }
     }
 
-    fn spend(&self, role: Option<&str>, monthly: bool) -> Option<f64> {
+    fn spend(&self, role: Option<&str>, monthly: bool) -> Result<Option<f64>, String> {
         self.store()
             .spend(role, monthly)
-            .map_err(|error| tracing::warn!(target: "router", %error, "could not read spend"))
-            .ok()
+            .map(Some)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -508,6 +515,12 @@ impl Default for RequestOptions {
             cache: true,
         }
     }
+}
+
+/// What to store in the response cache after a complete answer.
+struct CacheStore<'a> {
+    key: String,
+    deltas: &'a [String],
 }
 
 /// A successful provider answer.
@@ -684,7 +697,8 @@ impl Gateway {
         let plan = self.config.resolve(requested, &role)?;
         let combo_name = plan.combo.as_ref().map(|c| c.name.clone());
         let mut targets = plan.targets;
-        self.enforce_budgets(&role, &mut targets)?;
+        // Held until this request ends; released when dropped.
+        let _reservation = self.enforce_budgets(&role, &body, &mut targets)?;
         let mut smart_run = self.order_by_strategy(plan.combo.as_ref(), &mut targets);
         let needed = required_caps(&body);
         reorder_by_caps(&mut targets, &needed, |t| {
@@ -707,7 +721,7 @@ impl Gateway {
             && self.usage.is_some()
             && cache::eligible(&body, &self.config.settings.response_cache);
         if caching {
-            if let Some(answer) = self.cached_answer(&body, &targets, &role, on_delta) {
+            if let Some(answer) = self.cached_answer(&body, &targets, &role, options, on_delta) {
                 return Ok(answer);
             }
         }
@@ -779,13 +793,18 @@ impl Gateway {
                 match outcome {
                     Outcome::Done(answer) => {
                         self.state.succeed(&account.id, &target.model);
+                        let store = (caching
+                            && cache::storable(answer.completion.finish_reason.as_deref()))
+                        .then(|| CacheStore {
+                            key: self.cache_key(&body, account, &target.model, options),
+                            deltas: &captured,
+                        });
                         return Ok(self.finish(
                             answer,
                             target,
-                            &body,
                             combo_name.as_deref(),
                             smart_run.take(),
-                            caching.then_some(&captured),
+                            store,
                         ));
                     }
                     Outcome::Empty(answer) => {
@@ -797,7 +816,6 @@ impl Gateway {
                             return Ok(self.finish(
                                 answer,
                                 target,
-                                &body,
                                 combo_name.as_deref(),
                                 smart_run.take(),
                                 None,
@@ -982,61 +1000,143 @@ impl Gateway {
         None
     }
 
-    /// Every configured budget with its current spend (empty without a
-    /// usage store).
+    /// Every configured budget with its current spend, in-flight
+    /// reservations included (empty without a usage store or when the spend
+    /// cannot be read).
     #[must_use]
     pub fn budget_status(&self) -> Vec<BudgetStatus> {
-        self.budgets_for(None)
+        self.budgets_for(None).unwrap_or_default()
     }
 
     /// Budgets that apply to `role` (all with `None`), with their spend.
-    fn budgets_for(&self, role: Option<&str>) -> Vec<BudgetStatus> {
+    fn budgets_for(&self, role: Option<&str>) -> Result<Vec<BudgetStatus>, String> {
         let Some(sink) = &self.usage else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        self.config
+        let mut out = Vec::new();
+        for budget in self
+            .config
             .settings
             .budgets
             .iter()
             .filter(|b| b.limit_usd > 0.0 && role.is_none_or(|r| b.applies_to(r)))
-            .filter_map(|b| {
-                let spent = sink.spend(b.role.as_deref(), b.period == Period::Monthly)?;
-                Some(BudgetStatus::new(b.clone(), spent))
-            })
-            .collect()
+        {
+            let Some(spent) =
+                sink.spend(budget.role.as_deref(), budget.period == Period::Monthly)?
+            else {
+                continue;
+            };
+            let reserved = self.state.reserved(budget.role.as_deref());
+            out.push(BudgetStatus::new(budget.clone(), spent + reserved));
+        }
+        Ok(out)
     }
 
-    /// Warn at 80 %; at 100 % block, or keep only the cheapest priced target.
-    fn enforce_budgets(&self, role: &str, targets: &mut Vec<Target>) -> Result<(), LlmError> {
-        let statuses = self.budgets_for(Some(role));
+    /// Worst-case estimated cost of sending `body` to any of `targets`: the
+    /// prompt estimate plus the requested output or, when none is given, the
+    /// output ceiling the request will be sent with (reasoning included).
+    fn estimate_cost(&self, body: &Value, targets: &[Target]) -> f64 {
+        let requested = body
+            .get("max_completion_tokens")
+            .or_else(|| body.get("max_tokens"))
+            .and_then(Value::as_i64);
+        let prompt = i64::try_from(overflow::estimate_tokens(body))
+            .unwrap_or(i64::MAX)
+            .saturating_sub(requested.unwrap_or(0))
+            .max(0);
+        targets
+            .iter()
+            .map(|t| {
+                let provider = self.price_provider(t);
+                let output = requested.unwrap_or_else(|| {
+                    i64::from(
+                        self.config
+                            .pricing
+                            .max_output(&provider, &t.model)
+                            .unwrap_or(16_384),
+                    )
+                });
+                let usage = Usage {
+                    prompt,
+                    completion: output,
+                    ..Usage::default()
+                };
+                self.config.pricing.cost(&provider, &t.model, &usage).usd
+            })
+            .fold(0.0, f64::max)
+    }
+
+    /// Budget caps for `role`. Warns at 80 %. Fails closed when the spend
+    /// cannot be read. While a cap applies, unpriced models are refused (if
+    /// set) and the request's estimated cost is reserved, so concurrent
+    /// requests cannot all slip under the cap. At 100 % (spend + reservations
+    /// + this estimate) it blocks, or keeps only the cheapest priced target.
+    fn enforce_budgets(
+        &self,
+        role: &str,
+        body: &Value,
+        targets: &mut Vec<Target>,
+    ) -> Result<Option<Reservation>, LlmError> {
+        // Check and reserve under one lock: two requests must not both pass
+        // on the same remaining budget.
+        let _gate = self.state.budget_gate();
+        let statuses = self.budgets_for(Some(role)).map_err(|error| {
+            tracing::warn!(target: "router", %error, "could not read spend; budgets fail closed");
+            LlmError::Http {
+                status: 402,
+                body: format!("Budgets are set but today's spend could not be read ({error}); the request was not sent."),
+            }
+        })?;
+        if statuses.is_empty() {
+            return Ok(None);
+        }
+        let priced = |t: &Target| {
+            self.config
+                .pricing
+                .cost(&self.price_provider(t), &t.model, &Usage::default())
+                .known
+        };
+        if self.config.settings.budget_refuse_unpriced {
+            targets.retain(|t| priced(t));
+            if targets.is_empty() {
+                return Err(LlmError::Http {
+                    status: 402,
+                    body: "A budget is set, and none of these models has a known price, so their spend could not be counted. Add a price in pricing.json, refresh the model catalog, or allow unpriced models in Settings → Providers → Budgets.".into(),
+                });
+            }
+        }
         for status in statuses.iter().filter(|s| s.level == Level::Warn) {
             tracing::warn!(target: "router", budget = %status.budget.label(), spent = status.spent, "budget above 80%");
         }
-        let Some(over) = statuses.iter().find(|s| s.level == Level::Over) else {
-            return Ok(());
-        };
-        let blocked = || LlmError::Http {
-            status: 402,
-            body: over.message(),
-        };
-        if self.config.settings.budget_action == BudgetAction::Block {
-            return Err(blocked());
-        }
-        let price = |t: &Target| {
-            self.config
-                .pricing
-                .lookup(&self.price_provider(t), &t.model)
-                .and_then(|p| Some(p.input? + p.output?))
-        };
-        let cheapest = targets
+        let estimate = self.estimate_cost(body, targets);
+        let over = statuses
             .iter()
-            .filter_map(|t| price(t).map(|p| (p, t.clone())))
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, t)| t)
-            .ok_or_else(blocked)?;
-        tracing::warn!(target: "router", budget = %over.budget.label(), model = %cheapest.label(), "budget reached; using the cheapest model");
-        *targets = vec![cheapest];
-        Ok(())
+            .find(|s| s.spent + estimate >= s.budget.limit_usd);
+        if let Some(over) = over {
+            let blocked = || LlmError::Http {
+                status: 402,
+                body: over.message(),
+            };
+            if self.config.settings.budget_action == BudgetAction::Block {
+                return Err(blocked());
+            }
+            let price = |t: &Target| {
+                self.config
+                    .pricing
+                    .lookup(&self.price_provider(t), &t.model)
+                    .and_then(|p| Some(p.input? + p.output?))
+            };
+            let cheapest = targets
+                .iter()
+                .filter_map(|t| price(t).map(|p| (p, t.clone())))
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, t)| t)
+                .ok_or_else(blocked)?;
+            tracing::warn!(target: "router", budget = %over.budget.label(), model = %cheapest.label(), "budget reached; using the cheapest model");
+            *targets = vec![cheapest];
+        }
+        let estimate = self.estimate_cost(body, targets);
+        Ok(Some(self.state.reserve(role, estimate)))
     }
 
     /// Add the role's reasoning setting and restore remembered reasoning
@@ -1056,17 +1156,47 @@ impl Gateway {
         self.state.restore_reasoning(body);
     }
 
+    /// Settings that reshape the request after the cache key is taken
+    /// (token savers): part of the key so a change cannot serve stale shapes.
+    fn cache_salt(&self, options: &RequestOptions) -> Value {
+        let s = &self.config.settings;
+        json!({
+            "savers": s.token_saver && options.token_saver,
+            "caveman": s.caveman.map(|l| format!("{l:?}")),
+            "ponytail": s.ponytail.map(|l| format!("{l:?}")),
+            "rtk": s.rtk,
+            "cache_control": s.cache_control,
+        })
+    }
+
+    /// Cache key for `body` on one account: its id and base URL are part of
+    /// the key, so different endpoints never share answers.
+    fn cache_key(
+        &self,
+        body: &Value,
+        account: &Connection,
+        model: &str,
+        options: &RequestOptions,
+    ) -> String {
+        let endpoint = format!("{}|{}", account.id, account.base_url);
+        cache::key(body, &endpoint, model, &self.cache_salt(options))
+    }
+
     /// Serve `body` from the response cache, replaying the stored deltas.
     fn cached_answer(
         &self,
         body: &Value,
         targets: &[Target],
         role: &str,
+        options: &RequestOptions,
         on_delta: &mut dyn FnMut(&str),
     ) -> Option<Completion> {
         let sink = self.usage.as_ref()?;
+        // Only the account each target would be sent to first: a provider
+        // name can cover several endpoints, which must not share answers.
         let (target, entry) = targets.iter().find_map(|t| {
-            let raw = sink.cache_get(&cache::key(body, &t.provider, &t.model))?;
+            let account = *self.config.accounts(&t.provider).first()?;
+            let raw = sink.cache_get(&self.cache_key(body, account, &t.model, options))?;
             serde_json::from_str::<Entry>(&raw)
                 .map_err(
                     |error| tracing::warn!(target: "router", %error, "ignoring a bad cache entry"),
@@ -1077,6 +1207,8 @@ impl Gateway {
         for delta in &entry.deltas {
             on_delta(delta);
         }
+        let completion = entry.completion();
+        self.remember_reasoning(&completion, entry.reasoning_details.clone());
         sink.record_cache_hit(&CacheHitRow {
             provider: self.price_provider(target),
             model: target.model.clone(),
@@ -1085,19 +1217,32 @@ impl Gateway {
             saved_cost: entry.cost,
         });
         tracing::info!(target: "router", provider = %target.label(), "served from the response cache");
-        Some(entry.completion())
+        Some(completion)
     }
 
-    /// Book-keeping after a provider answered: routing memory, reasoning
-    /// blocks, the response cache and smart-combo state.
+    /// Keep an answer's reasoning blocks for its tool calls.
+    fn remember_reasoning(&self, completion: &Completion, details: Vec<Value>) {
+        if details.is_empty() || completion.tool_calls.is_empty() {
+            return;
+        }
+        let keys: Vec<String> = completion
+            .tool_calls
+            .iter()
+            .filter_map(|c| serde_json::to_value(c).ok())
+            .filter_map(|c| combo::tool_call_key(&c))
+            .collect();
+        self.state.remember_reasoning(&keys, &Value::Array(details));
+    }
+
+    /// Book-keeping after a provider answered: usage for the agent, routing
+    /// memory, reasoning blocks, the response cache and smart-combo state.
     fn finish(
         &self,
         answer: Answer,
         target: &Target,
-        body: &Value,
         combo: Option<&str>,
         smart_run: Option<SmartRun>,
-        captured: Option<&Vec<String>>,
+        store: Option<CacheStore<'_>>,
     ) -> Completion {
         let Answer {
             mut completion,
@@ -1120,22 +1265,14 @@ impl Gateway {
         if let Some(combo) = combo {
             self.state.set_last_good(combo, &target.label());
         }
-        if !details.is_empty() && !completion.tool_calls.is_empty() {
-            let keys: Vec<String> = completion
-                .tool_calls
-                .iter()
-                .filter_map(|c| serde_json::to_value(c).ok())
-                .filter_map(|c| combo::tool_call_key(&c))
-                .collect();
-            self.state.remember_reasoning(&keys, &Value::Array(details));
-        }
-        if let (Some(deltas), Some(sink)) = (captured, &self.usage) {
+        if let (Some(store), Some(sink)) = (store, &self.usage) {
             let provider = self.price_provider(target);
             let entry = Entry {
-                deltas: deltas.clone(),
+                deltas: store.deltas.to_vec(),
                 content: completion.content.clone(),
                 tool_calls: completion.tool_calls.clone(),
                 finish_reason: completion.finish_reason.clone(),
+                reasoning_details: details.clone(),
                 prompt_tokens: usage.prompt,
                 completion_tokens: usage.completion,
                 cost: self
@@ -1145,10 +1282,15 @@ impl Gateway {
                     .usd,
             };
             if let Ok(text) = serde_json::to_string(&entry) {
-                let key = cache::key(body, &target.provider, &target.model);
-                sink.cache_put(&key, target, &text, &self.config.settings.response_cache);
+                sink.cache_put(
+                    &store.key,
+                    target,
+                    &text,
+                    &self.config.settings.response_cache,
+                );
             }
         }
+        self.remember_reasoning(&completion, details);
         self.observe_smart(smart_run, target, &completion);
         completion
     }

@@ -123,8 +123,11 @@ impl Table {
             return Some(price);
         }
         let bare = model.rsplit('/').next().unwrap_or(model);
+        // `provider/model` first: the vendor's own entry beats another
+        // vendor's listing of the same bare name (catalog imports).
         self.models
-            .get(model)
+            .get(&format!("{provider}/{bare}"))
+            .or_else(|| self.models.get(model))
             .or_else(|| self.models.get(bare))
             .or_else(|| self.models.get(&normalize(bare)))
             .or_else(|| {

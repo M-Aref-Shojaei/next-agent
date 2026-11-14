@@ -21,7 +21,7 @@ pub const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 /// File name of the cached catalog in the app data folder.
 pub const CATALOG_FILE: &str = "openrouter-models.json";
 /// Responses larger than this are refused (the real list is ~1–2 MB).
-const MAX_BYTES: usize = 32 * 1024 * 1024;
+const MAX_BYTES: usize = 8 * 1024 * 1024;
 
 /// USD per token as a string → USD per 1M tokens. `-1` (dynamic) and
 /// unparsable values → `None`.
@@ -31,7 +31,12 @@ fn per_million(value: Option<&Value>) -> Option<f64> {
         Value::Number(n) => n.as_f64()?,
         _ => return None,
     };
-    (raw.is_finite() && raw >= 0.0).then(|| (raw * 1e6 * 1e6).round() / 1e6)
+    if raw < 0.0 {
+        return None;
+    }
+    // Check after scaling too: a huge finite value can overflow to infinity.
+    let scaled = (raw * 1e6 * 1e6).round() / 1e6;
+    scaled.is_finite().then_some(scaled)
 }
 
 fn caps(modalities: Option<&Value>) -> Vec<String> {
@@ -94,6 +99,13 @@ pub fn parse_openrouter(text: &str) -> Result<Table, String> {
             continue;
         };
         let price = entry(model);
+        // A `:free`/`:extended` variant is reachable only by its exact id: it
+        // must never claim the plain model's names (a $0 variant would make
+        // the paid model look free).
+        if id.contains(':') {
+            models.insert(id.to_string(), price);
+            continue;
+        }
         let mut names = vec![id.to_string()];
         if let Some(slug) = model.get("canonical_slug").and_then(Value::as_str) {
             names.push(slug.to_string());
@@ -105,18 +117,6 @@ pub fn parse_openrouter(text: &str) -> Result<Table, String> {
         }
     }
     Ok(Table::of_models(models))
-}
-
-/// Read a saved catalog file into a pricing layer (empty when unreadable).
-#[must_use]
-pub fn load(text: &str) -> Pricing {
-    match parse_openrouter(text) {
-        Ok(table) => Pricing::from_table(table),
-        Err(error) => {
-            tracing::warn!(target: "router", %error, "ignoring the saved model catalog");
-            Pricing::default()
-        }
-    }
 }
 
 /// Fetch the catalog from `url` (HTTPS, or loopback for tests). Returns the
@@ -132,8 +132,14 @@ pub async fn fetch(url: &str) -> Result<(String, usize), LlmError> {
         return Err(LlmError::Config("the catalog URL must use https".into()));
     }
     // Follow at most 3 redirects, and only to https (no downgrade).
-    let redirects = reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() < 3 && attempt.url().scheme() == "https" {
+    // Follow at most 3 redirects, only over https and only on the same host.
+    let host = parsed.host_str().unwrap_or_default().to_string();
+    let redirects = reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() < 3
+            && attempt.url().scheme() == "https"
+            && attempt.url().host_str() == Some(host.as_str())
+            && attempt.url().port_or_known_default() == Some(443)
+        {
             attempt.follow()
         } else {
             attempt.stop()
@@ -181,6 +187,75 @@ pub async fn fetch(url: &str) -> Result<(String, usize), LlmError> {
         .map_err(|_| LlmError::Protocol("the model catalog is not UTF-8".into()))?;
     let count = parse_openrouter(&text).map_err(LlmError::Protocol)?.len();
     Ok((text, count))
+}
+
+/// Parse a saved catalog file, reusing the last parse while the file's
+/// modification time and size are unchanged. Returns the pricing layer and
+/// the number of models (both empty when the file is missing or bad).
+#[must_use]
+pub fn load_file(path: &std::path::Path) -> (Pricing, usize) {
+    use std::sync::{Mutex, OnceLock, PoisonError};
+    type Cached = (
+        std::path::PathBuf,
+        std::time::SystemTime,
+        u64,
+        Pricing,
+        usize,
+    );
+    static LAST: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
+    let Ok(meta) = std::fs::metadata(path) else {
+        return (Pricing::default(), 0);
+    };
+    if meta.len() > MAX_BYTES as u64 {
+        tracing::warn!(target: "router", "ignoring an oversized model catalog file");
+        return (Pricing::default(), 0);
+    }
+    let stamp = (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len());
+    let mut last = LAST
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some((p, modified, len, pricing, count)) = last.as_ref() {
+        if p == path && (*modified, *len) == stamp {
+            return (pricing.clone(), *count);
+        }
+    }
+    let (pricing, count) = match std::fs::read_to_string(path).map(|t| parse_openrouter(&t)) {
+        Ok(Ok(table)) => {
+            let count = table.len();
+            (Pricing::from_table(table), count)
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(target: "router", %error, "ignoring the saved model catalog");
+            (Pricing::default(), 0)
+        }
+        Err(_) => (Pricing::default(), 0),
+    };
+    *last = Some((path.to_path_buf(), stamp.0, stamp.1, pricing.clone(), count));
+    (pricing, count)
+}
+
+/// Save a downloaded catalog atomically (temporary file, then rename), so
+/// a crash never leaves a half-written file behind.
+///
+/// # Errors
+/// The I/O error when writing or renaming fails.
+pub fn save(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    // A unique temp name per writer, flushed to disk before the rename.
+    let temp = path.with_extension(format!("json.{}.{nanos}.tmp", std::process::id()));
+    let written = std::fs::File::create(&temp).and_then(|mut file| {
+        file.write_all(text.as_bytes())?;
+        file.sync_all()
+    });
+    written
+        .and_then(|()| std::fs::rename(&temp, path))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&temp);
+        })
 }
 
 /// [`fetch`] from synchronous code (not from an async worker).
@@ -253,7 +328,6 @@ mod tests {
             .caps("openrouter", "meta-llama/llama-3.3-70b-instruct:free")
             .contains(&"tools".to_string()));
         assert!(parse_openrouter("{}").is_err());
-        assert_eq!(load("not json"), Pricing::default());
     }
 
     #[tokio::test]
@@ -277,11 +351,89 @@ mod tests {
         assert!(fetch("http://example.com/models").await.is_err());
         assert!(fetch("http://localhost.evil.test/models").await.is_err());
 
+        // Redirects to another host are not followed (L3).
+        let moved = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", "https://elsewhere.test/models"),
+            )
+            .mount(&moved)
+            .await;
+        assert!(fetch(&format!("{}/api/v1/models", moved.uri()))
+            .await
+            .is_err());
+
         let broken = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
             .mount(&broken)
             .await;
         assert!(fetch(&format!("{}/x", broken.uri())).await.is_err());
+    }
+
+    /// M2 regression: a `:free` variant listed first must not make the paid
+    /// model free under its plain names.
+    #[test]
+    fn variants_never_claim_the_plain_model_names() {
+        let text = r#"{"data":[
+          {"id":"meta/llama-4:free","canonical_slug":"meta/llama-4","pricing":{"prompt":"0","completion":"0"}},
+          {"id":"meta/llama-4","pricing":{"prompt":"0.000001","completion":"0.000002"}}
+        ]}"#;
+        let pricing = Pricing::from_table(parse_openrouter(text).expect("catalog"));
+        for name in ["meta/llama-4", "llama-4"] {
+            assert_eq!(
+                pricing.lookup("openrouter", name).and_then(|p| p.input),
+                Some(1.0),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            pricing
+                .lookup("openrouter", "meta/llama-4:free")
+                .and_then(|p| p.input),
+            Some(0.0)
+        );
+        // L1: a finite price that overflows when scaled is ignored.
+        let huge = r#"{"data":[{"id":"x/huge","pricing":{"prompt":"1e300","completion":"1"}}]}"#;
+        let pricing = Pricing::from_table(parse_openrouter(huge).expect("catalog"));
+        assert_eq!(pricing.lookup("x", "x/huge").and_then(|p| p.input), None);
+    }
+
+    #[test]
+    fn saved_catalogs_are_atomic_and_parsed_once_per_change() {
+        let dir = std::env::temp_dir().join(format!("catalog-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join(CATALOG_FILE);
+        save(&path, SAMPLE).expect("save");
+        let leftovers = std::fs::read_dir(&dir)
+            .expect("list")
+            .filter(|e| {
+                e.as_ref()
+                    .is_ok_and(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            })
+            .count();
+        assert_eq!(leftovers, 0, "temp file renamed away");
+        let (first, count) = load_file(&path);
+        assert!(count >= 3);
+        assert_eq!(load_file(&path).0, first, "cached parse");
+        save(&path, r#"{"data":[]}"#).expect("replace");
+        assert_eq!(load_file(&path).1, 0, "a changed file is parsed again");
+        assert_eq!(load_file(&dir.join("missing.json")).1, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A third-party listing of a bare name must not price the vendor's model.
+    #[test]
+    fn the_vendors_own_entry_wins_for_its_provider() {
+        let text = r#"{"data":[
+          {"id":"cheapco/gpt-4o","pricing":{"prompt":"0.0000001","completion":"0.0000001"}},
+          {"id":"openai/gpt-4o","pricing":{"prompt":"0.0000025","completion":"0.00001"}}
+        ]}"#;
+        let pricing = Pricing::from_table(parse_openrouter(text).expect("catalog"));
+        assert_eq!(
+            pricing.lookup("openai", "gpt-4o").and_then(|p| p.input),
+            Some(2.5)
+        );
     }
 }

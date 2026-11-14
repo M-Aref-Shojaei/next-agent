@@ -9,7 +9,7 @@ use crate::router::providers::MemoryKeys;
 use crate::store::ComboRow;
 use serde_json::json;
 use std::fmt::Write as _;
-use wiremock::matchers::{header, method, path, query_param};
+use wiremock::matchers::{body_partial_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[derive(Default)]
@@ -2020,4 +2020,239 @@ async fn cache_reads_are_priced_with_the_provider_multiplier() {
     };
     let expected = (800.0 * 1.0 + 200.0 * 0.1 + 100.0 * 2.0) / 1e6;
     assert!((priced.cost("deepseek", "mystery-chat", &usage).usd - expected).abs() < 1e-12);
+}
+
+// ---- security review regressions ---------------------------------------------------
+
+fn cache_on() -> GatewaySettings {
+    GatewaySettings {
+        response_cache: ResponseCacheSettings {
+            enabled: true,
+            ..ResponseCacheSettings::default()
+        },
+        ..GatewaySettings::default()
+    }
+}
+
+fn cold(model: &str) -> Value {
+    let mut body = request(model);
+    body["temperature"] = json!(0);
+    body
+}
+
+/// H1: truncated, filtered and unterminated answers are never cached.
+#[tokio::test]
+async fn incomplete_answers_are_not_cached() {
+    for (label, template) in [
+        ("length", openai_finish("cut", "length")),
+        ("content_filter", openai_finish("hidden", "content_filter")),
+        (
+            "no finish, no [DONE]",
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"half\"}}]}\n\n"),
+        ),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(template)
+            .mount(&server)
+            .await;
+        let (gateway, store) = db_gateway(
+            vec![conn(
+                "o1",
+                "openai",
+                ProviderKind::OpenAi,
+                &format!("{}/v1", server.uri()),
+                1,
+            )],
+            vec![],
+            cache_on(),
+        );
+        run(&gateway, cold("openai/gpt-4o")).await.0.expect(label);
+        run(&gateway, cold("openai/gpt-4o")).await.0.expect(label);
+        assert_eq!(hits(&server).await, 2, "{label}: nothing was cached");
+        assert_eq!(store.store().cache_count().expect("count"), 0, "{label}");
+    }
+}
+
+/// H2: two endpoints of the same provider never share cache entries.
+#[tokio::test]
+async fn custom_endpoints_do_not_share_cache_entries() {
+    let (one, two) = (MockServer::start().await, MockServer::start().await);
+    for (server, text) in [(&one, "from one"), (&two, "from two")] {
+        Mock::given(method("POST"))
+            .respond_with(openai_text(text))
+            .mount(server)
+            .await;
+    }
+    let (gateway, _) = db_gateway(
+        vec![
+            conn(
+                "c1",
+                "custom",
+                ProviderKind::OpenAi,
+                &format!("{}/v1", one.uri()),
+                1,
+            ),
+            conn(
+                "c2",
+                "custom",
+                ProviderKind::OpenAi,
+                &format!("{}/v1", two.uri()),
+                1,
+            ),
+        ],
+        vec![],
+        cache_on(),
+    );
+    assert_eq!(answer(&gateway, cold("c1/m")).await, "from one");
+    assert_eq!(
+        answer(&gateway, cold("c2/m")).await,
+        "from two",
+        "not one's cached answer"
+    );
+    assert_eq!(answer(&gateway, cold("c1/m")).await, "from one");
+    assert_eq!(
+        (hits(&one).await, hits(&two).await),
+        (1, 1),
+        "each endpoint cached its own"
+    );
+}
+
+/// M3: a cache hit restores the reasoning blocks of its tool calls.
+#[tokio::test]
+async fn cache_hits_bring_back_reasoning_details() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_partial_json(json!({"temperature": 0})))
+        .respond_with(sse(&[
+            json!({"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan"}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"SIG-C"}}),
+            json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_c","name":"read_file"}}),
+            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}),
+            json!({"type":"message_stop"}),
+        ]))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(anthropic_text("done"))
+        .mount(&server)
+        .await;
+    let (first, _) = db_gateway(
+        vec![conn(
+            "a",
+            "anthropic",
+            ProviderKind::Anthropic,
+            &format!("{}/v1", server.uri()),
+            1,
+        )],
+        vec![],
+        cache_on(),
+    );
+    answer_completion(&first, cold("anthropic/claude-sonnet-4-5")).await;
+    // A fresh process: no reasoning memory, same database.
+    let fresh = first.clone().with_state(Arc::new(GatewayState::default()));
+    let hit = answer_completion(&fresh, cold("anthropic/claude-sonnet-4-5")).await;
+    assert_eq!(hits(&server).await, 1, "served from the cache");
+    assert_eq!(hit.tool_calls[0].id, "toolu_c");
+    answer(
+        &fresh,
+        json!({"model": "anthropic/claude-sonnet-4-5", "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": null, "tool_calls": [
+                {"id": "toolu_c", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "toolu_c", "content": "text"}
+        ]}),
+    )
+    .await;
+    let sent = bodies(&server).await;
+    assert_eq!(
+        sent[1]["messages"][1]["content"][0],
+        json!({"type": "thinking", "thinking": "plan", "signature": "SIG-C"})
+    );
+}
+
+fn capped(refuse_unpriced: bool) -> GatewaySettings {
+    GatewaySettings {
+        budgets: vec![Budget {
+            role: None,
+            period: Period::Daily,
+            limit_usd: 1.0,
+        }],
+        budget_refuse_unpriced: refuse_unpriced,
+        ..GatewaySettings::default()
+    }
+}
+
+/// M1: unpriced models are refused while a cap applies (unless allowed).
+#[tokio::test]
+async fn budgets_refuse_unpriced_models_by_default() {
+    let (_servers, connections) = providers(&["alpha"]).await;
+    let (strict, _) = db_gateway(connections.clone(), vec![], capped(true));
+    let error = run(&strict, request("alpha/no-price")).await.0.unwrap_err();
+    assert!(
+        matches!(error, LlmError::Http { status: 402, .. }),
+        "{error}"
+    );
+    assert!(error.to_string().contains("known price"), "{error}");
+    assert_eq!(
+        answer(&strict, request("alpha/m")).await,
+        "alpha",
+        "priced models still work"
+    );
+    let (lenient, _) = db_gateway(connections.clone(), vec![], capped(false));
+    assert_eq!(answer(&lenient, request("alpha/no-price")).await, "alpha");
+    let (uncapped, _) = db_gateway(connections, vec![], GatewaySettings::default());
+    assert_eq!(
+        answer(&uncapped, request("alpha/no-price")).await,
+        "alpha",
+        "no cap, no check"
+    );
+}
+
+/// M1: in-flight reservations count against the cap.
+#[tokio::test]
+async fn budget_reservations_stop_concurrent_requests_slipping_under() {
+    let (servers, connections) = providers(&["alpha"]).await;
+    let (gateway, _) = db_gateway(connections, vec![], capped(true));
+    let held = gateway.state().reserve("chat", 0.999);
+    let error = run(&gateway, request("alpha/m")).await.0.unwrap_err();
+    assert!(
+        matches!(error, LlmError::Http { status: 402, .. }),
+        "{error}"
+    );
+    assert_eq!(hits(&servers[0]).await, 0);
+    drop(held);
+    assert_eq!(gateway.state().reserved(None), 0.0, "released");
+    assert_eq!(answer(&gateway, request("alpha/m")).await, "alpha");
+    assert_eq!(
+        gateway.state().reserved(None),
+        0.0,
+        "released after the request"
+    );
+}
+
+struct BrokenSpend;
+
+impl UsageSink for BrokenSpend {
+    fn record(&self, _row: &UsageRow) {}
+    fn spend(&self, _role: Option<&str>, _monthly: bool) -> Result<Option<f64>, String> {
+        Err("database is locked".into())
+    }
+}
+
+/// M1: when spend cannot be read, budgets fail closed.
+#[tokio::test]
+async fn budgets_fail_closed_when_spend_cannot_be_read() {
+    let (servers, connections) = providers(&["alpha"]).await;
+    let (gateway, _) = db_gateway(connections, vec![], capped(true));
+    let broken = gateway.with_usage(Arc::new(BrokenSpend));
+    let error = run(&broken, request("alpha/m")).await.0.unwrap_err();
+    assert!(error.to_string().contains("could not be read"), "{error}");
+    assert_eq!(hits(&servers[0]).await, 0);
 }

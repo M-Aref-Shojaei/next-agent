@@ -125,6 +125,8 @@ export interface GatewaySettings {
   reasoning: Record<string, ReasoningSetting>;
   budgets: Budget[];
   budgetAction: BudgetAction;
+  /** While a budget applies, refuse models without a known price. */
+  budgetRefuseUnpriced: boolean;
 }
 
 export interface GatewayTarget {
@@ -209,6 +211,7 @@ export function defaultSettings(): GatewaySettings {
     reasoning: Object.fromEntries(ROLES.map((role) => [role, { effort: "off", maxTokens: null }])),
     budgets: [],
     budgetAction: "block",
+    budgetRefuseUnpriced: true,
   };
 }
 

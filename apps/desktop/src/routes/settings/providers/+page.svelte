@@ -437,12 +437,14 @@
         <option value="cheapest">Use the cheapest model in the combo</option>
       </select>
       <span></span>
+      <label><input type="checkbox" bind:checked={settings.budgetRefuseUnpriced} /> Refuse models without a known price while a budget is set</label>
+      <span></span>
       <div class="buttons">
         <button type="button" onclick={addBudget}>Add budget</button>
         <button type="submit" class="primary">Save budgets</button>
       </div>
     </form>
-    <p class="muted">Uses the estimated costs on the Usage page. You get a warning at 80%.</p>
+    <p class="muted">Uses the estimated costs on the Usage page, plus the estimated cost of requests still running. You get a warning at 80%. If spend cannot be read, requests are stopped.</p>
   </section>
 
   <section aria-labelledby="h-catalog">
