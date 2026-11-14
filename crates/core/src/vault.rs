@@ -246,6 +246,7 @@ fn describe(request: Option<&ToolRequest>, tool: &str, root: Option<&Path>) -> S
         Some(
             ToolRequest::Write { path, .. }
             | ToolRequest::ApplyPatch { path, .. }
+            | ToolRequest::Edit { path, .. }
             | ToolRequest::Read { path }
             | ToolRequest::ListDir { path },
         ) => {

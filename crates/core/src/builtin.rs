@@ -1,17 +1,39 @@
-//! `BuiltinExecutor`: a minimal OpenAI-compatible tool-calling loop
+//! `BuiltinExecutor`: the built-in OpenAI-compatible tool-calling loop
 //! (ADR-0006). Talks to the LLM only through [`CompletionClient`] and performs
 //! side effects only by returning [`AgentStep::Call`] to the runner/broker.
 //!
 //! Loop: send messages + tool schemas → stream `message_delta` → for each
 //! tool call yield a `Call` → append the result as a `tool` message → repeat
 //! until the model stops calling tools or the step budget is spent.
+//!
+//! On top of that loop (ports credited in each module):
+//! - **Agent profiles** ([`crate::profiles`]): the task runs as `build` (or
+//!   `plan` in plan mode) or a chosen profile. Denied tools are not offered;
+//!   every call carries the profile chain's [`Floor`] to the broker, which can
+//!   only tighten the permission engine's decision. A `steps` cap ends with
+//!   one forced no-tools summary turn.
+//! - **Context compaction** ([`crate::compaction`], opencode): before a turn
+//!   whose estimated prompt reaches the ceiling, and after a provider "too
+//!   long" rejection, older history becomes a checkpoint summary.
+//! - **Subagents** ([`crate::subagent`], opencode + Hermes): the `subagent`
+//!   tool runs child executors whose calls flow out through this executor's
+//!   steps, so they hit the same broker and permission engine.
+//! - **Prompt-cache invariants** (Hermes `agent/AGENTS.md`): the system
+//!   prompt is fixed for the task (checked by hash before every request), new
+//!   content enters only as user or tool messages, no two user or assistant
+//!   messages are adjacent, and only compaction rewrites history. Every
+//!   request is checked with [`validate_transcript`] before it is sent.
 
 use crate::agent::{AgentExecutor, AgentStep, TaskSpec};
+use crate::compaction::{self, CompactionConfig, CompactionError, Reason};
 use crate::events::{Emitter, EventKind};
-use crate::llm::{ChatMessage, ChatRequest, CompletionClient, ToolCall};
+use crate::llm::{ChatMessage, ChatRequest, Completion, CompletionClient, TokenUsage, ToolCall};
+use crate::profiles::{self, AgentProfile};
+use crate::runner::Floor;
+use crate::subagent::{self, Report, SubagentLimits, SubagentTask};
 use crate::tools::{ToolRequest, ToolResult};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,17 +43,77 @@ pub const DEFAULT_STEP_BUDGET: usize = 50;
 /// Longest tool output fed back to the model.
 pub const TOOL_RESULT_LIMIT: usize = 16 * 1024;
 
+/// Context window assumed when the caller does not set one. Conservative:
+/// a larger real window only means compacting earlier than necessary, and a
+/// smaller one is still caught by the provider's "too long" rejection.
+pub const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
+
+/// Consecutive failed automatic compactions after which only a provider
+/// overflow triggers compaction (upstream stops background summaries after 2).
+pub const MAX_AUTO_COMPACTION_FAILURES: usize = 2;
+
+/// Resolves a profile's `model_role` to a client and model id (wired by the
+/// LLM gateway). `None` keeps the task's own client and model.
+pub type RoleResolver =
+    Arc<dyn Fn(&str) -> Option<(Arc<dyn CompletionClient>, String)> + Send + Sync>;
+
 enum Queued {
     Emit(EventKind),
     Call {
         call_id: String,
         request: ToolRequest,
     },
-    /// The model asked for something unparseable; answer it without a call.
+    /// The model asked for something unparseable or not allowed; answer it
+    /// without a call.
     Invalid {
         call_id: String,
         error: String,
     },
+    Subagent {
+        call_id: String,
+        tasks: Vec<SubagentTask>,
+    },
+}
+
+/// How the executor's loop ended (reported to a parent as `exit_reason`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exit {
+    Running,
+    Done,
+    MaxSteps,
+    Error,
+}
+
+impl Exit {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Running | Self::Done => "done",
+            Self::MaxSteps => "max_steps",
+            Self::Error => "error",
+        }
+    }
+}
+
+enum ChildState {
+    Ready(AgentStep),
+    Waiting { outer: String, inner: String },
+    Finished,
+}
+
+struct Child {
+    id: String,
+    agent: String,
+    schema: Option<Value>,
+    exec: Box<BuiltinExecutor>,
+    state: ChildState,
+}
+
+struct SubagentRun {
+    call_id: String,
+    children: Vec<Child>,
+    cursor: usize,
+    pending: VecDeque<EventKind>,
+    reports: Vec<Option<Report>>,
 }
 
 /// Built-in agent loop over an OpenAI-compatible router.
@@ -47,6 +129,31 @@ pub struct BuiltinExecutor {
     finished: bool,
     last_text: String,
     events: Option<Emitter>,
+    // Profiles.
+    profiles: Vec<AgentProfile>,
+    profile: Option<AgentProfile>,
+    ancestors: Vec<AgentProfile>,
+    chain: Vec<AgentProfile>,
+    role_resolver: Option<RoleResolver>,
+    // Prompt-cache invariants.
+    tools: Vec<Value>,
+    system_hash: Option<String>,
+    // Compaction.
+    compaction: CompactionConfig,
+    summary_client: Option<(Arc<dyn CompletionClient>, Option<String>)>,
+    anchor: Option<(usize, TokenUsage)>,
+    compactions: usize,
+    auto_failures: usize,
+    // Steps cap.
+    exit: Exit,
+    summarised: bool,
+    // Subagents.
+    depth: usize,
+    limits: SubagentLimits,
+    spec: Option<TaskSpec>,
+    sub_counter: usize,
+    id_prefix: String,
+    active: Option<SubagentRun>,
 }
 
 impl std::fmt::Debug for BuiltinExecutor {
@@ -54,6 +161,8 @@ impl std::fmt::Debug for BuiltinExecutor {
         f.debug_struct("BuiltinExecutor")
             .field("root", &self.root)
             .field("model", &self.model)
+            .field("profile", &self.chain.last().map(|p| p.name.as_str()))
+            .field("depth", &self.depth)
             .field("turns", &self.turns)
             .field("messages", &self.messages.len())
             .finish_non_exhaustive()
@@ -77,6 +186,29 @@ impl BuiltinExecutor {
             finished: false,
             last_text: String::new(),
             events: None,
+            profiles: profiles::builtin_profiles(),
+            profile: None,
+            ancestors: Vec::new(),
+            chain: Vec::new(),
+            role_resolver: None,
+            tools: Vec::new(),
+            system_hash: None,
+            compaction: CompactionConfig {
+                window: DEFAULT_CONTEXT_WINDOW,
+                ..CompactionConfig::default()
+            },
+            summary_client: None,
+            anchor: None,
+            compactions: 0,
+            auto_failures: 0,
+            exit: Exit::Running,
+            summarised: false,
+            depth: 0,
+            limits: SubagentLimits::default(),
+            spec: None,
+            sub_counter: 0,
+            id_prefix: String::new(),
+            active: None,
         }
     }
 
@@ -86,49 +218,280 @@ impl BuiltinExecutor {
         self
     }
 
+    /// Run as this profile instead of `build` / `plan`.
+    #[must_use]
+    pub fn with_profile(mut self, profile: AgentProfile) -> Self {
+        self.profile = Some(profile);
+        self
+    }
+
+    /// Profiles available to the `subagent` tool (default: the built-ins).
+    /// Use [`profiles::load_profiles`] to include the workspace's files.
+    #[must_use]
+    pub fn with_profiles(mut self, profiles: Vec<AgentProfile>) -> Self {
+        self.profiles = profiles;
+        self
+    }
+
+    /// The model's context window (0 = unknown: compact only on overflow).
+    #[must_use]
+    pub fn with_context_window(mut self, window: u64) -> Self {
+        self.compaction.window = window;
+        self
+    }
+
+    #[must_use]
+    pub fn with_compaction(mut self, config: CompactionConfig) -> Self {
+        self.compaction = config;
+        self
+    }
+
+    /// Client (and model; `None` = the task's) that writes compaction
+    /// summaries — the gateway's `summary` role. Default: the task's client.
+    #[must_use]
+    pub fn with_summary_client(
+        mut self,
+        client: Arc<dyn CompletionClient>,
+        model: Option<String>,
+    ) -> Self {
+        self.summary_client = Some((client, model));
+        self
+    }
+
+    /// Resolves profile `model_role`s to a client and model.
+    #[must_use]
+    pub fn with_role_resolver(mut self, resolver: RoleResolver) -> Self {
+        self.role_resolver = Some(resolver);
+        self
+    }
+
+    #[must_use]
+    pub fn with_subagent_limits(mut self, limits: SubagentLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
     /// Conversation so far (for tests and task records).
     #[must_use]
     pub fn messages(&self) -> &[ChatMessage] {
         &self.messages
     }
 
-    fn turn(&mut self) -> AgentStep {
-        if self.turns >= self.budget {
-            return AgentStep::Done {
-                summary: format!(
-                    "stopped: step budget of {} model turns reached",
-                    self.budget
-                ),
-            };
-        }
-        self.turns += 1;
-        let request = ChatRequest {
-            model: self.model.clone(),
-            messages: self.messages.clone(),
-            tools: tool_schemas(),
-        };
-        let events = self.events.clone();
-        let mut on_delta = |text: &str| {
-            if let Some(events) = &events {
-                events.emit(EventKind::MessageDelta {
-                    text: text.to_string(),
+    /// Tool schemas offered to the model for this task.
+    #[must_use]
+    pub fn offered_tools(&self) -> &[Value] {
+        &self.tools
+    }
+
+    /// The profile this executor runs as (after `start`).
+    #[must_use]
+    pub fn profile_name(&self) -> Option<&str> {
+        self.chain.last().map(|p| p.name.as_str())
+    }
+
+    /// How many compactions ran in this task.
+    #[must_use]
+    pub fn compactions(&self) -> usize {
+        self.compactions
+    }
+
+    fn own_profile(&self) -> &str {
+        self.profile_name().unwrap_or("build")
+    }
+
+    // -- requests ----------------------------------------------------------
+
+    /// Send the conversation (after the cache-invariant check), compacting
+    /// and retrying once if the provider says the prompt is too long.
+    fn request(&mut self, tools: &[Value]) -> Result<Completion, AgentStep> {
+        let mut retried = false;
+        loop {
+            if let Err(error) = self.check_invariants() {
+                self.exit = Exit::Error;
+                return Err(AgentStep::Fail {
+                    error: format!("internal error: prompt-cache invariant violated: {error}"),
                 });
             }
-        };
-        let completion = match self.client.complete(&request, &mut on_delta) {
-            Ok(completion) => completion,
-            Err(error) => {
-                return AgentStep::Fail {
-                    error: error.to_string(),
+            let request = ChatRequest {
+                model: self.model.clone(),
+                messages: self.messages.clone(),
+                tools: tools.to_vec(),
+            };
+            let events = self.events.clone();
+            let mut on_delta = |text: &str| {
+                if let Some(events) = &events {
+                    events.emit(EventKind::MessageDelta {
+                        text: text.to_string(),
+                    });
+                }
+            };
+            match self.client.complete(&request, &mut on_delta) {
+                Ok(completion) => return Ok(completion),
+                Err(error) if compaction::is_context_overflow(&error) && !retried => {
+                    retried = true;
+                    if let Err(message) = self.compact(Reason::Overflow) {
+                        self.exit = Exit::Error;
+                        return Err(AgentStep::Fail {
+                            error: format!("{error}; {message}"),
+                        });
+                    }
+                }
+                Err(error) => {
+                    self.exit = Exit::Error;
+                    return Err(AgentStep::Fail {
+                        error: error.to_string(),
+                    });
                 }
             }
-        };
+        }
+    }
 
+    fn check_invariants(&self) -> Result<(), String> {
+        let system = self
+            .messages
+            .first()
+            .and_then(|m| m.content.as_deref())
+            .unwrap_or_default();
+        if self.system_hash.as_deref() != Some(&crate::hash::sha256_hex(system.as_bytes())) {
+            return Err("the system prompt changed during the task".into());
+        }
+        validate_transcript(&self.messages)
+    }
+
+    /// Replace older history with a checkpoint. Queues a `context_compacted`
+    /// event either way (except when there is nothing to compact).
+    fn compact(&mut self, reason: Reason) -> Result<(), String> {
+        let (client, model) = match &self.summary_client {
+            Some((client, model)) => (
+                Arc::clone(client),
+                model.clone().unwrap_or_else(|| self.model.clone()),
+            ),
+            None => (Arc::clone(&self.client), self.model.clone()),
+        };
+        let outcome = compaction::compact(
+            client.as_ref(),
+            &model,
+            &self.messages,
+            &self.tools,
+            &self.compaction,
+            reason,
+        );
+        match outcome {
+            Ok(done) => {
+                self.queue
+                    .push_back(Queued::Emit(EventKind::ContextCompacted {
+                        reason: reason.as_str().into(),
+                        ok: true,
+                        tokens_before: done.tokens_before,
+                        tokens_after: done.tokens_after,
+                        kept_messages: done.kept_messages,
+                        summary_chars: done.summary.chars().count(),
+                        error: None,
+                    }));
+                self.messages = done.messages;
+                self.anchor = None;
+                self.compactions += 1;
+                Ok(())
+            }
+            Err(CompactionError::NothingToCompact) => Err("nothing to compact".into()),
+            Err(error) => {
+                self.queue
+                    .push_back(Queued::Emit(EventKind::ContextCompacted {
+                        reason: reason.as_str().into(),
+                        ok: false,
+                        tokens_before: compaction::estimate_request(&self.messages, &self.tools),
+                        tokens_after: 0,
+                        kept_messages: 0,
+                        summary_chars: 0,
+                        error: Some(error.to_string()),
+                    }));
+                Err(error.to_string())
+            }
+        }
+    }
+
+    // -- turns ------------------------------------------------------------
+
+    fn turn(&mut self) -> AgentStep {
+        if self.turns >= self.budget {
+            return self.final_summary_turn();
+        }
+        self.turns += 1;
+        let estimate = compaction::estimate_prompt(&self.messages, &self.tools, self.anchor);
+        if self.compaction.window > 0
+            && self.auto_failures < MAX_AUTO_COMPACTION_FAILURES
+            && compaction::due(estimate, self.compaction.window)
+        {
+            // Best effort: a failed automatic compaction is reported and the
+            // request still goes out (an overflow then retries once). After
+            // repeated failures only overflows trigger compaction.
+            match self.compact(Reason::Auto) {
+                Ok(()) => self.auto_failures = 0,
+                Err(_) => self.auto_failures += 1,
+            }
+        }
+        let tools = self.tools.clone();
+        let completion = match self.request(&tools) {
+            Ok(completion) => completion,
+            Err(step) => return step,
+        };
+        self.absorb(&completion);
+        self.advance()
+    }
+
+    /// The steps cap was reached: one last request without tools, asking for
+    /// a summary (injected as a user message, never into the system prompt).
+    fn final_summary_turn(&mut self) -> AgentStep {
+        if self.summarised {
+            return self.done();
+        }
+        self.summarised = true;
+        self.exit = Exit::MaxSteps;
+        compaction::push_user(
+            &mut self.messages,
+            format!(
+                "You have reached the maximum of {} model turns for this agent. Do not call tools. Reply with a concise summary of what you did, what is left, and anything blocking.",
+                self.budget
+            ),
+        );
+        let completion = match self.request(&[]) {
+            Ok(completion) => completion,
+            Err(step) => return step,
+        };
         let text = completion.content.trim().to_string();
+        // Any tool calls are dropped: none were offered.
+        self.messages.push(ChatMessage::assistant(
+            Some(if text.is_empty() {
+                "(no summary)".to_string()
+            } else {
+                completion.content.clone()
+            }),
+            Vec::new(),
+        ));
+        self.finished = true;
+        if text.is_empty() {
+            self.last_text = format!(
+                "stopped: step budget of {} model turns reached",
+                self.budget
+            );
+        } else {
+            self.queue
+                .push_back(Queued::Emit(EventKind::Message { text: text.clone() }));
+            self.last_text = text;
+        }
+        self.advance()
+    }
+
+    fn absorb(&mut self, completion: &Completion) {
+        let text = completion.content.trim().to_string();
+        let index = self.messages.len();
         self.messages.push(ChatMessage::assistant(
             (!completion.content.is_empty()).then(|| completion.content.clone()),
             completion.tool_calls.clone(),
         ));
+        if let Some(usage) = completion.usage {
+            self.anchor = Some((index, usage));
+        }
         self.finished = completion.tool_calls.is_empty();
         if !text.is_empty() {
             let kind = if self.finished && self.plan_mode {
@@ -142,22 +505,89 @@ impl BuiltinExecutor {
             self.last_text = text;
         }
         for call in &completion.tool_calls {
-            self.queue.push_back(match parse_call(call, &self.root) {
-                Ok(request) => Queued::Call {
-                    call_id: call.id.clone(),
-                    request,
-                },
-                Err(error) => Queued::Invalid {
-                    call_id: call.id.clone(),
-                    error,
-                },
-            });
+            let queued = self.classify(call);
+            self.queue.push_back(queued);
         }
-        self.advance()
+    }
+
+    fn classify(&self, call: &ToolCall) -> Queued {
+        let invalid = |error: String| Queued::Invalid {
+            call_id: call.id.clone(),
+            error,
+        };
+        if call.function.name == subagent::TOOL {
+            if !self.offers_subagent() {
+                return invalid(format!(
+                    "tool `subagent` is not available to the `{}` agent",
+                    self.own_profile()
+                ));
+            }
+            let raw = call.function.arguments.trim();
+            let args: Value = if raw.is_empty() {
+                json!({})
+            } else {
+                match serde_json::from_str(raw) {
+                    Ok(args) => args,
+                    Err(error) => return invalid(format!("arguments are not JSON: {error}")),
+                }
+            };
+            return match subagent::parse_tasks(&args, &self.limits) {
+                Ok(tasks) => Queued::Subagent {
+                    call_id: call.id.clone(),
+                    tasks,
+                },
+                Err(error) => invalid(error),
+            };
+        }
+        match parse_call(call, &self.root) {
+            Ok(request)
+                if !profiles::chain_offers(&self.chain, request.name(), request.kind())
+                    || (self.depth > 0 && subagent::BLOCKLIST.contains(&request.name())) =>
+            {
+                invalid(format!(
+                    "tool `{}` is not available to the `{}` agent",
+                    request.name(),
+                    self.own_profile()
+                ))
+            }
+            Ok(request) => Queued::Call {
+                call_id: call.id.clone(),
+                request,
+            },
+            Err(error) => invalid(error),
+        }
+    }
+
+    /// Spawning is allowed below the depth limit and only when no profile in
+    /// the chain restricts the tool (`ask` fails closed: there is no broker
+    /// call to put the prompt on; every child call is still gated).
+    fn offers_subagent(&self) -> bool {
+        self.depth < self.limits.max_depth
+            && self.chain.iter().all(|p| {
+                p.permission(subagent::TOOL, subagent::TOOL) == profiles::Permission::Allow
+            })
+    }
+
+    fn done(&self) -> AgentStep {
+        let summary = if self.last_text.is_empty() {
+            "done".to_string()
+        } else {
+            crate::runner::truncate(&self.last_text, 500)
+        };
+        AgentStep::Done { summary }
     }
 
     fn advance(&mut self) -> AgentStep {
-        while let Some(item) = self.queue.pop_front() {
+        loop {
+            if self.active.is_some() {
+                if let Some(step) = self.drive_subagents() {
+                    return step;
+                }
+                continue;
+            }
+            let Some(item) = self.queue.pop_front() else {
+                break;
+            };
             match item {
                 Queued::Emit(kind) => return AgentStep::Emit(kind),
                 Queued::Call { call_id, request } => return AgentStep::Call { call_id, request },
@@ -165,17 +595,218 @@ impl BuiltinExecutor {
                     self.messages
                         .push(ChatMessage::tool(call_id, format!("error: {error}")));
                 }
+                Queued::Subagent { call_id, tasks } => self.spawn(call_id, &tasks),
             }
         }
         if self.finished {
-            let summary = if self.last_text.is_empty() {
-                "done".to_string()
-            } else {
-                crate::runner::truncate(&self.last_text, 500)
-            };
-            return AgentStep::Done { summary };
+            if self.exit == Exit::Running {
+                self.exit = Exit::Done;
+            }
+            return self.done();
         }
         self.turn()
+    }
+
+    // -- subagents ----------------------------------------------------------
+
+    fn spawn(&mut self, call_id: String, tasks: &[SubagentTask]) {
+        let mut chosen = Vec::new();
+        for task in tasks {
+            match profiles::find(&self.profiles, &task.agent) {
+                Some(profile) if profile.mode.subagent() => chosen.push(profile.clone()),
+                _ => {
+                    let available: Vec<&str> = self
+                        .profiles
+                        .iter()
+                        .filter(|p| p.mode.subagent())
+                        .map(|p| p.name.as_str())
+                        .collect();
+                    self.messages.push(ChatMessage::tool(
+                        call_id,
+                        format!(
+                            "error: unknown subagent `{}`; available: {}",
+                            task.agent,
+                            available.join(", ")
+                        ),
+                    ));
+                    return;
+                }
+            }
+        }
+        let Some(parent_spec) = self.spec.clone() else {
+            self.messages
+                .push(ChatMessage::tool(call_id, "error: task not started"));
+            return;
+        };
+        let mut run = SubagentRun {
+            call_id: call_id.clone(),
+            children: Vec::new(),
+            cursor: 0,
+            pending: VecDeque::new(),
+            reports: Vec::new(),
+        };
+        for (task, profile) in tasks.iter().zip(chosen) {
+            self.sub_counter += 1;
+            let id = format!("{}sub{}", self.id_prefix, self.sub_counter);
+            let mut exec = Box::new(self.child_executor(&profile, &id));
+            let spec = TaskSpec {
+                id: parent_spec.id.clone(),
+                prompt: subagent::child_prompt(task),
+                mode: parent_spec.mode,
+                model: self.model.clone(),
+            };
+            run.pending.push_back(EventKind::SubagentStarted {
+                subagent_id: id.clone(),
+                parent_call_id: call_id.clone(),
+                profile: profile.name.clone(),
+                goal: crate::runner::truncate(&task.goal, 500),
+                depth: self.depth + 1,
+            });
+            let first = exec.start(&spec);
+            run.children.push(Child {
+                id,
+                agent: profile.name.clone(),
+                schema: task.output_schema.clone(),
+                exec,
+                state: ChildState::Ready(first),
+            });
+            run.reports.push(None);
+        }
+        self.active = Some(run);
+    }
+
+    fn child_executor(&self, profile: &AgentProfile, id: &str) -> BuiltinExecutor {
+        let mut child = BuiltinExecutor::new(Arc::clone(&self.client), self.root.clone());
+        child.profiles.clone_from(&self.profiles);
+        child.profile = Some(profile.clone());
+        child.ancestors.clone_from(&self.chain);
+        child.role_resolver.clone_from(&self.role_resolver);
+        child.compaction = self.compaction;
+        child.summary_client.clone_from(&self.summary_client);
+        child.depth = self.depth + 1;
+        child.limits = self.limits;
+        child.budget = profile.steps.unwrap_or(self.limits.default_steps).max(1);
+        child.id_prefix = format!("{id}.");
+        child
+    }
+
+    /// Advance the running subagents by one step (round-robin). `None` once
+    /// every child has finished and the reports were handed to the model.
+    fn drive_subagents(&mut self) -> Option<AgentStep> {
+        let limits = self.limits;
+        let run = self.active.as_mut()?;
+        if let Some(kind) = run.pending.pop_front() {
+            return Some(AgentStep::Emit(kind));
+        }
+        let count = run.children.len();
+        for offset in 0..count {
+            let index = (run.cursor + offset) % count;
+            let child = &mut run.children[index];
+            if !matches!(child.state, ChildState::Ready(_)) {
+                continue;
+            }
+            let ChildState::Ready(step) = std::mem::replace(&mut child.state, ChildState::Finished)
+            else {
+                continue;
+            };
+            run.cursor = (index + 1) % count;
+            match step {
+                AgentStep::Emit(kind) => {
+                    child.state = ChildState::Ready(child.exec.next(None));
+                    return Some(AgentStep::Emit(relabel(&child.id, kind)));
+                }
+                AgentStep::Call { call_id, request } => {
+                    let outer = format!("{}.{call_id}", child.id);
+                    child.state = ChildState::Waiting {
+                        outer: outer.clone(),
+                        inner: call_id,
+                    };
+                    return Some(AgentStep::Call {
+                        call_id: outer,
+                        request,
+                    });
+                }
+                AgentStep::Done { .. } | AgentStep::Fail { .. } => {
+                    let (exit, text) = match step {
+                        AgentStep::Fail { error } => ("error", error),
+                        _ => (child.exec.exit.as_str(), child.exec.last_text.clone()),
+                    };
+                    let report = Report::new(
+                        &child.id,
+                        &child.agent,
+                        exit,
+                        &text,
+                        child.schema.as_ref(),
+                        &limits,
+                        child.exec.turns,
+                    );
+                    let event = EventKind::SubagentFinished {
+                        subagent_id: child.id.clone(),
+                        status: report.status.into(),
+                        exit_reason: report.exit_reason.into(),
+                        truncated: report.truncated,
+                        schema_valid: report.schema_valid,
+                        steps: report.steps,
+                    };
+                    run.reports[index] = Some(report);
+                    return Some(AgentStep::Emit(event));
+                }
+            }
+        }
+        if run
+            .children
+            .iter()
+            .any(|child| matches!(child.state, ChildState::Waiting { .. }))
+        {
+            // Only reachable if the runner skipped a result; fail safe.
+            self.exit = Exit::Error;
+            self.active = None;
+            return Some(AgentStep::Fail {
+                error: "internal error: a subagent is waiting for a tool result".into(),
+            });
+        }
+        let run = self.active.take()?;
+        let reports: Vec<Report> = run.reports.into_iter().flatten().collect();
+        self.messages.push(ChatMessage::tool(
+            run.call_id,
+            subagent::result_json(&reports),
+        ));
+        None
+    }
+
+    fn child_waiting(&self, call_id: &str) -> Option<(&Child, &str)> {
+        self.active
+            .as_ref()?
+            .children
+            .iter()
+            .find_map(|child| match &child.state {
+                ChildState::Waiting { outer, inner } if outer == call_id => {
+                    Some((child, inner.as_str()))
+                }
+                _ => None,
+            })
+    }
+}
+
+/// Child events appear in the parent's timeline, labelled with the child.
+fn relabel(id: &str, kind: EventKind) -> EventKind {
+    match kind {
+        EventKind::Message { text } => EventKind::Message {
+            text: format!("[{id}] {text}"),
+        },
+        EventKind::PlanProposed { markdown } => EventKind::Message {
+            text: format!("[{id}] {markdown}"),
+        },
+        other => other,
+    }
+}
+
+/// Deny beats ask beats nothing.
+fn strictest(a: Option<Floor>, b: Option<Floor>) -> Option<Floor> {
+    match (a, b) {
+        (Some(Floor::Deny(r)), _) | (_, Some(Floor::Deny(r))) => Some(Floor::Deny(r)),
+        (Some(Floor::Ask(r)), _) | (_, Some(Floor::Ask(r))) => Some(Floor::Ask(r)),
+        _ => None,
     }
 }
 
@@ -189,21 +820,77 @@ impl AgentExecutor for BuiltinExecutor {
     }
 
     fn start(&mut self, spec: &TaskSpec) -> AgentStep {
+        let default = if spec.mode == "plan" { "plan" } else { "build" };
+        let profile = self
+            .profile
+            .clone()
+            .or_else(|| profiles::find(&self.profiles, default).cloned())
+            .or_else(|| profiles::find(&profiles::builtin_profiles(), default).cloned())
+            .unwrap_or_else(|| profiles::builtin_profiles().remove(0));
+        self.chain = self.ancestors.clone();
+        self.chain.push(profile.clone());
+        if let Some(steps) = profile.steps {
+            self.budget = self.budget.min(steps.max(1));
+        }
         self.model.clone_from(&spec.model);
-        self.plan_mode = spec.mode == "plan";
+        if let Some(model) = &profile.model {
+            self.model.clone_from(model);
+        } else if let (Some(role), Some(resolver)) = (&profile.model_role, &self.role_resolver) {
+            if let Some((client, model)) = resolver(role) {
+                self.client = client;
+                self.model = model;
+            }
+        }
+        self.plan_mode = spec.mode == "plan" || profile.name == "plan";
+        self.spec = Some(spec.clone());
         self.queue.clear();
+        self.active = None;
         self.turns = 0;
         self.finished = false;
+        self.summarised = false;
+        self.exit = Exit::Running;
+        self.anchor = None;
         self.last_text.clear();
+        self.tools = tool_schemas_for(
+            &self.chain,
+            self.offers_subagent(),
+            &self.profiles,
+            &self.limits,
+        );
+        let system = system_prompt(spec.mode, &self.root, &profile, self.depth);
+        self.system_hash = Some(crate::hash::sha256_hex(system.as_bytes()));
         self.messages = vec![
-            ChatMessage::system(system_prompt(spec.mode, &self.root)),
+            ChatMessage::system(system),
             ChatMessage::user(spec.prompt.clone()),
         ];
         self.turn()
     }
 
+    fn floor(&self, call_id: &str, request: &ToolRequest) -> Option<Floor> {
+        let own = profiles::floor_for(&self.chain, request);
+        match self.child_waiting(call_id) {
+            Some((child, inner)) => strictest(own, child.exec.floor(inner, request)),
+            None => own,
+        }
+    }
+
     fn next(&mut self, result: Option<&ToolResult>) -> AgentStep {
         if let Some(result) = result {
+            if let Some(run) = self.active.as_mut() {
+                let target = run.children.iter_mut().find(|child| {
+                    matches!(&child.state, ChildState::Waiting { outer, .. } if *outer == result.call_id)
+                });
+                if let Some(child) = target {
+                    if let ChildState::Waiting { inner, .. } =
+                        std::mem::replace(&mut child.state, ChildState::Finished)
+                    {
+                        let mut forwarded = result.clone();
+                        forwarded.call_id = inner;
+                        child.state = ChildState::Ready(child.exec.next(Some(&forwarded)));
+                    }
+                    return self.advance();
+                }
+            }
             let mut content = crate::runner::truncate(&result.output, TOOL_RESULT_LIMIT);
             if !result.ok {
                 content = format!("error: {content}");
@@ -215,24 +902,94 @@ impl AgentExecutor for BuiltinExecutor {
     }
 }
 
-fn system_prompt(mode: &str, root: &Path) -> String {
+/// Check a request transcript against the prompt-cache invariants:
+/// exactly one system message, first; the first message after it is a user
+/// message; no two adjacent user or assistant messages; every tool message
+/// answers a pending call of the latest assistant message, once; and every
+/// call is answered before the next user or assistant message.
+///
+/// # Errors
+/// The first violation found.
+pub fn validate_transcript(messages: &[ChatMessage]) -> Result<(), String> {
+    let Some(first) = messages.first() else {
+        return Err("empty transcript".into());
+    };
+    if first.role != "system" {
+        return Err("the first message must be the system prompt".into());
+    }
+    if messages.get(1).is_some_and(|m| m.role != "user") {
+        return Err("the first message after the system prompt must be a user message".into());
+    }
+    let mut pending: HashSet<&str> = HashSet::new();
+    for (index, message) in messages.iter().enumerate().skip(1) {
+        let previous = &messages[index - 1];
+        match message.role.as_str() {
+            "system" => return Err(format!("message {index}: a second system message")),
+            "user" | "assistant" => {
+                if previous.role == message.role {
+                    return Err(format!(
+                        "message {index}: two {} messages in a row",
+                        message.role
+                    ));
+                }
+                if !pending.is_empty() {
+                    return Err(format!(
+                        "message {index}: {} message before every tool call was answered",
+                        message.role
+                    ));
+                }
+                if message.role == "assistant" {
+                    pending = message.tool_calls.iter().map(|c| c.id.as_str()).collect();
+                }
+            }
+            "tool" => {
+                let id = message.tool_call_id.as_deref().unwrap_or_default();
+                if !pending.remove(id) {
+                    return Err(format!(
+                        "message {index}: tool result `{id}` answers no pending call"
+                    ));
+                }
+            }
+            other => return Err(format!("message {index}: unknown role `{other}`")),
+        }
+    }
+    if !pending.is_empty() {
+        return Err("the last assistant message has unanswered tool calls".into());
+    }
+    Ok(())
+}
+
+fn system_prompt(mode: &str, root: &Path, profile: &AgentProfile, depth: usize) -> String {
     let mode_text = match mode {
         "plan" => "PLAN mode: investigate with read-only tools only (read_file, list_dir, search). Do not write files or run mutating commands. Finish with a Markdown plan.",
         "auto" => "AUTO mode: you may edit files and run development commands; changes happen in an isolated git worktree the user reviews before merging.",
         "bypassPermissions" => "BYPASS mode: permission prompts are disabled; be careful and conservative.",
         _ => "MANUAL mode: mutating actions (writes, patches, commands) need the user's approval and may be denied; if denied, adapt instead of retrying.",
     };
-    format!(
+    let mut prompt = format!(
         "You are Next Agent, a coding agent working in the workspace at {root}.\n\
          {mode_text}\n\
          Use the provided tools for every file or system interaction. Paths may be \
-         relative to the workspace root. Keep answers concise; when done, reply \
-         without tool calls and summarize what you did.",
-        root = root.display()
-    )
+         relative to the workspace root. Prefer `edit` for small changes to existing \
+         files. Keep answers concise; when done, reply without tool calls and \
+         summarize what you did.\n\
+         Agent profile: {name}.",
+        root = root.display(),
+        name = profile.name,
+    );
+    if !profile.prompt.trim().is_empty() {
+        prompt.push_str("\n\n");
+        prompt.push_str(profile.prompt.trim());
+    }
+    if depth > 0 {
+        prompt.push_str(
+            "\n\nYou are a subagent working for another agent. You have only the context in the task message. Your final message (without tool calls) is returned to that agent as your report.",
+        );
+    }
+    prompt
 }
 
-/// `OpenAI` function schemas for the M1 tool set.
+/// `OpenAI` function schemas for the full tool set (no `subagent`).
 #[must_use]
 pub fn tool_schemas() -> Vec<Value> {
     let tool = |name: &str, description: &str, properties: Value, required: &[&str]| {
@@ -277,8 +1034,19 @@ pub fn tool_schemas() -> Vec<Value> {
             &["path", "contents"],
         ),
         tool(
+            "edit",
+            "Replace exact text in a file. old_string must match once (add context to disambiguate) unless replace_all is true. Write line breaks as \\n; the file's CRLF/LF endings and BOM are preserved. If there is no exact match, typographic quotes/dashes/spaces and then trailing whitespace are tolerated.",
+            json!({
+                "path": path,
+                "old_string": {"type": "string", "description": "Exact text to replace (no line-number prefixes)"},
+                "new_string": {"type": "string", "description": "Replacement text (must differ)"},
+                "replace_all": {"type": "boolean", "description": "Replace every occurrence (default false)"}
+            }),
+            &["path", "old_string", "new_string"],
+        ),
+        tool(
             "apply_patch",
-            "Apply a unified diff (---/+++ headers and @@ hunks) to one file.",
+            "Apply a unified diff (---/+++ headers and @@ hunks) to one file. Hunks whose context moved or differs in whitespace or quotes are located automatically.",
             json!({"path": path, "patch": {"type": "string"}}),
             &["path", "patch"],
         ),
@@ -295,6 +1063,28 @@ pub fn tool_schemas() -> Vec<Value> {
             &["url"],
         ),
     ]
+}
+
+/// Schemas offered under a profile chain: tools any profile denies are
+/// dropped, and `subagent` is added when spawning is allowed.
+#[must_use]
+pub fn tool_schemas_for(
+    chain: &[AgentProfile],
+    offer_subagent: bool,
+    profiles: &[AgentProfile],
+    limits: &SubagentLimits,
+) -> Vec<Value> {
+    let mut tools: Vec<Value> = tool_schemas()
+        .into_iter()
+        .filter(|tool| {
+            let name = tool["function"]["name"].as_str().unwrap_or_default();
+            profiles::chain_offers(chain, name, profiles::policy_kind(name))
+        })
+        .collect();
+    if offer_subagent && profiles.iter().any(|p| p.mode.subagent()) {
+        tools.push(subagent::tool_schema(profiles, limits));
+    }
+    tools
 }
 
 /// Turn a model tool call into a broker request, resolving relative paths.
@@ -336,6 +1126,15 @@ pub fn parse_call(call: &ToolCall, root: &Path) -> Result<ToolRequest, String> {
             path: path("path")?,
             contents: text("contents")?,
         },
+        "edit" => ToolRequest::Edit {
+            path: path("path")?,
+            old_string: text("old_string")?,
+            new_string: text("new_string")?,
+            replace_all: args
+                .get("replace_all")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        },
         "apply_patch" => ToolRequest::ApplyPatch {
             path: path("path")?,
             patch: text("patch")?,
@@ -359,223 +1158,5 @@ fn resolve(root: &Path, value: &str) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::llm::{Completion, FunctionCall, LlmError};
-    use std::sync::Mutex;
-
-    fn call(id: &str, name: &str, args: &str) -> ToolCall {
-        ToolCall {
-            id: id.into(),
-            kind: "function".into(),
-            function: FunctionCall {
-                name: name.into(),
-                arguments: args.into(),
-            },
-        }
-    }
-
-    /// Replays completions and records the requests it saw.
-    struct Scripted {
-        replies: Mutex<VecDeque<Result<Completion, LlmError>>>,
-        seen: Mutex<Vec<ChatRequest>>,
-    }
-
-    impl Scripted {
-        fn new(replies: Vec<Result<Completion, LlmError>>) -> Arc<Self> {
-            Arc::new(Self {
-                replies: Mutex::new(replies.into()),
-                seen: Mutex::new(Vec::new()),
-            })
-        }
-    }
-
-    impl CompletionClient for Scripted {
-        fn complete(
-            &self,
-            request: &ChatRequest,
-            on_delta: &mut dyn FnMut(&str),
-        ) -> Result<Completion, LlmError> {
-            self.seen.lock().expect("lock").push(request.clone());
-            let reply = self
-                .replies
-                .lock()
-                .expect("lock")
-                .pop_front()
-                .unwrap_or_else(|| Ok(Completion::default()));
-            if let Ok(completion) = &reply {
-                on_delta(&completion.content);
-            }
-            reply
-        }
-    }
-
-    fn spec(mode: &'static str) -> TaskSpec {
-        TaskSpec {
-            id: crate::task::TaskId::from_seed("builtin"),
-            prompt: "list files".into(),
-            mode,
-            model: "test-model".into(),
-        }
-    }
-
-    #[allow(clippy::unnecessary_wraps)]
-    fn text(content: &str) -> Result<Completion, LlmError> {
-        Ok(Completion {
-            content: content.into(),
-            ..Completion::default()
-        })
-    }
-
-    #[test]
-    fn tool_call_round_trip_then_done() {
-        let client = Scripted::new(vec![
-            Ok(Completion {
-                content: String::new(),
-                tool_calls: vec![call("c1", "list_dir", "{\"path\":\"src\"}")],
-                finish_reason: Some("tool_calls".into()),
-            }),
-            text("Two files."),
-        ]);
-        let mut executor = BuiltinExecutor::new(client.clone(), "/w");
-        assert_eq!(
-            executor.start(&spec("auto")),
-            AgentStep::Call {
-                call_id: "c1".into(),
-                request: ToolRequest::ListDir {
-                    path: "/w/src".into()
-                }
-            }
-        );
-        let step = executor.next(Some(&ToolResult::ok("c1", "a.rs\nb.rs")));
-        assert_eq!(
-            step,
-            AgentStep::Emit(EventKind::Message {
-                text: "Two files.".into()
-            })
-        );
-        assert_eq!(
-            executor.next(None),
-            AgentStep::Done {
-                summary: "Two files.".into()
-            }
-        );
-        let seen = client.seen.lock().expect("lock");
-        assert_eq!(seen.len(), 2);
-        assert_eq!(seen[0].model, "test-model");
-        assert_eq!(seen[0].tools.len(), 7);
-        let last = seen[1].messages.last().expect("tool message");
-        assert_eq!(last.role, "tool");
-        assert_eq!(last.tool_call_id.as_deref(), Some("c1"));
-    }
-
-    #[test]
-    fn router_errors_fail_the_task() {
-        let client = Scripted::new(vec![Err(LlmError::Unauthorized)]);
-        let mut executor = BuiltinExecutor::new(client, "/w");
-        assert!(matches!(
-            executor.start(&spec("manual")),
-            AgentStep::Fail { error } if error.contains("401")
-        ));
-    }
-
-    #[test]
-    fn invalid_calls_are_answered_without_reaching_the_broker() {
-        let client = Scripted::new(vec![
-            Ok(Completion {
-                tool_calls: vec![call("bad", "rm_rf", "{}")],
-                ..Completion::default()
-            }),
-            text("ok"),
-        ]);
-        let mut executor = BuiltinExecutor::new(client.clone(), "/w");
-        assert_eq!(
-            executor.start(&spec("auto")),
-            AgentStep::Emit(EventKind::Message { text: "ok".into() })
-        );
-        let seen = client.seen.lock().expect("lock");
-        let answer = seen[1].messages.last().expect("tool message");
-        assert!(answer
-            .content
-            .as_deref()
-            .is_some_and(|c| c.contains("unknown tool")));
-    }
-
-    #[test]
-    fn budget_stops_runaway_loops() {
-        let looping: Vec<_> = (0..5)
-            .map(|i| {
-                Ok(Completion {
-                    tool_calls: vec![call(&format!("c{i}"), "read_file", "{\"path\":\"a\"}")],
-                    ..Completion::default()
-                })
-            })
-            .collect();
-        let mut executor = BuiltinExecutor::new(Scripted::new(looping), "/w").with_step_budget(2);
-        assert!(matches!(
-            executor.start(&spec("auto")),
-            AgentStep::Call { .. }
-        ));
-        assert!(matches!(
-            executor.next(Some(&ToolResult::ok("c0", "x"))),
-            AgentStep::Call { .. }
-        ));
-        assert!(matches!(
-            executor.next(Some(&ToolResult::ok("c1", "x"))),
-            AgentStep::Done { summary } if summary.contains("budget")
-        ));
-    }
-
-    #[test]
-    fn plan_mode_final_answer_is_a_plan() {
-        let mut executor = BuiltinExecutor::new(Scripted::new(vec![text("# Plan\n1. x")]), "/w");
-        assert_eq!(
-            executor.start(&spec("plan")),
-            AgentStep::Emit(EventKind::PlanProposed {
-                markdown: "# Plan\n1. x".into()
-            })
-        );
-        assert!(executor.messages()[0]
-            .content
-            .as_deref()
-            .is_some_and(|prompt| prompt.contains("PLAN mode")));
-    }
-
-    #[test]
-    fn parse_call_covers_every_tool() {
-        let root = Path::new("/w");
-        let cases = [
-            (call("1", "read_file", r#"{"path":"a.rs"}"#), "read_file"),
-            (call("2", "list_dir", ""), "list_dir"),
-            (call("3", "search", r#"{"pattern":"x"}"#), "search"),
-            (
-                call("4", "write_file", r#"{"path":"/abs","contents":"c"}"#),
-                "write_file",
-            ),
-            (
-                call("5", "apply_patch", r#"{"path":"a","patch":"p"}"#),
-                "apply_patch",
-            ),
-            (
-                call("6", "run_command", r#"{"command":"ls"}"#),
-                "run_command",
-            ),
-            (
-                call("7", "http_fetch", r#"{"url":"https://x"}"#),
-                "http_fetch",
-            ),
-        ];
-        for (tool_call, name) in cases {
-            let request = parse_call(&tool_call, root).expect(name);
-            assert_eq!(request.name(), name);
-        }
-        assert_eq!(
-            parse_call(&call("1", "read_file", r#"{"path":"a.rs"}"#), root),
-            Ok(ToolRequest::Read {
-                path: "/w/a.rs".into()
-            })
-        );
-        assert!(parse_call(&call("1", "read_file", "{}"), root).is_err());
-        assert!(parse_call(&call("1", "read_file", "{nope"), root).is_err());
-    }
-}
+#[path = "builtin_tests.rs"]
+mod builtin_tests;

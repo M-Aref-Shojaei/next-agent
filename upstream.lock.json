@@ -28,7 +28,8 @@
       "risk": "medium"
     },
     "opencode": {
-      "pin": "dev branch (pin exact commit when porting)",
+      "pin": "dev @ cbe71595e1f370ff91b3081872b96bbe56519c41 (studied; ported, not bundled)",
+      "ported": "session/compaction.ts, tool/plugin/edit.ts, snapshot.ts, agent.ts, tool/plugin/subagent.ts -> compaction.rs, edit_match.rs, worktree.rs (ShadowRepo) + snapshot.rs, profiles.rs, subagent.rs",
       "licence": "MIT",
       "adapter": "crates/core/src",
       "checked": "2026-11-14",
@@ -36,12 +37,12 @@
       "role": "agent engine"
     },
     "hermes-agent": {
-      "pin": "main (pin exact commit when porting)",
+      "pin": "main (pin exact commit when porting); agent-engine design refs @ a9ee443d58714a73805bd0e4551091543aa479c6",
       "licence": "MIT",
       "adapter": "crates/core/src",
       "checked": "2026-11-14",
       "risk": "medium",
-      "role": "memory, skills, cron"
+      "role": "memory, skills, cron; prompt-cache rules and delegate design (subagent.rs, builtin.rs)"
     },
     "openclaw": {
       "pin": "2026.11.3 (pin exact commit when porting)",

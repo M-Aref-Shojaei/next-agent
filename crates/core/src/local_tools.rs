@@ -9,6 +9,7 @@
 //! router adapter (`crate::router`), per the module boundary rules.
 
 use crate::broker::ToolExecutor;
+use crate::edit_match;
 use crate::events::{Emitter, EventKind};
 use crate::runner::RunContext;
 use crate::task::TaskId;
@@ -230,37 +231,71 @@ impl LocalTools {
     }
 
     fn apply_patch(call_id: &str, path: &Path, diff: &str) -> ToolResult {
-        let base = match fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(error) => return io_error(call_id, path, &error),
+        let original = match read_text(path) {
+            Ok(text) => text.unwrap_or_default(),
+            Err(result) => return result.for_call(call_id),
         };
-        let parsed = match diffy::Patch::from_str(diff) {
-            Ok(parsed) => parsed,
-            Err(error) => return ToolResult::error(call_id, format!("invalid patch: {error}")),
-        };
-        if parsed.hunks().is_empty() {
-            return ToolResult::error(call_id, "invalid patch: no @@ hunks found");
-        }
-        let patched = match diffy::apply(&base, &parsed) {
-            Ok(text) => text,
+        let (bom, base) = edit_match::split_bom(&original);
+        let patched = match edit_match::apply_unified_patch(base, diff) {
+            Ok(patched) => patched,
             Err(error) => {
-                return ToolResult::error(
-                    call_id,
-                    format!("patch does not apply to {}: {error}", path.display()),
-                )
+                let message = if error.starts_with("invalid patch") {
+                    error
+                } else {
+                    format!("patch does not apply to {}: {error}", path.display())
+                };
+                return ToolResult::error(call_id, message);
             }
         };
-        match write_atomic(path, &patched) {
+        match write_atomic(path, &edit_match::join_bom(bom, &patched.text)) {
             Ok(()) => ToolResult::ok(
                 call_id,
                 format!(
-                    "patched {} ({} hunk(s))",
+                    "patched {} ({} hunk(s){})",
                     path.display(),
-                    parsed.hunks().len()
+                    patched.hunks,
+                    if patched.fuzzy { ", fuzzy match" } else { "" }
                 ),
             ),
             Err(error) => io_error(call_id, path, &error),
+        }
+    }
+
+    fn edit(
+        call_id: &str,
+        path: &Path,
+        old_string: &str,
+        new_string: &str,
+        replace_all: bool,
+    ) -> ToolResult {
+        let original = match read_text(path) {
+            Ok(Some(text)) => text,
+            Ok(None) => {
+                return ToolResult::error(
+                    call_id,
+                    format!(
+                        "file not found: {}. Use write_file to create it.",
+                        path.display()
+                    ),
+                )
+            }
+            Err(result) => return result.for_call(call_id),
+        };
+        let (bom, source) = edit_match::split_bom(&original);
+        match edit_match::apply_edit(source, old_string, new_string, replace_all) {
+            Ok(edited) => match write_atomic(path, &edit_match::join_bom(bom, &edited.text)) {
+                Ok(()) => ToolResult::ok(
+                    call_id,
+                    format!(
+                        "edited {} ({} replacement{})",
+                        path.display(),
+                        edited.replacements,
+                        if edited.replacements == 1 { "" } else { "s" }
+                    ),
+                ),
+                Err(error) => io_error(call_id, path, &error),
+            },
+            Err(error) => ToolResult::error(call_id, format!("{}: {error}", path.display())),
         }
     }
 
@@ -420,6 +455,12 @@ impl ToolExecutor for LocalTools {
             ToolRequest::Search { pattern, path } => self.search(ctx, call_id, pattern, path),
             ToolRequest::Write { path, contents } => Self::write_file(call_id, path, contents),
             ToolRequest::ApplyPatch { path, patch } => Self::apply_patch(call_id, path, patch),
+            ToolRequest::Edit {
+                path,
+                old_string,
+                new_string,
+                replace_all,
+            } => Self::edit(call_id, path, old_string, new_string, *replace_all),
             ToolRequest::Exec { command, cwd } => self.run_command(ctx, call_id, command, cwd),
             ToolRequest::Network { url } => self.http_fetch(call_id, url),
             ToolRequest::AskUser { .. } => ToolResult::error(
@@ -427,6 +468,28 @@ impl ToolExecutor for LocalTools {
                 "ask_user is not available in M1; ask in your final message instead",
             ),
         }
+    }
+}
+
+/// Read a UTF-8 file for editing: `Ok(None)` when it does not exist.
+fn read_text(path: &Path) -> Result<Option<String>, ToolResult> {
+    match fs::read(path) {
+        Ok(bytes) => String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| ToolResult::error("", format!("{} is not UTF-8 text", path.display()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(io_error("", path, &error)),
+    }
+}
+
+trait ForCall {
+    fn for_call(self, call_id: &str) -> ToolResult;
+}
+
+impl ForCall for ToolResult {
+    fn for_call(mut self, call_id: &str) -> ToolResult {
+        call_id.clone_into(&mut self.call_id);
+        self
     }
 }
 
@@ -612,6 +675,54 @@ mod tests {
         );
         assert_eq!(result.output.lines().count(), 4);
         assert!(result.output.ends_with("stopped after 3 matches"));
+    }
+
+    #[test]
+    fn edit_preserves_bom_and_crlf_on_disk() {
+        let dir = temp_dir("edit");
+        let file = dir.join("a.txt");
+        fs::write(&file, "\u{feff}one\r\ntwo\r\n").expect("write");
+        let edit = |old: &str, new: &str, all: bool| {
+            run(&ToolRequest::Edit {
+                path: file.clone(),
+                old_string: old.into(),
+                new_string: new.into(),
+                replace_all: all,
+            })
+        };
+        let result = edit("two\n", "TWO\nthree\n", false);
+        assert!(result.ok, "{}", result.output);
+        assert_eq!(
+            fs::read_to_string(&file).expect("read"),
+            "\u{feff}one\r\nTWO\r\nthree\r\n"
+        );
+        let miss = edit("nope", "x", false);
+        assert!(!miss.ok);
+        assert!(miss.output.contains("Could not find old_string"));
+        assert_eq!(miss.call_id, "c1");
+        let missing = run(&ToolRequest::Edit {
+            path: dir.join("missing.txt"),
+            old_string: "a".into(),
+            new_string: "b".into(),
+            replace_all: false,
+        });
+        assert!(missing.output.contains("file not found"));
+    }
+
+    #[test]
+    fn apply_patch_keeps_bom_and_crlf() {
+        let dir = temp_dir("patch-crlf");
+        let file = dir.join("a.txt");
+        fs::write(&file, "\u{feff}one\r\ntwo\r\n").expect("write");
+        let result = run(&ToolRequest::ApplyPatch {
+            path: file.clone(),
+            patch: "@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n".into(),
+        });
+        assert!(result.ok, "{}", result.output);
+        assert_eq!(
+            fs::read_to_string(&file).expect("read"),
+            "\u{feff}one\r\nTWO\r\n"
+        );
     }
 
     #[test]

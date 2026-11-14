@@ -104,6 +104,21 @@ pub const MIGRATIONS: &[&str] = &[
     "CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
         BEFORE DELETE ON audit_log
         BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END",
+    // --- agent-engine ---
+    // Shadow-git snapshots taken before each mutating step (per-step undo).
+    "CREATE TABLE IF NOT EXISTS agent_step_snapshots (
+        task_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        call_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        work_tree TEXT NOT NULL,
+        git_dir TEXT NOT NULL,
+        tree TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        undone_at TEXT,
+        PRIMARY KEY (task_id, seq)
+    )",
+    // --- end agent-engine ---
 ];
 
 /// Handle to the metadata database.
@@ -814,3 +829,116 @@ pub struct AuditVerification {
     /// `seq` of the first inconsistent row, when `ok` is false.
     pub broken_at: Option<i64>,
 }
+
+// --- agent-engine ---
+
+/// One row of `agent_step_snapshots`: the work tree as it was right before a
+/// mutating tool call ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepSnapshotRow {
+    pub task_id: String,
+    pub seq: i64,
+    pub call_id: String,
+    pub tool: String,
+    pub work_tree: String,
+    pub git_dir: String,
+    pub tree: String,
+    pub created_at: String,
+    pub undone_at: Option<String>,
+}
+
+impl Store {
+    /// Record a snapshot taken before `call_id` ran. Returns its sequence.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the insert fails.
+    pub fn insert_step_snapshot(
+        &self,
+        task_id: &str,
+        call_id: &str,
+        tool: &str,
+        work_tree: &str,
+        git_dir: &str,
+        tree: &str,
+    ) -> Result<i64, StoreError> {
+        let seq: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM agent_step_snapshots WHERE task_id = ?1",
+            rusqlite::params![task_id],
+            |row| row.get(0),
+        )?;
+        self.conn.execute(
+            "INSERT INTO agent_step_snapshots (task_id, seq, call_id, tool, work_tree, git_dir, tree)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![task_id, seq, call_id, tool, work_tree, git_dir, tree],
+        )?;
+        Ok(seq)
+    }
+
+    /// A task's snapshots, oldest first.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn step_snapshots(&self, task_id: &str) -> Result<Vec<StepSnapshotRow>, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT task_id, seq, call_id, tool, work_tree, git_dir, tree, created_at, undone_at
+             FROM agent_step_snapshots WHERE task_id = ?1 ORDER BY seq ASC",
+        )?;
+        let rows = statement.query_map(rusqlite::params![task_id], |row| {
+            Ok(StepSnapshotRow {
+                task_id: row.get(0)?,
+                seq: row.get(1)?,
+                call_id: row.get(2)?,
+                tool: row.get(3)?,
+                work_tree: row.get(4)?,
+                git_dir: row.get(5)?,
+                tree: row.get(6)?,
+                created_at: row.get(7)?,
+                undone_at: row.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Mark a snapshot as undone (restored). Returns false if it was already.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the update fails.
+    pub fn mark_step_undone(&self, task_id: &str, seq: i64) -> Result<bool, StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE agent_step_snapshots SET undone_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE task_id = ?1 AND seq = ?2 AND undone_at IS NULL",
+            rusqlite::params![task_id, seq],
+        )?;
+        Ok(changed > 0)
+    }
+}
+
+#[cfg(test)]
+mod agent_engine_tests {
+    use super::*;
+
+    #[test]
+    fn step_snapshots_sequence_per_task_and_undo_once() {
+        let store = Store::open_in_memory().expect("open");
+        let a = store
+            .insert_step_snapshot("t1", "c1", "write_file", "/w", "/d", "tree1")
+            .expect("insert");
+        let b = store
+            .insert_step_snapshot("t1", "c2", "edit", "/w", "/d", "tree2")
+            .expect("insert");
+        let other = store
+            .insert_step_snapshot("t2", "c1", "run_command", "/w", "/d", "tree3")
+            .expect("insert");
+        assert_eq!((a, b, other), (1, 2, 1));
+        let rows = store.step_snapshots("t1").expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].tree, "tree2");
+        assert!(store.mark_step_undone("t1", 2).expect("undo"));
+        assert!(!store.mark_step_undone("t1", 2).expect("again"));
+        assert!(store.step_snapshots("t1").expect("rows")[1]
+            .undone_at
+            .is_some());
+    }
+}
+
+// --- end agent-engine ---

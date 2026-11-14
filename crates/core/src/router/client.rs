@@ -360,6 +360,9 @@ fn parse_full_completion(body: &serde_json::Value) -> Result<Completion, LlmErro
             .get("finish_reason")
             .and_then(|r| r.as_str())
             .map(str::to_string),
+        usage: body
+            .get("usage")
+            .and_then(crate::llm::TokenUsage::from_json),
     })
 }
 
