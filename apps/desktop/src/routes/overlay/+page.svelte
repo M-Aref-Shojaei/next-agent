@@ -31,7 +31,9 @@
   const queue = $derived(pendingQueue(model));
   const task = $derived(activeTask(model));
   const mode = $derived((task ? model.modes[task.id] : undefined) as ModeName | undefined);
-  const expanded = $derived(pointerInside || lingering || queue.total > 0);
+  // Interim (until the Coucou port lands): hovering no longer opens the full
+  // panel, which covered browser tabs. Only pending approvals expand it.
+  const expanded = $derived(queue.total > 0);
   const notchWidth = $derived(info?.notch ? info.notch[0] : 0);
 
   const STATUS: Record<string, string> = {
