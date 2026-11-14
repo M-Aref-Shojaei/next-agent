@@ -28,6 +28,7 @@ pub const APP_IDENTIFIER: &str = "dev.nextagent.desktop";
 /// # Panics
 /// Panics if the Tauri runtime cannot start (unrecoverable at launch).
 pub fn run() {
+    overlay::platform::prepare_environment();
     tauri::Builder::default()
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
@@ -89,6 +90,7 @@ pub fn run() {
             overlay::overlay_set_settings,
             overlay::overlay_set_rect,
             overlay::overlay_set_expanded,
+            overlay::overlay_set_collapsed,
             overlay::overlay_open_task,
             commands::board_list,
             commands::board_create,

@@ -50,10 +50,28 @@ status: researched
 - An approval is cleared when its session stops, its session sends a new prompt, or its session ends.
 - An approval matches its result by (session, tool, input key).
 
-## Implementation status (Wave 1, overlay)
-- Rust: `apps/desktop/src-tauri/src/overlay.rs` (placement, monitor choice, click-through state machine, `task-stream` fan-out, window + commands); `crates/macos-panel` (notch detection, window level, collection behaviour via objc2; the only crate allowed `unsafe`, for one pointer deref).
-- Frontend: route `/overlay`, `lib/overlay-model.ts` (FIFO queue, max 5 visible), settings section in `/settings`.
-- Task events reach the overlay through the Tauri event `task-stream` (events only) emitted next to the per-task Channel; `task-started` carries title and mode. Approvals are answered through the existing `approval_respond` command.
-- macOS: the webview is **opaque** (a transparent webview needs Tauri's private `macos-private-api` flag, which we do not enable). The island is a dark rectangle that blends with the notch. A true NSPanel (`.nonactivatingPanel`) needs an NSWindow subclass swap and was skipped; we use `focusable(false)` plus level `mainMenu+3`.
-- Linux input region / layer-shell: skipped. The cursor poll toggles `set_ignore_cursor_events`, which works on X11 and most XWayland setups; native Wayland compositors may ignore it.
-- Not verified without a display: everything in the window runtime (placement on real monitors, click-through, notch panel behaviour, animations).
+## Implementation status (overlay: a port of Coucou)
+
+Ported from Coucou `0d7fe58884d99f275f3238e8dbe29ddee69fa9e8` (pinned in `upstream.lock.json`). Every ported file starts with `// Ported from Coucou (MIT, © 2026 Louis Raillé): <path> @ <commit>`. Code only: no name, character, icon, sound or media. `scripts/check-no-coucou-assets.mjs` (in `make check` and CI) fails if any `*.xcassets/`, `sounds/`, `docs/media/` or `design/` file lands in the repo.
+
+| Coucou file | Ours |
+|---|---|
+| `NotchBuddy/Sources/CoucouKit/IslandScreenGeometry.swift` | `crates/macos-panel/src/geometry.rs` |
+| `NotchBuddy/Sources/App/IslandDisplayChoice.swift` | `crates/macos-panel/src/display.rs` |
+| `NotchBuddy/Sources/App/IslandPlacement.swift` (notch, top corners) | `crates/macos-panel/src/placement.rs` |
+| `NotchBuddy/Sources/App/IslandWindowController.swift` (`IslandPanel`, `setupPanel`, `relocate`, `targetScreen`, `displayUUID`, `screenGeometry`) | `crates/macos-panel/src/mac.rs` |
+| `IslandWindowController.swift` (`pollFrame`, `adjustPollRate`, screen sleep) + `windows/src-tauri/src/island.rs` (cursor poll, hit margin) | `apps/desktop/src-tauri/src/overlay/poll.rs`, `overlay/mod.rs` |
+| `windows/src-tauri/src/island.rs` (monitor keys, work-area offset, `apply_geometry`, `clamp_collapsed`) | `overlay/geometry.rs`, `overlay/mod.rs` |
+| `windows/src-tauri/src/platform/{linux,windows}.rs` (layer-shell, Dock, input region, GDK pointer watch, GNOME → XWayland) | `overlay/platform.rs` |
+| `NotchBuddy/Sources/App/IslandStateMachine.swift` | `apps/desktop/src/lib/island/fsm.ts` |
+| `windows/src/core/anim.ts` | `lib/island/anim.ts` |
+| `IslandRootView.swift` (`IslandShape`) | `lib/island/shape.ts` |
+| `IslandWindowController.swift` (`islandSize`), `IslandTypes.swift` (`IslandConst`), `windows/src/core/layout.ts` | `lib/island/layout.ts` |
+| `ApprovalQueue.swift` + the 115 s wait in `HookServer.swift` | `lib/overlay-model.ts` |
+| `IslandRootView.swift` (container, header, mini grid), `IslandViewContent.swift` (approval, empty), `windows/src/views/views.ts`, `windows/src/style.css` | `routes/overlay/+page.svelte` |
+
+**Same as Coucou:** panel 720×560 (macOS) / 720×320 (PC, folding to a 240×6 wake strip while hidden), level `mainMenu+3`, `canJoinAllSpaces | stationary | fullScreenAuxiliary | ignoresCycle`, `constrainFrameRect` returning the frame, non-activating `NSPanel`; notch width = screen − both auxiliary areas (fallback 184), height = top safe-area inset, no-notch bar 80×min(24, menu bar); hidden = the notch (drawn invisible), compact = notch + 160 × notch height, expanded 640×160; radii 14 (rest) / 22 (open) / 18 (corner tile); open spring (0.5, 0.72), close `cubic-bezier(.45,0,.2,1)` 340 ms; hover only peeks (Open on hover off), a click or an approval opens, auto-close 15 s after the pointer leaves (0.6 s if hover-opened), compact hides after 3 min away; click-through poll at 60/20/8 Hz with a 6 pt margin (14 px on a PC), paused while the display sleeps; display choice by UUID (notch / menu bar / follow mouse / display); approvals FIFO, five on the island, 115 s each, cleared when the task ends.
+
+**Our differences (by design):** data from the `task-stream` event and `task-started`, decisions through `approval_respond` and the permission engine; the mascot is a neutral placeholder in Coucou's spot and size (`lib/components/IslandMascot.svelte`, the slot for the owner's own artwork); glyphs are Lucide (house.fill → house, gearshape → settings, xmark → x, chevron.up → chevron-up); no sounds; the overview card is a short "task / Open in Next Agent" card (Coucou's overview shows its agent pills and ticker). On macOS the webview moves from the hidden Tauri window into a real `IslandPanel`, because AppKit observes the Tauri window with KVO, so its class cannot be swapped to `NSPanel`. A request past 115 s or beyond the fifth is not lost: it is still waiting in the app.
+
+**Not verified:** Windows and Linux (the Linux half cannot be compiled on a Mac; layer-shell is behind the opt-in `layer-shell` cargo feature, which needs `libgtk-layer-shell`); multi-monitor moves; display sleep. On this Mac: the panel at layer 27, y = 0, centred; hidden, hover-peek and expanded states in the page; clicks and hover in the real panel could not be driven from the sandbox.

@@ -69,7 +69,8 @@
       "role": "wave 2"
     },
     "coucou": {
-      "pin": "main (code ideas only; no assets)",
+      "pin": "main @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8 (code ported; no assets)",
+      "ported": "IslandScreenGeometry.swift, IslandDisplayChoice.swift, IslandPlacement.swift, IslandWindowController.swift, IslandStateMachine.swift, IslandRootView.swift, IslandViewContent.swift, ApprovalQueue.swift, IslandTypes.swift, windows/src-tauri/src/island.rs, windows/src-tauri/src/platform/{linux,windows}.rs, windows/src/core/{anim,layout}.ts, windows/src/island/fsm.ts, windows/src/views/views.ts, windows/src/style.css -> crates/macos-panel, apps/desktop/src-tauri/src/overlay, apps/desktop/src/lib/island, overlay-model.ts, routes/overlay",
       "licence": "MIT (code), assets excluded",
       "adapter": "apps/desktop",
       "checked": "2026-11-14",

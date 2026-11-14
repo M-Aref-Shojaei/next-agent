@@ -7,6 +7,7 @@ check:
 	node scripts/check-rust-structure.mjs
 	node scripts/check-policy-parity.mjs
 	node scripts/check-boundaries.mjs
+	node scripts/check-no-coucou-assets.mjs
 	node scripts/gen-topology.mjs --check
 
 test-ts:

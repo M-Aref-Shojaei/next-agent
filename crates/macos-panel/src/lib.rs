@@ -1,163 +1,42 @@
-//! macOS-only window helpers for the overlay.
+//! The overlay island's window geometry, ported from Coucou, and its macOS
+//! panel.
 //!
-//! Only public `AppKit` API is used (`NSWindow.level`, `collectionBehavior`,
-//! `NSScreen.safeAreaInsets`, `NSScreen.auxiliaryTop*Area`). Nothing here is
-//! applied on other platforms; the pure geometry is still compiled and tested
-//! everywhere.
+//! - [`geometry`]: the resting island on a screen (notch size, or the small
+//!   no-notch bar).
+//! - [`display`]: which screen hosts the island, by stable display id.
+//! - [`placement`]: where the panel goes on that screen (notch / top corners)
+//!   and where the island sits inside the panel.
+//! - `mac` (macOS only): Coucou's `IslandPanel` — a non-activating `NSPanel`
+//!   at `mainMenu + 3` that may cover the notch — plus screen enumeration.
 //!
-//! Design adapted from Coucou (MIT, © 2026 Louis Raillé): `NotchBuddy/` — notch
-//! detection from safe-area insets and panel-like window behaviour. No assets.
+//! The first three are pure and compiled and tested on every platform; the
+//! Windows/Linux runtime in the desktop app uses them too. This is the only
+//! crate allowed `unsafe`, and only in `mac.rs` (each site documented there).
+//!
+//! Ported from Coucou (MIT, © 2026 Louis Raillé), commit
+//! `0d7fe58884d99f275f3238e8dbe29ddee69fa9e8`; see `NOTICE.md`. Code only:
+//! no names, characters, icons or sounds.
 
-/// Width used when the auxiliary areas cannot be read (points).
-pub const FALLBACK_NOTCH_WIDTH: f64 = 184.0;
+pub mod display;
+pub mod geometry;
+pub mod placement;
 
-/// Size of the physical notch in points.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Notch {
-    pub width: f64,
-    pub height: f64,
-}
+#[cfg(target_os = "macos")]
+mod mac;
 
-/// Derive the notch from `NSScreen` values: a top safe-area inset above zero
-/// means there is a notch; its width is what the two auxiliary areas leave.
-#[must_use]
-pub fn notch_from_insets(
-    screen_width: f64,
-    top_inset: f64,
-    left_aux_width: f64,
-    right_aux_width: f64,
-) -> Option<Notch> {
-    if top_inset <= 0.0 {
-        return None;
-    }
-    let measured = screen_width - left_aux_width - right_aux_width;
-    let width = if measured > 0.0 && measured < screen_width / 2.0 {
-        measured
-    } else {
-        FALLBACK_NOTCH_WIDTH
-    };
-    Some(Notch {
-        width,
-        height: top_inset,
-    })
-}
+pub use display::{resolve, DisplayCandidate, DisplayChoice};
+pub use geometry::{IslandScreenGeometry, FALLBACK_NOTCH_WIDTH};
+pub use placement::{
+    clamp_collapsed, Placement, Rect, PANEL_H, PANEL_W, PC_PANEL_H, PC_PANEL_W, STRIP_H, STRIP_W,
+};
 
-/// Window level used by the overlay: three above `NSMainMenuWindowLevel` (24).
+#[cfg(target_os = "macos")]
+pub use mac::{
+    adopt, cursor_in_panel, display_asleep, order_front, place, release, screens,
+    set_ignores_mouse, Placed, ScreenEntry, PANEL_LEVEL,
+};
+
+/// Window level used by the overlay on macOS: three above
+/// `NSMainMenuWindowLevel` (24).
+#[cfg(not(target_os = "macos"))]
 pub const PANEL_LEVEL: isize = 27;
-
-#[cfg(target_os = "macos")]
-mod mac {
-    use super::{notch_from_insets, Notch, PANEL_LEVEL};
-    use objc2::rc::Retained;
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
-    use std::ffi::c_void;
-
-    #[allow(unsafe_code)] // Tauri exposes the NSWindow only as a raw pointer.
-    fn window<'a>(ns_window: *mut c_void) -> Option<&'a NSWindow> {
-        // SAFETY: callers pass the pointer from `WebviewWindow::ns_window()`
-        // and use the result on the main thread within the same call, while
-        // the window is alive. Null is handled.
-        unsafe { ns_window.cast::<NSWindow>().as_ref() }
-    }
-
-    /// Make the window behave like a notch panel: above the menu bar, on
-    /// every space, alongside full-screen apps, outside Cmd-Tab cycling.
-    /// Must run on the main thread. Returns `false` if it could not apply.
-    #[must_use]
-    pub fn configure_panel(ns_window: *mut c_void) -> bool {
-        if MainThreadMarker::new().is_none() {
-            return false;
-        }
-        let Some(w) = window(ns_window) else {
-            return false;
-        };
-        w.setLevel(PANEL_LEVEL);
-        w.setCollectionBehavior(
-            NSWindowCollectionBehavior::CanJoinAllSpaces
-                | NSWindowCollectionBehavior::Stationary
-                | NSWindowCollectionBehavior::FullScreenAuxiliary
-                | NSWindowCollectionBehavior::IgnoresCycle,
-        );
-        true
-    }
-
-    /// Put the window's top edge on the very top of its screen, horizontally
-    /// centred, `width`×`height` points. `setFrame:display:` skips the
-    /// "keep below the menu bar" constraint `AppKit` applies when a normal
-    /// window is ordered in, which is what lets the island wrap the notch
-    /// (Coucou overrides `constrainFrameRect` for the same reason).
-    /// Must run on the main thread. Returns `false` if it could not apply.
-    #[must_use]
-    pub fn pin_top_center(ns_window: *mut c_void, width: f64, height: f64) -> bool {
-        if MainThreadMarker::new().is_none() {
-            return false;
-        }
-        let Some(w) = window(ns_window) else {
-            return false;
-        };
-        // Tauri's `set_always_on_top` resets the level to floating (5), which
-        // is below the menu bar; AppKit then shifts the frame under it.
-        // Re-raise before placing.
-        w.setLevel(PANEL_LEVEL);
-        let Some(screen) = w.screen() else {
-            return false;
-        };
-        let frame = screen.frame();
-        let width = width.min(frame.size.width);
-        let rect = objc2_foundation::NSRect::new(
-            objc2_foundation::NSPoint::new(
-                frame.origin.x + (frame.size.width - width) / 2.0,
-                // Cocoa's y axis points up: the top edge is origin.y + height.
-                frame.origin.y + frame.size.height - height,
-            ),
-            objc2_foundation::NSSize::new(width, height),
-        );
-        w.setFrame_display(rect, true);
-        true
-    }
-
-    /// Notch of the screen the window is on (`None`: no notch or unknown).
-    /// Must run on the main thread.
-    #[must_use]
-    pub fn notch_of(ns_window: *mut c_void) -> Option<Notch> {
-        MainThreadMarker::new()?;
-        let screen: Retained<_> = window(ns_window)?.screen()?;
-        let width = screen.frame().size.width;
-        let inset = screen.safeAreaInsets().top;
-        notch_from_insets(
-            width,
-            inset,
-            screen.auxiliaryTopLeftArea().size.width,
-            screen.auxiliaryTopRightArea().size.width,
-        )
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub use mac::{configure_panel, notch_of, pin_top_center};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn no_inset_means_no_notch() {
-        assert_eq!(notch_from_insets(1512.0, 0.0, 700.0, 700.0), None);
-    }
-
-    #[test]
-    fn notch_width_is_what_the_aux_areas_leave() {
-        let n = notch_from_insets(1512.0, 32.0, 664.0, 664.0).expect("notch");
-        assert_eq!(n.width, 184.0);
-        assert_eq!(n.height, 32.0);
-        let n = notch_from_insets(1728.0, 38.0, 770.0, 770.0).expect("notch");
-        assert_eq!(n.width, 188.0);
-    }
-
-    #[test]
-    fn implausible_measurement_falls_back() {
-        let n = notch_from_insets(1512.0, 32.0, 0.0, 0.0).expect("notch");
-        assert_eq!(n.width, FALLBACK_NOTCH_WIDTH);
-    }
-}
