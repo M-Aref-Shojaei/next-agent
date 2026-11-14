@@ -11,7 +11,19 @@ status: researched
 - **How we use it:** we re-implement ideas from the docs and credit OpenRouter in [[9Router]]-style headers ("Design adapted from OpenRouter docs: <page>"). We copy no code.
 - **Terms of service:** they bar scraping and reselling. For the models catalog we only call the public endpoint when the user asks to refresh, cache the result locally, and never redistribute or bundle it.
 
-## Added to the gateway (Wave 1 session 1, before merge)
+## Decision (2026-11-14)
+
+**Building:**
+- catalog import
+- cache-aware cost
+- unified reasoning
+- overflow model switch (the agent engine's compaction does the shrinking)
+
+**Skipped:**
+- middle-trim (compaction covers it)
+- sort / max_price presets (covered by OmniRoute's `cost-optimized` ordering plus budget caps)
+
+## Researched features
 
 1. **Models catalog import.**
    - Source: `GET https://openrouter.ai/api/v1/models` (auth optional).
