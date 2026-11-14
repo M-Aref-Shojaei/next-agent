@@ -90,6 +90,10 @@ pub struct FinishedTask {
 
 type Calls = Arc<Mutex<Vec<(String, ToolRequest)>>>;
 
+/// Builds a scripted task's steps once its sandbox root (the task worktree)
+/// is known.
+pub type Script = Box<dyn FnOnce(&Path) -> Result<Vec<AgentStep>, String> + Send>;
+
 /// Remembers the requests the broker let through, so the vault record can
 /// name files and commands (events carry only tool names and JSON args).
 struct Recording {
@@ -148,8 +152,40 @@ impl AppService {
         request: &TaskRequest,
         sink: Sink,
     ) -> Result<String, String> {
+        self.task_start_with(request, sink, None)
+    }
+
+    /// [`Self::task_start`] with an optional fixed script instead of the agent
+    /// (Design Studio writes). A scripted task must run in a task worktree:
+    /// its steps still go through the broker and the permission engine, and
+    /// the result is reviewed and merged like any other task.
+    ///
+    /// # Errors
+    /// As [`Self::task_start`], plus: no worktree for a scripted task, or the
+    /// script could not be built.
+    pub fn task_start_with(
+        self: &Arc<Self>,
+        request: &TaskRequest,
+        sink: Sink,
+        script: Option<Script>,
+    ) -> Result<String, String> {
         let plan = self.plan(request)?;
         let task_id = plan.spec.id.as_str().to_string();
+        let scripted = match script {
+            None => None,
+            Some(build) => {
+                let Some(wt) = &plan.worktree else {
+                    return Err("Design Studio changes are written in a task worktree, which needs a git repository with at least one commit. Commit the project first.".into());
+                };
+                match build(&plan.root) {
+                    Ok(steps) => Some(steps),
+                    Err(error) => {
+                        let _ = GitCli.discard(wt);
+                        return Err(error);
+                    }
+                }
+            }
+        };
 
         if let Some(wt) = &plan.worktree {
             sink(StreamMessage::Worktree {
@@ -158,7 +194,13 @@ impl AppService {
                 root: wt.root.display().to_string(),
             });
         }
-        let (executor, agent_notice) = self.choose_executor(&plan, &task_id);
+        let (executor, agent_notice) = match scripted {
+            Some(steps) => (
+                Box::new(MockExecutor::new(steps)) as Box<dyn AgentExecutor + Send>,
+                None,
+            ),
+            None => self.choose_executor(&plan, &task_id),
+        };
         for text in plan.notices.iter().chain(agent_notice.iter()) {
             sink(StreamMessage::Notice {
                 task_id: task_id.clone(),

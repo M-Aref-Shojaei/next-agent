@@ -2427,6 +2427,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "next-agent-design"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "next-agent-desktop"
 version = "0.1.0"
 dependencies = [
@@ -2434,6 +2444,7 @@ dependencies = [
  "gtk",
  "gtk-layer-shell",
  "next-agent-core",
+ "next-agent-design",
  "next-agent-graph",
  "next-agent-macos-panel",
  "next-agent-permission-engine",

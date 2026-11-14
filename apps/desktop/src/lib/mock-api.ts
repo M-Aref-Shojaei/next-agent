@@ -1,5 +1,6 @@
 // In-memory stand-in for the Rust commands, used outside Tauri.
 import type { Api, BoardDoc, Workspace } from "./api.ts";
+import { designMockApi } from "./design-mock.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 import {
   defaultSettings,
@@ -388,4 +389,5 @@ export const mockApi: Api = {
     assets.set(path, data);
     return path;
   },
+  ...designMockApi,
 };

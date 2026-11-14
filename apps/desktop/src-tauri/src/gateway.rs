@@ -400,10 +400,16 @@ impl AppService {
     /// reason it cannot. An implicit legacy router (`router.url`) must also be
     /// reachable, as before; built-in providers need only a key.
     pub(crate) fn chat_gateway(&self) -> Result<Gateway, String> {
-        let gateway = self.gateway("chat")?;
+        self.role_gateway("chat")
+    }
+
+    /// [`Self::chat_gateway`] for any model role (the role falls back to
+    /// `chat`, then the default model).
+    pub(crate) fn role_gateway(&self, role: &str) -> Result<Gateway, String> {
+        let gateway = self.gateway(role)?;
         let config = gateway.config();
-        let plan = config.resolve("", "chat").map_err(|_| {
-            "no default model or chat role is set in Settings → Providers".to_string()
+        let plan = config.resolve("", role).map_err(|_| {
+            format!("no default model or {role} role is set in Settings → Providers")
         })?;
         let keys = keys();
         let usable = |target: &Target| {
@@ -420,9 +426,9 @@ impl AppService {
                 })
         };
         let Some(account) = plan.targets.iter().find_map(usable) else {
-            return Err(
-                "no provider for the chat model has an API key (Settings → Providers)".into(),
-            );
+            return Err(format!(
+                "no provider for the {role} model has an API key (Settings → Providers)"
+            ));
         };
         if account.id == LEGACY_ROUTER_ID {
             let healthy = self

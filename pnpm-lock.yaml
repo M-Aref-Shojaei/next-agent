@@ -65,6 +65,8 @@ importers:
 
   packages/contracts: {}
 
+  packages/design-instrument: {}
+
   packages/policy: {}
 
   packages/vault: {}

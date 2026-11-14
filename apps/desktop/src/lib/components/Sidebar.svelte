@@ -40,6 +40,7 @@
     {/each}
   </ul>
   <a class="settings" href="/boards">Boards</a>
+  <a class="nav" href="/design">Design</a>
   <a class="nav" href="/settings/providers">Providers</a>
   <a class="nav" href="/usage">Usage</a>
   <a class="nav" href="/settings">Settings</a>

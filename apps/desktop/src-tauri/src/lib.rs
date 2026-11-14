@@ -2,6 +2,7 @@
 
 pub mod boards;
 pub mod commands;
+pub mod design;
 pub mod gateway;
 pub mod notes;
 pub mod overlay;
@@ -41,6 +42,7 @@ pub fn run() {
                 let _ = handle.emit("graph-changed", files);
             }));
             app.manage(notes);
+            app.manage(design::DesignState::default());
             overlay::init(app.handle(), &service);
             tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
             Ok(())
@@ -100,6 +102,20 @@ pub fn run() {
             commands::board_delete,
             commands::board_sketch,
             commands::board_export,
+            design::design_system_get,
+            design::design_system_generate,
+            design::design_system_save,
+            design::design_generate,
+            design::design_history,
+            design::design_choose,
+            design::design_iterate,
+            design::design_preview_start,
+            design::design_preview_stop,
+            design::design_preview_log,
+            design::design_source,
+            design::design_apply_style,
+            design::design_convert,
+            design::design_implement,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Agent");
