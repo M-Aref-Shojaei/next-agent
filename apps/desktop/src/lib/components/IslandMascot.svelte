@@ -16,7 +16,7 @@
     diameter: number;
     opacity?: number;
     /** What the agent is doing: idle, working, approval, error, finished. */
-    tone?: "idle" | "working" | "approval" | "error" | "finished";
+    tone?: "rest" | "idle" | "working" | "approval" | "error" | "finished";
   } = $props();
 </script>
 
@@ -45,6 +45,8 @@
   .tone-working { --tone: #3b9eff; --tone-2: #8b5cf6; animation: turn 2.4s linear infinite; }
   .tone-approval { --tone: #f5a524; --tone-2: #f4505e; animation: breathe 1.6s ease-in-out infinite; }
   .tone-error { --tone: #f4505e; --tone-2: #b4233c; }
+  /* At rest beside the notch: the little red gradient orb. */
+  .tone-rest { --tone: #ff5f6d; --tone-2: #c0263f; --glow: 4; }
   .tone-finished { --tone: #34d399; --tone-2: #0ea5e9; }
   @keyframes turn { to { transform: rotate(360deg); } }
   @keyframes breathe { 50% { --glow: 14; transform: scale(1.06); } }

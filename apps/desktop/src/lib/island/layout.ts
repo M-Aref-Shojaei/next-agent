@@ -22,6 +22,14 @@ export interface IslandInfo {
   platform: "macos" | "windows" | "linux";
 }
 
+/**
+ * Owner's change to Coucou: at rest the island is the notch plus a small wing
+ * on each side, with the gradient orb (in Mochi's place) in the left wing, so
+ * it is always visible that Next Agent is open.
+ */
+export const REST_WING = 26;
+export const REST_ORB = 12;
+
 /** IslandConst.expandedWidth. */
 export const EXPANDED_W = 640;
 /** IslandConst.viewLayouts (heights, Mochi x and diameter). */
@@ -63,7 +71,7 @@ export function islandSize(info: IslandInfo, mode: IslandMode, view: IslandView)
       if (corner) return { w: TILE, h: TILE };
       // No notch on a PC: the island retracts to zero height into the top edge
       // (windows/src/core/layout.ts); the Mac keeps the notch / resting bar size.
-      return info.platform === "macos" ? { w: nw, h: nh } : { w: nw, h: 0 };
+      return info.platform === "macos" ? { w: nw + 2 * REST_WING, h: nh } : { w: nw, h: 0 };
     case "compact":
       return corner ? { w: TILE, h: TILE } : { w: nw + info.compactExtra, h: nh };
     case "expanded":
@@ -85,7 +93,10 @@ export function islandTopRadius(info: IslandInfo, mode: IslandMode): number {
 
 /** Hidden over a real notch: draw nothing (a black copy would slide away with the Space). */
 export function islandFillOpacity(info: IslandInfo, mode: IslandMode): number {
-  return mode === "hidden" && info.hasNotch && !isCorner(info) ? 0 : 1;
+  // Owner's change: the resting wings are drawn so the orb sits on black.
+  void info;
+  void mode;
+  return 1;
 }
 
 /** The island's rect inside the panel, y down (IslandPlacement.islandRect). */
@@ -104,7 +115,8 @@ export function botPosition(
 ): { cx: number; cy: number; diameter: number; opacity: number } {
   switch (mode) {
     case "hidden":
-      return { cx: 46, cy: 16, diameter: 6, opacity: 0 };
+      // Owner's change: the resting orb, centred in the left wing.
+      return { cx: REST_WING / 2, cy: islandH / 2, diameter: REST_ORB, opacity: 1 };
     case "compact": {
       // IslandRestingLayout.botDiameter / botCenterY.
       return { cx: 40, cy: islandH / 2, diameter: Math.min(20, Math.max(0, islandH - 6)), opacity: 1 };

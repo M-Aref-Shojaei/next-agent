@@ -184,12 +184,12 @@ const mac: IslandInfo = {
 };
 const pc: IslandInfo = { ...mac, hasNotch: false, width: 184, height: 32, compactExtra: 104, panel: [720, 320], platform: "windows" };
 
-test("Mac notch sizes: hidden = notch, compact = notch + 160, expanded = 640×160", () => {
-  assert.deepEqual(islandSize(mac, "hidden", "empty"), { w: 185, h: 32 });
+test("Mac notch sizes: rest = notch + two 26 pt wings, compact = notch + 160, expanded = 640×160", () => {
+  assert.deepEqual(islandSize(mac, "hidden", "empty"), { w: 237, h: 32 });
   assert.deepEqual(islandSize(mac, "compact", "empty"), { w: 345, h: 32 });
   assert.deepEqual(islandSize(mac, "expanded", "approval"), { w: 640, h: 160 });
   assert.deepEqual(islandSize(mac, "expanded", "overview"), { w: 640, h: 160 });
-  assert.equal(islandFillOpacity(mac, "hidden"), 0, "nothing drawn over a real notch");
+  assert.equal(islandFillOpacity(mac, "hidden"), 1, "the resting wings are drawn so the orb shows");
   assert.equal(islandFillOpacity(mac, "compact"), 1);
   assert.equal(islandCorner(mac, "compact"), 14);
   assert.equal(islandCorner(mac, "expanded"), 22);
@@ -215,7 +215,7 @@ test("corners: a 60 pt tile at rest, rounded top, home 640×260", () => {
 test("mascot and mini grid sit where Coucou draws Mochi and the session grid", () => {
   assert.deepEqual(botPosition("compact", "empty", 345, 32), { cx: 40, cy: 16, diameter: 20, opacity: 1 });
   assert.deepEqual(botPosition("expanded", "approval", 640, 160), { cx: 62, cy: 101, diameter: 56, opacity: 1 });
-  assert.equal(botPosition("hidden", "empty", 185, 32).opacity, 0);
+  assert.deepEqual(botPosition("hidden", "empty", 237, 32), { cx: 13, cy: 16, diameter: 12, opacity: 1 }, "rest orb in the left wing");
   assert.deepEqual(miniGrid(345, 32), { cx: 305, cy: 16, scale: 1 });
   assert.equal(miniGrid(240, 24).scale, 20 / 28);
 });
@@ -272,4 +272,27 @@ test("Tracked shrinks along the 340 ms curve and grows on the spring", () => {
   assert.equal(t.animating, true);
   for (let i = 0; i < 200; i++) t.step(1 / 60, 0);
   assert.equal(t.value, 640);
+});
+
+test("owner's cycle: click opens, leave → 15 s → compact → 15 s → rest", () => {
+  const { fsm, timers, seen } = machine();
+  fsm.mouseEntered(); // hover: compact with details
+  fsm.click(); // full panel
+  assert.equal(fsm.state, "home");
+  fsm.mouseLeft();
+  timers.advance(14_999);
+  assert.equal(fsm.state, "home");
+  timers.advance(1);
+  assert.equal(fsm.state, "petit", "panel folds to compact after 15 s");
+  fsm.mouseLeft(); // the page re-reports "outside" after each transition
+  timers.advance(14_999);
+  assert.equal(fsm.state, "petit");
+  timers.advance(1);
+  assert.equal(fsm.state, "hidden", "compact returns to rest after 15 more seconds");
+  assert.deepEqual(seen, [
+    ["hidden", "petit"],
+    ["petit", "home"],
+    ["home", "petit"],
+    ["petit", "hidden"],
+  ]);
 });

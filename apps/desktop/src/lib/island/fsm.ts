@@ -146,7 +146,7 @@ export class IslandStateMachine {
   /** The app folded the island itself (the close button, an answered approval). */
   collapse() {
     this.byHover = false;
-    this.peekByHover = false;
+    this.peekByHover = true;
     if (this.state !== "home") return;
     this.cancelTimers();
     this.transition("petit");
@@ -185,6 +185,9 @@ export class IslandStateMachine {
       this.homeCollapseWork = null;
       if (this.state !== "home" || this.held()) return;
       this.byHover = false;
+      // Owner's change: after the panel folds, the compact island returns to
+      // rest on the short (15 s) peek timer, not the 3-minute absence timer.
+      this.peekByHover = true;
       this.transition("petit");
     }, delay * 1000);
   }
