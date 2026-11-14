@@ -309,6 +309,30 @@ pub struct GatewayState {
     /// Tool-call id → `reasoning_details` to send back with it.
     reasoning: Mutex<ReasoningMemory>,
     rng: Mutex<u64>,
+    /// Role → estimated USD of requests in flight (budget reservations).
+    reserved: Arc<Mutex<HashMap<String, f64>>>,
+    /// Held while a request checks its budgets and reserves.
+    budget_gate: Mutex<()>,
+}
+
+/// An in-flight budget reservation; released on drop.
+#[derive(Debug)]
+pub struct Reservation {
+    reserved: Arc<Mutex<HashMap<String, f64>>>,
+    role: String,
+    usd: f64,
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let mut map = self.reserved.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(total) = map.get_mut(&self.role) {
+            *total -= self.usd;
+            if *total <= 1e-12 {
+                map.remove(&self.role);
+            }
+        }
+    }
 }
 
 /// How many tool calls' reasoning blocks are remembered.
@@ -461,6 +485,39 @@ impl GatewayState {
     /// Seed the random draws (tests).
     pub fn seed(&self, seed: u64) {
         *self.rng.lock().unwrap_or_else(PoisonError::into_inner) = seed | 1;
+    }
+
+    /// Serialize budget check + reservation across concurrent requests.
+    pub fn budget_gate(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.budget_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Reserve `usd` of budget for a request of `role` until the guard drops.
+    pub fn reserve(&self, role: &str, usd: f64) -> Reservation {
+        let usd = if usd.is_finite() { usd.max(0.0) } else { 0.0 };
+        *self
+            .reserved
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(role.to_string())
+            .or_default() += usd;
+        Reservation {
+            reserved: Arc::clone(&self.reserved),
+            role: role.to_string(),
+            usd,
+        }
+    }
+
+    /// USD reserved by in-flight requests of `role` (all roles with `None`).
+    #[must_use]
+    pub fn reserved(&self, role: Option<&str>) -> f64 {
+        let map = self.reserved.lock().unwrap_or_else(PoisonError::into_inner);
+        match role {
+            Some(role) => map.get(role).copied().unwrap_or(0.0),
+            None => map.values().sum(),
+        }
     }
 
     #[must_use]

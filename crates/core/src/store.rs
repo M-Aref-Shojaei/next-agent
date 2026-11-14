@@ -1076,6 +1076,9 @@ pub struct ComboRow {
     pub weights: Option<String>,
 }
 
+/// Rows kept in `llm_cache_hits` (older ones are pruned on insert).
+pub const CACHE_HITS_KEPT: i64 = 50_000;
+
 /// Row in `llm_cache_hits`: an answer served from the response cache.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CacheHitRow {
@@ -1435,6 +1438,12 @@ impl Store {
                 row.saved_cost
             ],
         )?;
+        // Keep the table bounded: only the newest rows feed the Usage page.
+        self.conn
+            .prepare_cached(
+                "DELETE FROM llm_cache_hits WHERE id <= (SELECT MAX(id) FROM llm_cache_hits) - ?1",
+            )?
+            .execute([CACHE_HITS_KEPT])?;
         Ok(())
     }
 

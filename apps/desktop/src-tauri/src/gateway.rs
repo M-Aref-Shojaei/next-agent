@@ -325,8 +325,9 @@ impl AppService {
         // Layers: the user's pricing.json over the imported catalog over the
         // shipped table.
         let mut pricing = Pricing::builtin();
-        if let Ok(text) = std::fs::read_to_string(self.catalog_path()) {
-            pricing = pricing.with_override(catalog::load(&text));
+        let (imported, count) = catalog::load_file(&self.catalog_path());
+        if count > 0 {
+            pricing = pricing.with_override(imported);
         }
         let user_file = self.db_path().with_file_name("pricing.json");
         if let Ok(text) = std::fs::read_to_string(&user_file) {
@@ -345,10 +346,7 @@ impl AppService {
 
     pub fn gateway_catalog_status(&self) -> CatalogDto {
         let path = self.catalog_path();
-        let models = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| catalog::parse_openrouter(&text).ok())
-            .map_or(0, |table| table.len());
+        let models = catalog::load_file(&path).1;
         let updated_at = std::fs::metadata(&path)
             .and_then(|m| m.modified())
             .ok()
@@ -360,7 +358,7 @@ impl AppService {
     /// Download the catalog from `url` (manual refresh only) and save it.
     pub fn gateway_catalog_refresh(&self, url: &str) -> Result<CatalogDto, String> {
         let (text, _) = catalog::fetch_blocking(url).map_err(|e| e.to_string())?;
-        std::fs::write(self.catalog_path(), text)
+        catalog::save(&self.catalog_path(), &text)
             .map_err(|e| format!("could not save the catalog: {e}"))?;
         self.bump_router_generation();
         Ok(self.gateway_catalog_status())
@@ -379,13 +377,23 @@ impl AppService {
         let gateway = Gateway::new(self.gateway_config()?, keys())
             .map_err(|e| e.to_string())?
             .with_role(role);
-        Ok(match StoreUsage::open(self.db_path()) {
-            Ok(usage) => gateway.with_usage(Arc::new(usage)),
+        let budgets_set = gateway
+            .config()
+            .settings
+            .budgets
+            .iter()
+            .any(|b| b.limit_usd > 0.0);
+        match StoreUsage::open(self.db_path()) {
+            Ok(usage) => Ok(gateway.with_usage(Arc::new(usage))),
+            // Without the database, budgets cannot be enforced: fail closed.
+            Err(error) if budgets_set => Err(format!(
+                "budgets are set but the usage database could not be opened: {error}"
+            )),
             Err(error) => {
                 eprintln!("usage will not be recorded: {error}");
-                gateway
+                Ok(gateway)
             }
-        })
+        }
     }
 
     /// The gateway for the `chat` role when it can serve a request, or the
