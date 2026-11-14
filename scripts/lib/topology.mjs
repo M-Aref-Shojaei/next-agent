@@ -75,7 +75,12 @@ function tsProjects(root) {
       dirs.push(pattern);
     }
   }
-  return dirs.map((dir) => {
+  // A folder git can't track (no package.json, no README) is local noise,
+  // not a planned project: skip it so the note is the same on every machine.
+  const tracked = dirs.filter(
+    (dir) => exists(root, join(dir, "package.json")) || exists(root, join(dir, "README.md")),
+  );
+  return tracked.map((dir) => {
     if (!exists(root, join(dir, "package.json"))) {
       const readme = exists(root, join(dir, "README.md")) ? read(root, join(dir, "README.md")) : "";
       const summary = readme.split("\n").filter((l) => l.trim() && !l.startsWith("#"))[0] ?? "";
