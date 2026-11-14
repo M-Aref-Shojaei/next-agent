@@ -1,15 +1,23 @@
 //! Vault task documentation (M1 step 5).
 //!
-//! Turns a finished task's event list into a Markdown record under
-//! `<vault>/Next Agent/<workspace>/Tasks/YYYY/MM/YYYY-MM-DD-<slug>.md` and
-//! appends a link to `<vault>/Journal/YYYY-MM-DD.md`. See
+//! Turns a finished task's event list into a Markdown record and links it
+//! from the day's journal, in a Logseq-compatible graph layout:
+//!
+//! - record: a page named `Next Agent/<workspace>/Tasks/YYYY-MM-DD-<slug>`,
+//!   stored as `<vault>/pages/Next Agent___<workspace>___Tasks___….md`
+//!   (triple-lowbar file name), YAML frontmatter + Logseq blocks;
+//! - journal: a `- [[<page>]] — done (auto)` block in
+//!   `<vault>/journals/yyyy_MM_dd.md` (or the vault's
+//!   `:journal/file-name-format`).
+//!
+//! A vault without `logseq/config.edn` gets a minimal one. See
 //! `docs/architecture/Vault Documentation Service.md` and
 //! `docs/templates/Task Record Template.md`.
 //!
 //! Vault writes are internal (not agent tool calls) but are audited through
 //! [`Store::append_audit`]. Path and slug rules must stay in lock-step with
-//! `packages/vault/src/index.ts`; `fixtures/vault/path-cases.tsv` is checked
-//! by both sides.
+//! `packages/vault/src/index.ts`; `fixtures/vault/path-cases.tsv` and
+//! `fixtures/vault/page-file-names.tsv` are checked by both sides.
 
 #![allow(
     clippy::format_push_string,
@@ -20,8 +28,9 @@
 
 use std::fmt;
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
+
+use next_agent_graph::{page_file_name, Block, Date, Document, Graph, GraphError};
 
 use crate::events::{AgentEvent, EventKind};
 use crate::store::{AuditEntry, Store, StoreError};
@@ -86,42 +95,59 @@ fn fold_latin1(ch: char) -> Option<char> {
     })
 }
 
-/// `(year, month, day)` from the leading `YYYY-MM-DD` of an ISO timestamp.
-fn date_parts(iso: &str) -> Option<(&str, &str, &str)> {
-    let head = iso.get(..10)?;
-    let bytes = head.as_bytes();
-    let ok = bytes.iter().enumerate().all(|(i, b)| match i {
-        4 | 7 => *b == b'-',
-        _ => b.is_ascii_digit(),
-    });
-    ok.then(|| (&head[..4], &head[5..7], &head[8..10]))
-}
-
-/// `Tasks/2026/11/2026-11-10-slug.md` relative to the workspace folder.
+/// `2026-11-10-slug`: the record's date and slug.
 ///
 /// The date is the calendar date written in the timestamp (the user's local
 /// date, since timestamps carry their offset), never re-interpreted.
 #[must_use]
-pub fn task_record_path(iso: &str, title: &str) -> Option<String> {
-    let (y, m, d) = date_parts(iso)?;
-    Some(format!("Tasks/{y}/{m}/{y}-{m}-{d}-{}.md", slugify(title)))
+pub fn task_record_stem(iso: &str, title: &str) -> Option<String> {
+    let d = Date::from_iso(iso)?;
+    Some(format!(
+        "{:04}-{:02}-{:02}-{}",
+        d.year,
+        d.month,
+        d.day,
+        slugify(title)
+    ))
 }
 
-/// `Journal/2026-11-10.md` relative to the vault root.
+/// Logseq page name of a record: `Next Agent/<workspace>/Tasks/<stem>`.
+#[must_use]
+pub fn task_page_title(workspace: &str, stem: &str) -> String {
+    format!("Next Agent/{}/Tasks/{stem}", workspace_folder(workspace))
+}
+
+/// `pages/Next Agent___<workspace>___Tasks___2026-11-10-slug.md` relative to
+/// the vault root.
+#[must_use]
+pub fn task_record_path(iso: &str, workspace: &str, title: &str) -> Option<String> {
+    let stem = task_record_stem(iso, title)?;
+    Some(format!(
+        "pages/{}",
+        page_file_name(&task_page_title(workspace, &stem))
+    ))
+}
+
+/// `journals/2026_11_10.md` (Logseq's default `:journal/file-name-format`).
+/// The writer uses the vault's own format when its config sets one.
 #[must_use]
 pub fn journal_path(iso: &str) -> Option<String> {
-    let (y, m, d) = date_parts(iso)?;
-    Some(format!("Journal/{y}-{m}-{d}.md"))
+    let d = Date::from_iso(iso)?;
+    Some(format!(
+        "journals/{:04}_{:02}_{:02}.md",
+        d.year, d.month, d.day
+    ))
 }
 
-/// Journal bullet for a record stem, e.g. `- [[2026-11-10-x]] — done (auto)`.
+/// Journal block for a record page, e.g.
+/// `- [[Next Agent/my-app/Tasks/2026-11-10-x]] — done (auto)`.
 #[must_use]
-pub fn journal_line(stem: &str, status: TaskStatus, mode: &str) -> String {
+pub fn journal_line(page: &str, status: TaskStatus, mode: &str) -> String {
     let word = match status {
         TaskStatus::Completed => "done",
         other => other.as_str(),
     };
-    format!("- [[{stem}]] — {word} ({mode})")
+    format!("- [[{page}]] — {word} ({mode})")
 }
 
 /// Folder name for a workspace: path separators and control characters are
@@ -175,8 +201,8 @@ impl TaskMeta {
             .as_deref()
             .filter(|t| !t.trim().is_empty())
             .unwrap_or_else(|| self.prompt.lines().next().unwrap_or(""));
-        let one_line: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-        let title: String = one_line.chars().take(100).collect();
+        let flat = one_line(raw);
+        let title: String = flat.chars().take(100).collect();
         if title.is_empty() {
             "Untitled task".to_string()
         } else {
@@ -479,10 +505,7 @@ impl Summarizer for DeterministicSummarizer {
             } else {
                 "Agent note"
             };
-            text.push_str(&format!(
-                " {label}: {}",
-                note.split_whitespace().collect::<Vec<_>>().join(" ")
-            ));
+            text.push_str(&format!(" {label}: {}", one_line(note)));
         }
         let follow_ups = match facts.status {
             TaskStatus::Failed => vec!["Investigate the failure and retry".to_string()],
@@ -515,15 +538,23 @@ fn yaml_scalar(value: &str) -> String {
     }
 }
 
-/// Render the full record. Pure: same input, same bytes.
+/// One line of free text, safe inside a block's first line.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Render the full record for the Logseq page `page`. Pure: same input,
+/// same bytes. Frontmatter carries the metadata (Logseq reads it as page
+/// properties; `title` is the page name); the body is Logseq blocks.
 #[must_use]
-pub fn render_record(doc: &TaskDoc, facts: &TaskFacts, summary: &Summary) -> String {
+pub fn render_record(doc: &TaskDoc, facts: &TaskFacts, summary: &Summary, page: &str) -> String {
     let m = &doc.meta;
     let title = m.display_title();
     let mut out = String::new();
     out.push_str("---\ntype: task\n");
     out.push_str(&format!("id: {}\n", m.id));
-    out.push_str(&format!("title: {}\n", yaml_scalar(&title)));
+    out.push_str(&format!("title: {}\n", yaml_scalar(page)));
+    out.push_str(&format!("task: {}\n", yaml_scalar(&title)));
     out.push_str(&format!("workspace: {}\n", yaml_scalar(&m.workspace)));
     out.push_str(&format!("mode: {}\n", yaml_scalar(&m.mode)));
     out.push_str(&format!("status: {}\n", facts.status.as_str()));
@@ -535,61 +566,67 @@ pub fn render_record(doc: &TaskDoc, facts: &TaskFacts, summary: &Summary) -> Str
     out.push_str(&format!("finished: {}\n", m.finished));
     out.push_str("tags: [next-agent/task]\n---\n\n");
 
-    out.push_str(&format!("# {title}\n\n## Request\n"));
-    for line in m.prompt.lines() {
-        out.push_str(&format!("> {line}\n"));
-    }
-    if m.prompt.trim().is_empty() {
-        out.push_str("> (no prompt recorded)\n");
-    }
+    let section = |heading: &str, items: Vec<String>| {
+        Block::new(format!("## {heading}"))
+            .with_children(items.into_iter().map(Block::new).collect())
+    };
+    let none = || vec!["None.".to_string()];
 
-    out.push_str(&format!(
-        "\n## Summary\n{}\n\n## Changes\n",
-        summary.summary.trim()
-    ));
-    if facts.files.is_empty() {
-        out.push_str("No files changed.\n");
+    let request = if m.prompt.trim().is_empty() {
+        "> (no prompt recorded)".to_string()
     } else {
-        out.push_str("| File | +/− |\n|---|---|\n");
+        m.prompt
+            .lines()
+            .map(|l| format!("> {}", l.trim_end()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let changes = if facts.files.is_empty() {
+        vec!["No files changed.".to_string()]
+    } else {
+        let mut table = String::from("| File | +/− |\n|---|---|");
         for f in &facts.files {
-            out.push_str(&format!(
-                "| {} | +{} −{} |\n",
-                f.path.replace('|', "\\|"),
+            table.push_str(&format!(
+                "\n| {} | +{} −{} |",
+                one_line(&f.path).replace('|', "\\|"),
                 f.added,
                 f.removed
             ));
         }
-    }
+        vec![table]
+    };
+    let commands: Vec<String> = facts
+        .commands
+        .iter()
+        .map(|c| {
+            format!(
+                "`{}` — {}",
+                one_line(&c.command).replace('`', "'"),
+                c.outcome
+            )
+        })
+        .collect();
+    let decisions: Vec<String> = facts.decisions.iter().map(|d| one_line(&d.text)).collect();
+    let follow_ups: Vec<String> = summary
+        .follow_ups
+        .iter()
+        .map(|f| one_line(f))
+        .filter(|f| !f.is_empty())
+        .map(|f| format!("TODO {f}"))
+        .collect();
+    let or_none = |items: Vec<String>| if items.is_empty() { none() } else { items };
 
-    out.push_str("\n## Commands run\n");
-    if facts.commands.is_empty() {
-        out.push_str("None.\n");
-    }
-    for c in &facts.commands {
-        out.push_str(&format!(
-            "- `{}` — {}\n",
-            c.command.replace('`', "'"),
-            c.outcome
-        ));
-    }
-
-    out.push_str("\n## Permission decisions\n");
-    if facts.decisions.is_empty() {
-        out.push_str("None.\n");
-    }
-    for d in &facts.decisions {
-        out.push_str(&format!("- {}\n", d.text.replace('\n', " ")));
-    }
-
-    out.push_str("\n## Follow-ups\n");
-    if summary.follow_ups.is_empty() {
-        out.push_str("- [ ] \n");
-    }
-    for item in &summary.follow_ups {
-        out.push_str(&format!("- [ ] {}\n", item.trim()));
-    }
-
-    out.push_str(&format!("\n{END_MARKER}\n{NOTES_HINT}\n"));
+    let blocks = vec![
+        Block::new(format!("# {title}")),
+        section("Request", vec![request]),
+        section("Summary", vec![summary.summary.trim().to_string()]),
+        section("Changes", changes),
+        section("Commands run", or_none(commands)),
+        section("Permission decisions", or_none(decisions)),
+        section("Follow-ups", or_none(follow_ups)),
+        Block::new(format!("{END_MARKER}\n{NOTES_HINT}")),
+    ];
+    out.push_str(&Document::new(blocks).render());
     out
 }
 
@@ -633,6 +670,15 @@ pub enum VaultError {
     Audit(StoreError),
 }
 
+impl From<GraphError> for VaultError {
+    fn from(e: GraphError) -> Self {
+        match e {
+            GraphError::Io(io) => Self::Io(io),
+            other => Self::Io(std::io::Error::other(other.to_string())),
+        }
+    }
+}
+
 impl fmt::Display for VaultError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -654,37 +700,15 @@ impl From<std::io::Error> for VaultError {
 
 /// Write `contents` to `path` via a temp file in the same directory + rename,
 /// so readers see either the old file or the new one, never a partial write.
-///
-/// # Errors
-/// Any I/O failure; the temp file is removed on failure.
-pub fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
-    let dir = path.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
-    })?;
-    fs::create_dir_all(dir)?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    let result = (|| {
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(contents.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&tmp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result
-}
+/// (Shared with the notes engine.)
+pub use next_agent_graph::write_atomic;
 
-fn id_of(source: &str) -> Option<&str> {
-    let body = source.strip_prefix("---\n")?;
-    body.lines()
-        .take_while(|l| *l != "---")
-        .find_map(|l| l.strip_prefix("id: "))
-        .map(str::trim)
+/// The task id in a record's frontmatter (any line endings, quoted or not).
+fn id_of(source: &str) -> Option<String> {
+    next_agent_graph::frontmatter::parse(source)
+        .into_iter()
+        .find(|p| p.key == "id")
+        .map(|p| p.value)
 }
 
 /// Writes task records into a vault.
@@ -719,37 +743,38 @@ impl VaultWriter {
             Some(Err(_)) => (fallback(doc, &facts), true),
             None => (fallback(doc, &facts), false),
         };
-        let rendered = render_record(doc, &facts, &summary);
+        let bad_ts = || VaultError::BadTimestamp(doc.meta.finished.clone());
+        let date = Date::from_iso(&doc.meta.finished).ok_or_else(bad_ts)?;
+        let stem =
+            task_record_stem(&doc.meta.finished, &doc.meta.display_title()).ok_or_else(bad_ts)?;
 
-        let title = doc.meta.display_title();
-        let rel = task_record_path(&doc.meta.finished, &title)
-            .ok_or_else(|| VaultError::BadTimestamp(doc.meta.finished.clone()))?;
-        let journal_rel = journal_path(&doc.meta.finished)
-            .ok_or_else(|| VaultError::BadTimestamp(doc.meta.finished.clone()))?;
-        let workspace_dir = self
-            .root
-            .join("Next Agent")
-            .join(workspace_folder(&doc.meta.workspace));
+        // A vault is a Logseq graph: make sure its folders and config exist.
+        let (graph, created_config) = Graph::init(&self.root)?;
+        if created_config {
+            self.audit(
+                store,
+                doc,
+                &self.root.join(next_agent_graph::layout::CONFIG_PATH),
+                "created logseq config",
+            )?;
+        }
 
-        // Same task id keeps its file; a different task with the same
+        // Same task id keeps its page; a different task with the same
         // date+slug gets `-2`, `-3`, ... instead of overwriting.
         let id = doc.meta.id.as_str();
-        let base = workspace_dir.join(&rel);
-        let mut record_path = base.clone();
+        let mut page = task_page_title(&doc.meta.workspace, &stem);
+        let mut record_path = graph.resolve(&graph.page_rel_path(&page))?;
         for n in 2.. {
             match fs::read_to_string(&record_path) {
-                Ok(existing) if id_of(&existing) != Some(id) => {
-                    record_path = base.with_file_name(format!(
-                        "{}-{n}.md",
-                        base.file_stem()
-                            .map(|s| s.to_string_lossy())
-                            .unwrap_or_default()
-                    ));
+                Ok(existing) if id_of(&existing).as_deref() != Some(id) => {
+                    page = task_page_title(&doc.meta.workspace, &format!("{stem}-{n}"));
+                    record_path = graph.resolve(&graph.page_rel_path(&page))?;
                 }
                 _ => break,
             }
         }
 
+        let rendered = render_record(doc, &facts, &summary, &page);
         let existing = fs::read_to_string(&record_path).ok();
         let final_text = existing.as_deref().map_or_else(
             || rendered.clone(),
@@ -774,13 +799,8 @@ impl VaultWriter {
             )?;
         }
 
-        let stem = record_path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let journal_path = self.root.join(&journal_rel);
-        let journal =
-            self.update_journal(store, doc, &journal_path, &stem, facts.status, &journal_rel)?;
+        let journal_path = graph.resolve(&graph.journal_rel_path(date))?;
+        let journal = self.update_journal(store, doc, &journal_path, &page, facts.status)?;
 
         Ok(WriteOutcome {
             record_path,
@@ -796,21 +816,14 @@ impl VaultWriter {
         store: &Store,
         doc: &TaskDoc,
         path: &Path,
-        stem: &str,
+        page: &str,
         status: TaskStatus,
-        journal_rel: &str,
     ) -> Result<Change, VaultError> {
-        let line = journal_line(stem, status, &doc.meta.mode);
-        let needle = format!("[[{stem}]]");
+        let line = journal_line(page, status, &doc.meta.mode);
+        let needle = format!("[[{page}]]");
         let existing = fs::read_to_string(path).ok();
         let (text, change) = match &existing {
-            None => {
-                let date = Path::new(journal_rel)
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                (format!("# {date}\n\n{line}\n"), Change::Created)
-            }
+            None => (format!("{line}\n"), Change::Created),
             Some(old) if old.lines().any(|l| l == line) => return Ok(Change::Unchanged),
             Some(old) if old.lines().any(|l| l.contains(&needle)) => {
                 let mut replaced = false;
@@ -884,6 +897,7 @@ mod tests {
 
     const PATH_CASES: &str = include_str!("../../../fixtures/vault/path-cases.tsv");
     const GOLDEN: &str = include_str!("../../../fixtures/vault/golden-task-record.md");
+    const GOLDEN_JOURNAL: &str = include_str!("../../../fixtures/vault/golden-journal.md");
 
     fn temp(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("na-vault-{tag}-{}", std::process::id()));
@@ -980,6 +994,9 @@ mod tests {
     }
 
     const FINISHED: &str = "2026-11-10T10:09:40+03:30";
+    const PAGE: &str = "Next Agent/my-app/Tasks/2026-11-10-add-login-form-validation";
+    const RECORD_FILE: &str =
+        "pages/Next Agent___my-app___Tasks___2026-11-10-add-login-form-validation.md";
 
     #[test]
     fn slug_and_path_cases_match_shared_fixture() {
@@ -989,12 +1006,13 @@ mod tests {
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
         {
             let cols: Vec<&str> = line.split('\t').collect();
-            assert_eq!(cols.len(), 3, "bad fixture line {line:?}");
+            assert_eq!(cols.len(), 5, "bad fixture line {line:?}");
             assert_eq!(
-                task_record_path(cols[0], cols[1]).as_deref(),
-                Some(cols[2]),
+                task_record_path(cols[0], cols[1], cols[2]).as_deref(),
+                Some(cols[3]),
                 "{line}"
             );
+            assert_eq!(journal_path(cols[0]).as_deref(), Some(cols[4]), "{line}");
             checked += 1;
         }
         assert!(checked >= 6);
@@ -1007,7 +1025,7 @@ mod tests {
         let summary = DeterministicSummarizer
             .summarize(&doc, &facts)
             .expect("summary");
-        let text = render_record(&doc, &facts, &summary);
+        let text = render_record(&doc, &facts, &summary, PAGE);
         if std::env::var_os("UPDATE_GOLDEN").is_some() {
             fs::write(
                 concat!(
@@ -1065,18 +1083,16 @@ mod tests {
             .expect("write");
         assert_eq!(out.record, Change::Created);
         assert_eq!(out.journal, Change::Created);
-        assert!(out
-            .record_path
-            .ends_with("Next Agent/my-app/Tasks/2026/11/2026-11-10-add-login-form-validation.md"));
+        assert_eq!(out.record_path, vault.join(RECORD_FILE));
         assert_eq!(fs::read_to_string(&out.record_path).expect("read"), GOLDEN);
-        let journal = fs::read_to_string(vault.join("Journal/2026-11-10.md")).expect("journal");
-        assert_eq!(
-            journal,
-            "# 2026-11-10\n\n- [[2026-11-10-add-login-form-validation]] — done (auto)\n"
-        );
+        assert_eq!(out.journal_path, vault.join("journals/2026_11_10.md"));
+        let journal = fs::read_to_string(&out.journal_path).expect("journal");
+        assert_eq!(journal, GOLDEN_JOURNAL);
+        assert!(vault.join("logseq/config.edn").is_file());
+        assert!(vault.join("assets").is_dir());
         let report = store.verify_audit().expect("verify");
         assert!(report.ok);
-        assert_eq!(report.checked, 2);
+        assert_eq!(report.checked, 3, "config + record + journal");
         let _ = fs::remove_dir_all(&vault);
     }
 
@@ -1093,19 +1109,14 @@ mod tests {
             (Change::Unchanged, Change::Unchanged)
         );
         let journal = fs::read_to_string(&again.journal_path).expect("journal");
-        assert_eq!(
-            journal
-                .matches("[[2026-11-10-add-login-form-validation]]")
-                .count(),
-            1
-        );
+        assert_eq!(journal.matches(&format!("[[{PAGE}]]")).count(), 1);
         let files = fs::read_dir(again.record_path.parent().expect("dir"))
             .expect("ls")
             .count();
         assert_eq!(files, 1);
         assert_eq!(
             store.verify_audit().expect("verify").checked,
-            2,
+            3,
             "no audit noise on no-op"
         );
         let _ = fs::remove_dir_all(&vault);
@@ -1151,16 +1162,20 @@ mod tests {
     #[test]
     fn journal_appends_to_existing_day() {
         let vault = temp("journal");
-        fs::create_dir_all(vault.join("Journal")).expect("mkdir");
-        fs::write(vault.join("Journal/2026-11-10.md"), "# Notes\nmy thoughts").expect("seed");
+        fs::create_dir_all(vault.join("journals")).expect("mkdir");
+        fs::write(
+            vault.join("journals/2026_11_10.md"),
+            "- my thoughts\n\t- nested",
+        )
+        .expect("seed");
         let store = Store::open_in_memory().expect("store");
         VaultWriter::new(&vault)
             .document_task(&store, &sample(FINISHED), None)
             .expect("write");
-        let journal = fs::read_to_string(vault.join("Journal/2026-11-10.md")).expect("read");
+        let journal = fs::read_to_string(vault.join("journals/2026_11_10.md")).expect("read");
         assert_eq!(
             journal,
-            "# Notes\nmy thoughts\n- [[2026-11-10-add-login-form-validation]] — done (auto)\n"
+            format!("- my thoughts\n\t- nested\n{GOLDEN_JOURNAL}")
         );
         let _ = fs::remove_dir_all(&vault);
     }
@@ -1230,7 +1245,7 @@ mod tests {
             .expect("llm");
         assert!(!ok.used_fallback_summary);
         let text = fs::read_to_string(&ok.record_path).expect("read");
-        assert!(text.contains("LLM says hi.") && text.contains("- [ ] Ship it"));
+        assert!(text.contains("LLM says hi.") && text.contains("\t- TODO Ship it"));
 
         let vault2 = temp("summ2");
         let fell = VaultWriter::new(&vault2)
@@ -1240,6 +1255,59 @@ mod tests {
         assert_eq!(fs::read_to_string(&fell.record_path).expect("read"), GOLDEN);
         let _ = fs::remove_dir_all(&vault);
         let _ = fs::remove_dir_all(&vault2);
+    }
+
+    #[test]
+    fn record_is_a_logseq_page() {
+        let doc = Document::parse(GOLDEN);
+        assert_eq!(
+            doc.render(),
+            GOLDEN,
+            "record round-trips through the notes engine"
+        );
+        let dir = temp("logseq-page");
+        let (graph, _) = Graph::init(&dir).expect("graph");
+        assert_eq!(graph.page_name(RECORD_FILE, &doc), PAGE);
+        assert_eq!(graph.page_rel_path(PAGE), RECORD_FILE);
+        let props = doc.page_properties();
+        let prop = |k: &str| props.iter().find(|p| p.key == k).map(|p| p.value.as_str());
+        assert_eq!(prop("merged"), Some("false"));
+        assert_eq!(prop("tags"), Some("next-agent/task"));
+        assert_eq!(doc.blocks[0].content, "# Add login form validation");
+        let follow_ups = &doc.blocks[6];
+        assert_eq!(follow_ups.content, "## Follow-ups");
+        assert_eq!(
+            follow_ups.children[0].info().marker.as_deref(),
+            Some("TODO")
+        );
+        assert!(doc.blocks[7].content.starts_with(END_MARKER));
+        let journal = Document::parse(GOLDEN_JOURNAL);
+        assert!(journal.blocks[0]
+            .info()
+            .refs
+            .iter()
+            .any(|r| matches!(r, next_agent_graph::Ref::Page { name, .. } if name == PAGE)));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn honours_the_vault_journal_format_and_keeps_its_config() {
+        let vault = temp("journal-format");
+        fs::create_dir_all(vault.join("logseq")).expect("mkdir");
+        let config =
+            "{:journal/file-name-format \"yyyy-MM-dd\"\n :file/name-format :triple-lowbar}\n";
+        fs::write(vault.join("logseq/config.edn"), config).expect("config");
+        let store = Store::open_in_memory().expect("store");
+        let out = VaultWriter::new(&vault)
+            .document_task(&store, &sample(FINISHED), None)
+            .expect("write");
+        assert_eq!(out.journal_path, vault.join("journals/2026-11-10.md"));
+        assert_eq!(
+            fs::read_to_string(vault.join("logseq/config.edn")).expect("read"),
+            config
+        );
+        assert_eq!(store.verify_audit().expect("verify").checked, 2);
+        let _ = fs::remove_dir_all(&vault);
     }
 
     #[test]

@@ -1,0 +1,25 @@
+[package]
+name = "next-agent-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Notes engine: Logseq-compatible Markdown graph parser, writer, layout and SQLite index"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Index cache only (crates/graph/src/index.rs). Same version as crates/core so
+# both link one libsqlite3.
+rusqlite = { version = "0.32", features = ["bundled"] }
+notify = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+
+[lints]
+workspace = true

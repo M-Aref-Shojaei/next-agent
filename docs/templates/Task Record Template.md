@@ -7,11 +7,14 @@ tags: [template]
 
 Format written by the [[Vault Documentation Service]] for each completed task.
 
+Stored as `pages/Next Agent___<workspace>___Tasks___<date>-<slug>.md`. The frontmatter is read by Logseq as page properties. The body is Logseq blocks.
+
 ```markdown
 ---
 type: task
 id: tsk_01J…
-title: Add login form validation
+title: Next Agent/my-app/Tasks/2026-11-10-add-login-form-validation   # Logseq page name
+task: Add login form validation
 workspace: my-app
 mode: auto
 status: completed        # completed | failed | cancelled
@@ -24,29 +27,22 @@ finished: 2026-11-10T10:09:40+03:30
 tags: [next-agent/task]
 ---
 
-# Add login form validation
-
-## Request
-> original user prompt
-
-## Summary
-LLM-written 2–5 sentence summary.
-
-## Changes
-| File | +/− |
-|---|---|
-| src/login.ts | +42 −3 |
-
-## Commands run
-- `pnpm test` — ok (exit 0)
-
-## Permission decisions
-- Allowed (auto): `pnpm test`
-- Asked → Allowed by user: `curl https://api.example.com`
-
-## Follow-ups
-- [ ] …
-
-<!-- next-agent:end -->
-User notes below this line are preserved.
+- # Add login form validation
+- ## Request
+	- > original user prompt
+- ## Summary
+	- LLM-written 2–5 sentence summary.
+- ## Changes
+	- | File | +/− |
+	  |---|---|
+	  | src/login.ts | +42 −3 |
+- ## Commands run
+	- `pnpm test` — ok
+- ## Permission decisions
+	- Allowed (auto): `pnpm test`
+	- Asked → Allowed by user: `curl https://api.example.com`
+- ## Follow-ups
+	- TODO …
+- <!-- next-agent:end -->
+  User notes below this line are preserved.
 ```

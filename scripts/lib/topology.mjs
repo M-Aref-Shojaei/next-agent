@@ -114,6 +114,14 @@ const LINKS = [
     probe: (r) => sourceContains(r, "packages/vault", "fixtures/vault") && sourceContains(r, "crates/core/src", "fixtures/vault"),
   },
   {
+    from: "@next-agent/vault", to: "next-agent-graph", label: "Logseq file-name fixtures", kind: "mirror",
+    probe: (r) => sourceContains(r, "packages/vault", "page-file-names") && sourceContains(r, "crates/graph", "page-file-names"),
+  },
+  {
+    from: "next-agent-graph", to: "ext:vault", label: "Logseq graph (pages/, journals/)", kind: "external",
+    probe: (r) => exists(r, "crates/graph/src/layout.rs"),
+  },
+  {
     from: "next-agent-core", to: "ext:9router", label: "HTTP :20128/v1", kind: "external",
     probe: (r) => exists(r, "crates/core/src/router"),
   },
@@ -130,7 +138,7 @@ const LINKS = [
 const EXTERNALS = {
   "ext:9router": "9Router (user-run LLM router)",
   "ext:git": "git",
-  "ext:vault": "Markdown vault folder",
+  "ext:vault": "Markdown vault folder (Logseq graph)",
 };
 
 /** Collect the topology of the repo at `root`. */

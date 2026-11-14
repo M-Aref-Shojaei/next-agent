@@ -1,0 +1,18 @@
+# page title<TAB>file body under :file/name-format :triple-lowbar<TAB>title parsed back from the file (Logseq 0.10.9 rules; shared by crates/graph and packages/vault)
+Next Agent/my-app/Tasks/2026-11-10-x	Next Agent___my-app___Tasks___2026-11-10-x	Next Agent/my-app/Tasks/2026-11-10-x
+Plain	Plain	Plain
+a:b	a%3Ab	a:b
+what?	what%3F	what?
+"quoted" <tag> |pipe| back\slash *star	%22quoted%22 %3Ctag%3E %7Cpipe%7C back%5Cslash %2Astar	"quoted" <tag> |pipe| back\slash *star
+c#	c%23	c#
+100%	100%	100%
+50%25 off	50%2525 off	50%25 off
+.hidden	%2Ehidden	.hidden
+CON	CON___	CON
+end.	end.___	end.
+a___b	a%5F%5F%5Fb	a___b
+a_/b	a%5F___b	a_/b
+a/_b	a___%5Fb	a/_b
+/lead/	lead	lead
+snake_case	snake_case	snake_case
+日本語/ページ	日本語___ページ	日本語/ページ

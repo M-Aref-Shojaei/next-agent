@@ -1,0 +1,6 @@
+- {{embed [[Dune]]}}
+- {{embed ((64f0a1b2-1234-4abc-8def-0123456789ab))}}
+- {{video https://youtu.be/dQw4w9WgXcQ}}
+- {{poem red, blue}}
+- {{renderer :todomaster}}
+- {{cloze hidden text}}

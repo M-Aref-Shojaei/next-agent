@@ -1,0 +1,3 @@
+- trailing space   
+- tab	
+-		tab bullet

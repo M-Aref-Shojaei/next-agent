@@ -1,10 +1,12 @@
 ---
 title: Logseq
 tags: [upstream]
-status: researched
+status: in progress
 ---
 
 # Logseq — what we build in
+
+> **Status:** steps 1–2 (parser/writer, index) are built in `crates/graph`, pinned to tag 0.10.9 @ c67b8b5. See [[Notes Engine]].
 
 - Repo: https://github.com/logseq/logseq
 - Licence: **AGPL-3.0**. It is compatible with our licence (see [[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]]).
@@ -23,12 +25,12 @@ status: researched
 
 ### Blocks
 - A block is a `- ` bullet.
-- Children are indented under their parent (tab by default, *verify*).
+- Children are indented under their parent (tab by default; continuation lines are indented two spaces past the bullet).
 - A block's text continues on lines indented to its text column.
 
 ### Block properties
 - Written as `key:: value` lines right under the block's first line.
-- Keys are lowercased, and `/`, spaces and `_` become `-`.
+- Keys are lowercased, and spaces and `_` become `-` (verified in `block.cljs`; `/` is kept).
 - `id::` holds a UUID. `custom_id` and `custom-id` mean the same thing.
 - `collapsed:: true` marks a folded block.
 - These properties are hidden in the UI: `id`, `collapsed`, `heading`, `background-color`, `created-at`, `updated-at`, `query-*`, `hl-*`.
@@ -53,11 +55,9 @@ status: researched
 ### File names
 - `:file/name-format :triple-lowbar`: `___` in a filename means `/` in the page name. Other illegal characters are percent-encoded.
 
-### Our vault today
-- We write `Journal/YYYY-MM-DD.md`.
-- To be Logseq-compatible we must move journals to `journals/`, and either rename files to `yyyy_MM_dd.md` or set `:journal/file-name-format "yyyy-MM-dd"`.
-- Logseq only indexes `Tasks/…` if it sits under `pages/`.
-- Keep YAML frontmatter: Logseq reads it as page properties.
+### Our vault (since the notes engine)
+- Task records are pages under `pages/` named `Next Agent/<workspace>/Tasks/<date>-<slug>`, stored with triple-lowbar file names. The YAML frontmatter is kept (Logseq reads it as page properties).
+- Journal links are blocks in `journals/yyyy_MM_dd.md`, or whatever the vault's `:journal/file-name-format` says.
 
 ### Round-trip rule
 - Anything the parser doesn't understand is kept as opaque text and written back unchanged.

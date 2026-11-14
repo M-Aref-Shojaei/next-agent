@@ -15,7 +15,7 @@ It re-implements or ports selected features from the open-source projects below 
 | Open Design | https://github.com/nexu-io/open-design | Apache-2.0 (some bundled templates MIT, see its README) | © Open Design contributors (*verify holder in its NOTICE*) | DESIGN.md design-system format, AI design generation flow (sandboxed HTML artifacts), direction picker, self-critique, design templates (each licence checked before use). Files we derive from it state that we changed them, as Apache-2.0 §4 requires. |
 | Onlook | https://github.com/onlook-dev/onlook | Apache-2.0 | © Onlook contributors (*verify holder*) | Mapping elements to their source and writing visual edits back to code, for the Design Studio |
 | OpenUI | https://github.com/wandb/openui | Apache-2.0 | © Weights & Biases (*verify holder*) | Converting HTML to React, Svelte or Web Components |
-| Logseq | https://github.com/logseq/logseq | AGPL-3.0 | Logseq contributors | Markdown graph format (blocks, properties, refs, journals), outliner behaviour, backlinks, queries, graph view |
+| Logseq | https://github.com/logseq/logseq | AGPL-3.0 | Logseq contributors | Markdown graph format (blocks, properties, refs, journals), triple-lowbar file names, outliner behaviour, backlinks, queries, graph view. Studied tag 0.10.9 @ c67b8b5 (`crates/graph`, `packages/vault`) |
 
 ## MIT licence text (applies to code ported from the MIT projects above)
 

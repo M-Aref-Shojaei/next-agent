@@ -1,0 +1,4 @@
+- [[Outer [[Inner]] Page]]
+- [label]([[Dune]])
+- `[[not a link]]` and ``[[also code]]``
+- #[[multi word tag]] #single

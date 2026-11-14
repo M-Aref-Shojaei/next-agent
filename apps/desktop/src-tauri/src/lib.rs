@@ -1,6 +1,7 @@
 //! Tauri 2 shell for Next Agent.
 
 pub mod commands;
+pub mod notes;
 pub mod review;
 pub mod service;
 pub mod tasks;
@@ -29,6 +30,12 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let service = Arc::new(AppService::new(dir.join("next-agent.db"))?);
             app.manage(Arc::clone(&service));
+            let notes = Arc::new(notes::NotesService::new(dir.join("graph-index")));
+            let handle = app.handle().clone();
+            notes.set_listener(Arc::new(move |files| {
+                let _ = handle.emit("graph-changed", files);
+            }));
+            app.manage(notes);
             tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
             Ok(())
         })
@@ -47,6 +54,13 @@ pub fn run() {
             commands::approval_respond,
             commands::review_action,
             commands::router_health,
+            notes::graph_open,
+            notes::graph_search,
+            notes::graph_page,
+            notes::graph_backlinks,
+            notes::graph_journals,
+            notes::graph_save_page,
+            notes::graph_rebuild,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Agent");

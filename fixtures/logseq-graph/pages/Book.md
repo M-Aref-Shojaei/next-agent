@@ -1,0 +1,2 @@
+- Class page for books.
+- {{query (page-property type [[Book]])}}
