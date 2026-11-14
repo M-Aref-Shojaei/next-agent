@@ -1,0 +1,13 @@
+{:meta/version 1
+ ;; This is a trimmed copy of a real Logseq 0.10.9 config.
+ :preferred-format :markdown
+ :preferred-workflow :todo
+ :hidden ["/archive"]
+ :journal/page-title-format "MMM do, yyyy"
+ ;; :journal/file-name-format "yyyy-MM-dd"
+ :journal/file-name-format "yyyy_MM_dd"
+ :file/name-format :triple-lowbar
+ :feature/enable-journals? true
+ :default-templates {:journals ""}
+ :shortcuts {}
+ :macros {"poem" "Rose is $1, violet's $2."}}

@@ -1,0 +1,3 @@
+# Logseq round-trip corpus: bytes must stay exactly as written (CRLF, no
+# final newline, trailing spaces).
+fixtures/logseq-graph/** -text

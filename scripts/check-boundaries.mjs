@@ -11,14 +11,21 @@ import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const failures = [];
-// Owner is a file, or a directory when it ends with "/".
+// Owner is a file, or a directory when it ends with "/"; a list allows
+// several owners.
+// rusqlite has two owners on purpose: the app store, and the notes-engine
+// index (crates/graph/src/index.rs), a separate rebuildable cache of the
+// Markdown graph that must not depend on crates/core. Each crate still has
+// exactly one file that talks to SQLite.
 const TRANSPORTS = {
-  rusqlite: "crates/core/src/store.rs",
+  rusqlite: ["crates/core/src/store.rs", "crates/graph/src/index.rs"],
   reqwest: "crates/core/src/router/",
   eventsource_stream: "crates/core/src/router/",
   keyring: "crates/core/src/router/",
 };
-const owns = (owner, rel) => (owner.endsWith("/") ? rel.startsWith(owner) : rel === owner);
+const ownsOne = (owner, rel) => (owner.endsWith("/") ? rel.startsWith(owner) : rel === owner);
+const owns = (owner, rel) =>
+  Array.isArray(owner) ? owner.some((o) => ownsOne(o, rel)) : ownsOne(owner, rel);
 
 function walk(dir, out = []) {
   if (!existsSync(dir)) return out;
@@ -39,7 +46,7 @@ for (const file of walk("crates")) {
     if (owns(owner, rel)) continue;
     // `use krate…` imports and fully-qualified `krate::` paths both count.
     if (new RegExp(`(^\\s*(pub\\s+)?use\\s+${krate}\\b)|(\\b${krate}::)`, "m").test(source)) {
-      failures.push(`${rel} imports ${krate}; only ${owner} may depend on it`);
+      failures.push(`${rel} imports ${krate}; only ${[owner].flat().join(" or ")} may depend on it`);
     }
   }
 }

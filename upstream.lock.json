@@ -60,9 +60,9 @@
       "role": "apps/desktop overlay window"
     },
     "logseq": {
-      "pin": "master file-graph format (pin exact commit when porting)",
+      "pin": "0.10.9 @ c67b8b5fa47f8fe1e1954226c9bdfabd46ebb968 (last file-graph release; studied deps/graph-parser, deps/common, src/main/frontend/util/fs.cljs; ported, not bundled)",
       "licence": "AGPL-3.0",
-      "adapter": "packages/vault",
+      "adapter": "crates/graph",
       "checked": "2026-11-14",
       "risk": "medium",
       "role": "notes engine crate"
