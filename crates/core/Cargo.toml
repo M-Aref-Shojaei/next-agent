@@ -11,6 +11,7 @@ path = "src/lib.rs"
 rusqlite = { version = "0.32", features = ["bundled"] }
 next-agent-permission-engine = { path = "../permission-engine" }
 next-agent-process-manager = { path = "../process-manager" }
+next-agent-graph = { path = "../graph" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"

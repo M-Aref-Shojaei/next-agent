@@ -421,3 +421,31 @@ fn watcher_reindexes_changed_files_after_debounce() {
         .iter()
         .any(|f| f == "pages/Watched.md"));
 }
+
+#[test]
+fn file_names_match_shared_fixture() {
+    let cases = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/vault/page-file-names.tsv"),
+    )
+    .expect("fixture");
+    let mut checked = 0;
+    for line in cases
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
+        let cols: Vec<&str> = line.split('\t').collect();
+        assert_eq!(cols.len(), 3, "{line:?}");
+        assert_eq!(
+            next_agent_graph::layout::page_file_body(cols[0]),
+            cols[1],
+            "{line}"
+        );
+        assert_eq!(
+            next_agent_graph::title_from_file_body(cols[1]),
+            cols[2],
+            "{line}"
+        );
+        checked += 1;
+    }
+    assert!(checked >= 15);
+}

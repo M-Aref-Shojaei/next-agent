@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   extractWikilinks,
+  pageFileBody,
   parseFrontmatter,
   slugify,
   taskRecordPath,
+  titleFromFileBody,
 } from "../src/index.ts";
 
 test("parses frontmatter keys and inline lists", () => {
@@ -38,24 +40,15 @@ test("slugify is stable and ascii-safe", () => {
   assert.equal(slugify("a".repeat(200)).length, 80);
 });
 
-test("task record paths are nested by year and month", () => {
-  assert.equal(
-    taskRecordPath(new Date(2026, 10, 10), "Add login form"),
-    "Tasks/2026/11/2026-11-10-add-login-form.md",
-  );
-  assert.equal(
-    taskRecordPath(new Date(2026, 0, 5), "x"),
-    "Tasks/2026/01/2026-01-05-x.md",
-  );
-});
-
 import { readFileSync } from "node:fs";
 import {
   TASK_END_MARKER,
+  journalLine,
   journalPath,
   parseJournalLinks,
   parseTaskRecord,
-  taskRecordPathFromIso,
+  taskPageTitle,
+  taskRecordStem,
   workspaceFolder,
 } from "../src/index.ts";
 
@@ -68,14 +61,28 @@ test("record paths match the shared Rust/TS fixture", () => {
     .filter((l) => l && !l.startsWith("#"));
   assert.ok(cases.length >= 6);
   for (const line of cases) {
-    const [iso, title, expected] = line.split("\t");
-    assert.equal(taskRecordPathFromIso(iso, title), expected, line);
+    const [iso, workspace, title, record, journal] = line.split("\t");
+    assert.equal(taskRecordPath(iso, workspace, title), record, line);
+    assert.equal(journalPath(iso), journal, line);
+  }
+});
+
+test("page file names match the shared Rust/TS fixture (Logseq triple-lowbar)", () => {
+  const cases = fixture("page-file-names.tsv")
+    .split("\n")
+    .filter((l) => l && !l.startsWith("#"));
+  assert.ok(cases.length >= 15);
+  for (const line of cases) {
+    const [title, body, back] = line.split("\t");
+    assert.equal(pageFileBody(title), body, line);
+    assert.equal(titleFromFileBody(body), back, line);
   }
 });
 
 test("ISO dates are not shifted across timezones", () => {
-  assert.equal(journalPath("2026-12-31T23:59:59-08:00"), "Journal/2026-12-31.md");
-  assert.equal(taskRecordPathFromIso("yesterday", "x"), null);
+  assert.equal(journalPath("2026-12-31T23:59:59-08:00"), "journals/2026_12_31.md");
+  assert.equal(journalPath("2026-12-31T23:59:59-08:00", "yyyy-MM-dd"), "journals/2026-12-31.md");
+  assert.equal(taskRecordPath("yesterday", "w", "x"), null);
   assert.equal(journalPath("nope"), null);
 });
 
@@ -93,19 +100,29 @@ test("parses the golden task record written by Rust", () => {
   assert.equal(record.frontmatter.merged, "false");
   assert.deepEqual(record.frontmatter.tags, ["next-agent/task"]);
   assert.equal(record.title, "Add login form validation");
-  assert.equal(record.frontmatter.title, record.title);
+  assert.equal(record.frontmatter.task, record.title);
   assert.ok(record.userNotes?.startsWith("User notes below this line are preserved."));
   assert.ok(fixture("golden-task-record.md").includes(TASK_END_MARKER));
-  // The record path derived from its own frontmatter matches the writer's.
+  // The Logseq page name in the frontmatter is the one the writer derives.
+  const stem = taskRecordStem(String(record.frontmatter.finished), record.title);
+  assert.equal(record.frontmatter.title, taskPageTitle(String(record.frontmatter.workspace), stem ?? ""));
   assert.equal(
-    taskRecordPathFromIso(String(record.frontmatter.finished), String(record.frontmatter.title)),
-    "Tasks/2026/11/2026-11-10-add-login-form-validation.md",
+    taskRecordPath(String(record.frontmatter.finished), String(record.frontmatter.workspace), record.title),
+    "pages/Next Agent___my-app___Tasks___2026-11-10-add-login-form-validation.md",
   );
 });
 
 test("parses journal links", () => {
   const links = parseJournalLinks(
-    "# 2026-11-10\n\n- [[2026-11-10-add-login-form]] — done (auto)\n- plain bullet\n",
+    "- [[Next Agent/a/Tasks/2026-11-10-x]] — done (auto)\n- plain bullet\n",
   );
-  assert.deepEqual(links, [{ stem: "2026-11-10-add-login-form", status: "done", mode: "auto" }]);
+  assert.deepEqual(links, [{ page: "Next Agent/a/Tasks/2026-11-10-x", status: "done", mode: "auto" }]);
+});
+
+test("parses the golden journal written by Rust", () => {
+  const page = "Next Agent/my-app/Tasks/2026-11-10-add-login-form-validation";
+  assert.equal(fixture("golden-journal.md"), `${journalLine(page, "done", "auto")}\n`);
+  assert.deepEqual(parseJournalLinks(fixture("golden-journal.md")), [
+    { page, status: "done", mode: "auto" },
+  ]);
 });

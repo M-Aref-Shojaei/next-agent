@@ -1,8 +1,8 @@
-# iso<TAB>title<TAB>expected path (shared by crates/core vault.rs and packages/vault tests)
-2026-11-10T10:09:40+03:30	Add login form validation	Tasks/2026/11/2026-11-10-add-login-form-validation.md
-2026-01-05T00:00:00Z	x	Tasks/2026/01/2026-01-05-x.md
-2026-12-31T23:59:59-08:00	  Héllo, World!  	Tasks/2026/12/2026-12-31-hello-world.md
-2026-02-03T08:00:00+00:00	!!!	Tasks/2026/02/2026-02-03-untitled.md
-2026-02-03	Fix: user's "login" bug (#42)	Tasks/2026/02/2026-02-03-fix-user-s-login-bug-42.md
-2026-03-04T01:02:03Z	Ñandú ÀÉÎÕÜ ß æ 日本語	Tasks/2026/03/2026-03-04-nandu-aeiou.md
-2026-03-04T01:02:03Z	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	Tasks/2026/03/2026-03-04-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md
+# iso<TAB>workspace<TAB>title<TAB>record file<TAB>journal file (shared by crates/core vault.rs and packages/vault tests)
+2026-11-10T10:09:40+03:30	my-app	Add login form validation	pages/Next Agent___my-app___Tasks___2026-11-10-add-login-form-validation.md	journals/2026_11_10.md
+2026-01-05T00:00:00Z	x	x	pages/Next Agent___x___Tasks___2026-01-05-x.md	journals/2026_01_05.md
+2026-12-31T23:59:59-08:00	My App	  Héllo, World!  	pages/Next Agent___My App___Tasks___2026-12-31-hello-world.md	journals/2026_12_31.md
+2026-02-03T08:00:00+00:00	../../etc	!!!	pages/Next Agent___etc___Tasks___2026-02-03-untitled.md	journals/2026_02_03.md
+2026-02-03	a/b	Fix: user's "login" bug (#42)	pages/Next Agent___a-b___Tasks___2026-02-03-fix-user-s-login-bug-42.md	journals/2026_02_03.md
+2026-03-04T01:02:03Z	snake___case	Ñandú ÀÉÎÕÜ ß æ 日本語	pages/Next Agent___snake%5F%5F%5Fcase___Tasks___2026-03-04-nandu-aeiou.md	journals/2026_03_04.md
+2026-03-04T01:02:03Z	_lead	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	pages/Next Agent___%5Flead___Tasks___2026-03-04-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md	journals/2026_03_04.md

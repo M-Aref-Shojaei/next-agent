@@ -2376,6 +2376,7 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "keyring",
+ "next-agent-graph",
  "next-agent-permission-engine",
  "next-agent-process-manager",
  "reqwest 0.12.28",

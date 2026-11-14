@@ -1,0 +1,1 @@
+- [[Next Agent/my-app/Tasks/2026-11-10-add-login-form-validation]] — done (auto)

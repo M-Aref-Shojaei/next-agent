@@ -48,14 +48,6 @@ export function slugify(title: string): string {
     .slice(0, 80) || "untitled";
 }
 
-/** `Tasks/2026/11/2026-11-10-slug.md` for a given date and title. */
-export function taskRecordPath(date: Date, title: string): string {
-  const year = String(date.getFullYear());
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `Tasks/${year}/${month}/${year}-${month}-${day}-${slugify(title)}.md`;
-}
-
 /** Everything below this line in a task record belongs to the user. */
 export const TASK_END_MARKER = "<!-- next-agent:end -->";
 
@@ -64,23 +56,93 @@ function isoDateParts(iso: string): [string, string, string] | null {
   return match ? [match[1], match[2], match[3]] : null;
 }
 
+// Format follows Logseq (AGPL-3.0, © Logseq contributors) 0.10.9 @ c67b8b5:
+// src/main/frontend/util/fs.cljs `tri-lb-file-name-sanity` and
+// deps/graph-parser/src/logseq/graph_parser/util.cljs `tri-lb-title-parsing`.
+// Mirrors crates/graph/src/layout.rs; fixtures/vault/page-file-names.tsv is
+// checked by both.
+
+const RESERVED = /[:*?"<>|#\\]/u;
+const WINDOWS_RESERVED = new Set([
+  "CON", "PRN", "AUX", "NUL",
+  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+  "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+]);
+
+/** File body (no extension) for a Logseq page title: `/` becomes `___`. */
+export function pageFileBody(title: string): string {
+  let t = title;
+  if (t.startsWith("/")) t = t.slice(1);
+  if (t.endsWith("/")) t = t.slice(0, -1);
+  let s = "";
+  for (let i = 0; i < t.length; ) {
+    const ch = String.fromCodePoint(t.codePointAt(i) ?? 0);
+    if (ch === "%" && /^%[0-9a-fA-F]{2}/.test(t.slice(i))) s += "%25";
+    else if (RESERVED.test(ch)) s += `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`;
+    else s += ch;
+    i += ch.length;
+  }
+  if (s.startsWith(".")) s = `%2E${s.slice(1)}`;
+  if (WINDOWS_RESERVED.has(s) || s.endsWith(".")) s += "/";
+  return s
+    .replaceAll("___", "%5F%5F%5F")
+    .replaceAll("_/", "%5F/")
+    .replaceAll("/_", "/%5F")
+    .replaceAll("/", "___");
+}
+
+/** `<body>.md` for a page title. */
+export function pageFileName(title: string): string {
+  return `${pageFileBody(title)}.md`;
+}
+
+/** Page title for a `:triple-lowbar` file body. */
+export function titleFromFileBody(body: string): string {
+  const decoded = body
+    .replaceAll("___", "/")
+    .replace(/%[0-9a-fA-F]{2}/g, (m) => {
+      const code = Number.parseInt(m.slice(1), 16);
+      return code < 0x80 ? String.fromCharCode(code) : m;
+    });
+  return decoded.split("/").filter(Boolean).join("/");
+}
+
+
 /**
- * Same as {@link taskRecordPath} but for an ISO-8601 timestamp such as
+ * `2026-11-10-slug` for an ISO-8601 timestamp such as
  * `2026-11-10T10:09:40+03:30`. The calendar date written in the string is
  * used as-is (never shifted to another timezone), matching the Rust writer
  * in `crates/core/src/vault.rs`.
  */
-export function taskRecordPathFromIso(iso: string, title: string): string | null {
+export function taskRecordStem(iso: string, title: string): string | null {
+  const parts = isoDateParts(iso);
+  return parts ? `${parts.join("-")}-${slugify(title)}` : null;
+}
+
+/** Logseq page name of a task record: `Next Agent/<workspace>/Tasks/<stem>`. */
+export function taskPageTitle(workspace: string, stem: string): string {
+  return `Next Agent/${workspaceFolder(workspace)}/Tasks/${stem}`;
+}
+
+/** `pages/Next Agent___<workspace>___Tasks___<stem>.md`, vault-relative. */
+export function taskRecordPath(iso: string, workspace: string, title: string): string | null {
+  const stem = taskRecordStem(iso, title);
+  return stem ? `pages/${pageFileName(taskPageTitle(workspace, stem))}` : null;
+}
+
+/**
+ * `journals/2026_11_10.md` for an ISO-8601 timestamp. `format` is the
+ * vault's `:journal/file-name-format` (numeric `yyyy`, `MM`, `dd` tokens).
+ */
+export function journalPath(iso: string, format = "yyyy_MM_dd"): string | null {
   const parts = isoDateParts(iso);
   if (!parts) return null;
   const [y, m, d] = parts;
-  return `Tasks/${y}/${m}/${y}-${m}-${d}-${slugify(title)}.md`;
-}
-
-/** `Journal/2026-11-10.md` for an ISO-8601 timestamp. */
-export function journalPath(iso: string): string | null {
-  const parts = isoDateParts(iso);
-  return parts ? `Journal/${parts.join("-")}.md` : null;
+  const name = format
+    .replace(/yyyy/g, y)
+    .replace(/MM/g, m)
+    .replace(/dd/g, d);
+  return `journals/${name}.md`;
 }
 
 /** Folder name used for a workspace under `Next Agent/`. */
@@ -103,24 +165,35 @@ export interface TaskRecord {
 /** Parses a task record written by the Rust vault writer. */
 export function parseTaskRecord(source: string): TaskRecord {
   const { data, body } = parseFrontmatter(source);
-  const heading = /^# (.+)$/m.exec(body);
+  const heading = /^- # (.+)$/m.exec(body) ?? /^# (.+)$/m.exec(body);
   const at = body.indexOf(TASK_END_MARKER);
   return {
     frontmatter: data,
     title: heading ? heading[1].trim() : "",
     links: extractWikilinks(body),
-    userNotes: at === -1 ? null : body.slice(at + TASK_END_MARKER.length).replace(/^\r?\n/, ""),
+    userNotes:
+      at === -1
+        ? null
+        : body
+            .slice(at + TASK_END_MARKER.length)
+            .replace(/^\r?\n/, "")
+            .replace(/^ {2}/, ""),
   };
 }
 
-/** Journal bullets that link to task records: `- [[stem]] — done (auto)`. */
+/** Journal block linking a task record page. */
+export function journalLine(page: string, status: string, mode: string): string {
+  return `- [[${page}]] — ${status} (${mode})`;
+}
+
+/** Journal blocks that link to task records: `- [[page]] — done (auto)`. */
 export function parseJournalLinks(
   source: string,
-): { stem: string; status: string; mode: string }[] {
-  const out: { stem: string; status: string; mode: string }[] = [];
+): { page: string; status: string; mode: string }[] {
+  const out: { page: string; status: string; mode: string }[] = [];
   for (const line of source.split(/\r?\n/)) {
     const match = /^- \[\[([^\]]+)\]\] — (\S+) \(([^)]*)\)\s*$/.exec(line);
-    if (match) out.push({ stem: match[1], status: match[2], mode: match[3] });
+    if (match) out.push({ page: match[1], status: match[2], mode: match[3] });
   }
   return out;
 }
