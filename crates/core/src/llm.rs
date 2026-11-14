@@ -96,6 +96,68 @@ pub struct Completion {
     pub content: String,
     pub tool_calls: Vec<ToolCall>,
     pub finish_reason: Option<String>,
+    /// Token counts the provider reported, when it reported any. Context
+    /// compaction anchors its size estimate on this.
+    pub usage: Option<TokenUsage>,
+}
+
+/// Provider-measured token counts for one completion (`OpenAI` `usage`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    /// Prompt tokens not served from cache.
+    pub input: u64,
+    /// Prompt tokens read from the provider's prompt cache.
+    pub cache_read: u64,
+    /// Prompt tokens written to the provider's prompt cache.
+    pub cache_write: u64,
+    /// Completion tokens (visible output).
+    pub output: u64,
+    /// Hidden reasoning tokens, when reported separately.
+    pub reasoning: u64,
+}
+
+impl TokenUsage {
+    /// Everything the provider counted for this exchange: the prompt it saw
+    /// plus what it produced. This is what the next prompt will at least be.
+    #[must_use]
+    pub fn total(&self) -> u64 {
+        self.input + self.cache_read + self.cache_write + self.output + self.reasoning
+    }
+
+    /// Parse an `OpenAI`-style `usage` object (also accepts the Anthropic
+    /// field names some gateways pass through).
+    #[must_use]
+    pub fn from_json(usage: &serde_json::Value) -> Option<Self> {
+        let num = |value: Option<&serde_json::Value>| value.and_then(serde_json::Value::as_u64);
+        let prompt = num(usage.get("prompt_tokens")).or(num(usage.get("input_tokens")));
+        let output = num(usage.get("completion_tokens")).or(num(usage.get("output_tokens")));
+        if prompt.is_none() && output.is_none() {
+            return None;
+        }
+        let cache_read = num(usage.pointer("/prompt_tokens_details/cached_tokens"))
+            .or(num(usage.get("cache_read_input_tokens")))
+            .unwrap_or(0);
+        let cache_write = num(usage.get("cache_creation_input_tokens")).unwrap_or(0);
+        let reasoning =
+            num(usage.pointer("/completion_tokens_details/reasoning_tokens")).unwrap_or(0);
+        let prompt = prompt.unwrap_or(0);
+        // OpenAI's prompt_tokens includes cached tokens; Anthropic's
+        // input_tokens excludes them. Normalise to "uncached input".
+        let input = if usage.get("prompt_tokens").is_some() {
+            prompt.saturating_sub(cache_read)
+        } else {
+            prompt
+        };
+        let output = output.unwrap_or(0);
+        Some(Self {
+            input,
+            cache_read,
+            cache_write,
+            // OpenAI counts reasoning inside completion_tokens.
+            output: output.saturating_sub(reasoning),
+            reasoning,
+        })
+    }
 }
 
 /// Transport failures, mapped to clear UI errors.
@@ -157,6 +219,7 @@ pub struct StreamAccumulator {
     content: String,
     calls: BTreeMap<u64, ToolCall>,
     finish_reason: Option<String>,
+    usage: Option<TokenUsage>,
 }
 
 impl StreamAccumulator {
@@ -172,6 +235,9 @@ impl StreamAccumulator {
     pub fn push(&mut self, chunk: &serde_json::Value) -> Result<Option<String>, LlmError> {
         if let Some(error) = chunk.get("error") {
             return Err(LlmError::Protocol(format!("stream error: {error}")));
+        }
+        if let Some(usage) = chunk.get("usage").and_then(TokenUsage::from_json) {
+            self.usage = Some(usage);
         }
         let Some(choice) = chunk
             .get("choices")
@@ -240,6 +306,7 @@ impl StreamAccumulator {
             content: self.content,
             tool_calls,
             finish_reason: self.finish_reason,
+            usage: self.usage,
         }
     }
 }
@@ -259,7 +326,7 @@ mod tests {
             json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"a\"}"}}]}}]}),
             json!({"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"name":"list_dir","arguments":"{}"}}]}}]}),
             json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]}),
-            json!({"usage":{"total_tokens":3}}),
+            json!({"usage":{"prompt_tokens":120,"completion_tokens":30,"prompt_tokens_details":{"cached_tokens":100}}}),
         ];
         let deltas: Vec<String> = chunks
             .iter()
@@ -274,6 +341,26 @@ mod tests {
         assert_eq!(done.tool_calls[0].function.arguments, "{\"path\":\"a\"}");
         assert_eq!(done.tool_calls[1].id, "call_1");
         assert_eq!(done.tool_calls[1].function.name, "list_dir");
+        let usage = done.usage.expect("usage");
+        assert_eq!((usage.input, usage.cache_read, usage.output), (20, 100, 30));
+        assert_eq!(usage.total(), 150);
+    }
+
+    #[test]
+    fn usage_parses_anthropic_names_and_reasoning() {
+        let usage = TokenUsage::from_json(&json!({
+            "input_tokens": 10, "output_tokens": 5,
+            "cache_read_input_tokens": 7, "cache_creation_input_tokens": 3
+        }))
+        .expect("usage");
+        assert_eq!(usage.total(), 25);
+        let reasoning = TokenUsage::from_json(&json!({
+            "prompt_tokens": 4, "completion_tokens": 9,
+            "completion_tokens_details": {"reasoning_tokens": 6}
+        }))
+        .expect("usage");
+        assert_eq!((reasoning.output, reasoning.reasoning), (3, 6));
+        assert!(TokenUsage::from_json(&json!({"total_tokens": 3})).is_none());
     }
 
     #[test]

@@ -56,6 +56,14 @@ pub trait AgentExecutor {
     /// First step of a task.
     fn start(&mut self, spec: &TaskSpec) -> AgentStep;
 
+    /// Agent-profile restriction for a call this executor just proposed. The
+    /// runner hands it to the broker, which applies it on top of the
+    /// permission engine's decision; it can only tighten. Default: none.
+    fn floor(&self, call_id: &str, request: &ToolRequest) -> Option<crate::runner::Floor> {
+        let _ = (call_id, request);
+        None
+    }
+
     /// Next step, given the result of the previous [`AgentStep::Call`].
     ///
     /// `result` is `None` right after a non-call step.

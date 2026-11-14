@@ -12,7 +12,8 @@
 //! the policy table updatable independently of the tool implementations.
 
 use crate::events::EventKind;
-use crate::runner::{BrokerOutcome, RunContext, ToolBroker};
+use crate::runner::{BrokerOutcome, Floor, RunContext, ToolBroker};
+use crate::snapshot::StepSnapshots;
 use crate::store::{AuditEntry, RuleRow, Store, StoreError};
 use crate::tools::{ToolRequest, ToolResult};
 use next_agent_permission_engine::{
@@ -134,6 +135,7 @@ pub struct SqliteBroker<'a> {
     task_id: Option<String>,
     executor: Box<dyn ToolExecutor + 'a>,
     approver: Option<Box<dyn Approver + 'a>>,
+    snapshots: Option<Box<dyn StepSnapshots + 'a>>,
 }
 
 impl<'a> SqliteBroker<'a> {
@@ -147,7 +149,16 @@ impl<'a> SqliteBroker<'a> {
             task_id: None,
             executor: Box::new(UnavailableExecutor),
             approver: None,
+            snapshots: None,
         }
+    }
+
+    /// Capture the work tree before each allowed mutating call (per-step
+    /// undo). Requires [`SqliteBroker::for_task`] to record anything.
+    #[must_use]
+    pub fn with_snapshots(mut self, snapshots: Box<dyn StepSnapshots + 'a>) -> Self {
+        self.snapshots = Some(snapshots);
+        self
     }
 
     #[must_use]
@@ -202,7 +213,7 @@ impl<'a> SqliteBroker<'a> {
 
 impl ToolBroker for SqliteBroker<'_> {
     fn handle(&mut self, call_id: &str, request: &ToolRequest) -> BrokerOutcome {
-        self.handle_inner(None, call_id, request)
+        self.handle_inner(None, call_id, request, None)
     }
 
     fn handle_in(
@@ -211,7 +222,35 @@ impl ToolBroker for SqliteBroker<'_> {
         call_id: &str,
         request: &ToolRequest,
     ) -> BrokerOutcome {
-        self.handle_inner(Some(ctx), call_id, request)
+        self.handle_inner(Some(ctx), call_id, request, None)
+    }
+
+    fn handle_floored(
+        &mut self,
+        ctx: &RunContext<'_>,
+        call_id: &str,
+        request: &ToolRequest,
+        floor: Option<&Floor>,
+    ) -> BrokerOutcome {
+        self.handle_inner(Some(ctx), call_id, request, floor)
+    }
+}
+
+/// Apply an agent-profile floor on top of the engine's decision. Only ever
+/// tightens: Deny wins over everything, Ask replaces Allow.
+fn tighten(decision: Decision, floor: Option<&Floor>) -> Decision {
+    match (floor, decision) {
+        (None | Some(Floor::Ask(_)), decision @ (Decision::Deny { .. } | Decision::Ask { .. }))
+        | (None, decision @ Decision::Allow { .. }) => decision,
+        (Some(Floor::Deny(reason)), Decision::Deny { reason: engine }) => Decision::Deny {
+            reason: format!("{engine}; {reason}"),
+        },
+        (Some(Floor::Deny(reason)), _) => Decision::Deny {
+            reason: reason.clone(),
+        },
+        (Some(Floor::Ask(reason)), Decision::Allow { .. }) => Decision::Ask {
+            reason: reason.clone(),
+        },
     }
 }
 
@@ -221,6 +260,7 @@ impl SqliteBroker<'_> {
         ctx: Option<&RunContext<'_>>,
         call_id: &str,
         request: &ToolRequest,
+        floor: Option<&Floor>,
     ) -> BrokerOutcome {
         let decided = |decision: &str, reason: &str| {
             if let Some(ctx) = ctx {
@@ -244,7 +284,7 @@ impl SqliteBroker<'_> {
         let resolved_request = with_resolved_path(request, evaluation.resolved_path.as_deref());
         let request = &resolved_request;
 
-        let reason = match evaluation.decision.clone() {
+        let reason = match tighten(evaluation.decision.clone(), floor) {
             Decision::Allow { reason } => {
                 decided("allow", &reason);
                 reason
@@ -304,21 +344,22 @@ impl SqliteBroker<'_> {
             self.audit(request, "allow", &reason);
         }
 
-        let result = match ctx {
-            Some(ctx) => {
-                if ctx.is_cancelled() {
-                    return BrokerOutcome {
-                        decision: "allow",
-                        reason,
-                        result: ToolResult::error(call_id, "cancelled before the tool started"),
-                    };
-                }
-                ctx.events.emit(EventKind::ToolStarted {
-                    call_id: call_id.to_string(),
-                });
-                self.executor.execute_in(ctx, call_id, request)
+        let result = if let Some(ctx) = ctx {
+            if ctx.is_cancelled() {
+                return BrokerOutcome {
+                    decision: "allow",
+                    reason,
+                    result: ToolResult::error(call_id, "cancelled before the tool started"),
+                };
             }
-            None => self.executor.execute(call_id, request),
+            self.snapshot_before(Some(ctx), call_id, request);
+            ctx.events.emit(EventKind::ToolStarted {
+                call_id: call_id.to_string(),
+            });
+            self.executor.execute_in(ctx, call_id, request)
+        } else {
+            self.snapshot_before(None, call_id, request);
+            self.executor.execute(call_id, request)
         };
         BrokerOutcome {
             decision: "allow",
@@ -329,6 +370,49 @@ impl SqliteBroker<'_> {
 }
 
 impl SqliteBroker<'_> {
+    /// Best-effort capture before an allowed mutating call. A failure is
+    /// logged and never blocks the step.
+    fn snapshot_before(
+        &mut self,
+        ctx: Option<&RunContext<'_>>,
+        call_id: &str,
+        request: &ToolRequest,
+    ) {
+        if !request.is_mutating() {
+            return;
+        }
+        let (Some(snapshots), Some(task_id)) = (self.snapshots.as_mut(), self.task_id.as_deref())
+        else {
+            return;
+        };
+        let captured = match snapshots.capture() {
+            Ok(captured) => captured,
+            Err(error) => {
+                tracing::warn!(%error, call_id, "step snapshot failed");
+                return;
+            }
+        };
+        match self.store.insert_step_snapshot(
+            task_id,
+            call_id,
+            request.name(),
+            &captured.work_tree,
+            &captured.git_dir,
+            &captured.tree,
+        ) {
+            Ok(seq) => {
+                if let Some(ctx) = ctx {
+                    ctx.events.emit(EventKind::StepSnapshot {
+                        call_id: call_id.to_string(),
+                        seq,
+                        tree: captured.tree,
+                    });
+                }
+            }
+            Err(error) => tracing::warn!(%error, call_id, "step snapshot not recorded"),
+        }
+    }
+
     /// "Always for this workspace": persist a narrow rule when one exists,
     /// otherwise treat the answer as a one-time allow. Never a blanket rule.
     fn approve_for_workspace(
@@ -416,7 +500,8 @@ fn with_resolved_path(request: &ToolRequest, resolved: Option<&Path>) -> ToolReq
         ToolRequest::Read { path }
         | ToolRequest::ListDir { path }
         | ToolRequest::Write { path, .. }
-        | ToolRequest::ApplyPatch { path, .. } => *path = resolved.to_path_buf(),
+        | ToolRequest::ApplyPatch { path, .. }
+        | ToolRequest::Edit { path, .. } => *path = resolved.to_path_buf(),
         _ => {}
     }
     out
@@ -429,7 +514,8 @@ pub fn describe(request: &ToolRequest) -> String {
         ToolRequest::Read { path }
         | ToolRequest::ListDir { path }
         | ToolRequest::Write { path, .. }
-        | ToolRequest::ApplyPatch { path, .. } => path.display().to_string(),
+        | ToolRequest::ApplyPatch { path, .. }
+        | ToolRequest::Edit { path, .. } => path.display().to_string(),
         ToolRequest::Search { pattern, path } => format!("{} in {}", pattern, path.display()),
         ToolRequest::Exec { command, .. } => command.clone(),
         ToolRequest::Network { url } => url.clone(),
@@ -444,9 +530,9 @@ pub fn to_policy_request(request: &ToolRequest) -> Request {
         ToolRequest::Read { path } => Request::Read { path: path.clone() },
         ToolRequest::ListDir { path } => Request::ListDir { path: path.clone() },
         ToolRequest::Search { path, .. } => Request::Search { path: path.clone() },
-        ToolRequest::Write { path, .. } | ToolRequest::ApplyPatch { path, .. } => {
-            Request::Write { path: path.clone() }
-        }
+        ToolRequest::Write { path, .. }
+        | ToolRequest::ApplyPatch { path, .. }
+        | ToolRequest::Edit { path, .. } => Request::Write { path: path.clone() },
         ToolRequest::Exec { command, cwd } => Request::Exec {
             command: command.clone(),
             cwd: cwd.clone(),
@@ -559,6 +645,112 @@ mod tests {
         ToolRequest::Read {
             path: "/work/project/src/lib.rs".into(),
         }
+    }
+
+    fn floored(
+        broker: &mut SqliteBroker<'_>,
+        request: &ToolRequest,
+        floor: Option<&Floor>,
+    ) -> (BrokerOutcome, Vec<crate::events::AgentEvent>) {
+        let collector = crate::events::Collector::new();
+        let events = crate::events::Emitter::new(crate::task::TaskId::from_seed("floor"))
+            .with_sink(collector.clone());
+        let never = || false;
+        let ctx = RunContext {
+            events: &events,
+            cancelled: &never,
+        };
+        let outcome = broker.handle_floored(&ctx, "c1", request, floor);
+        (outcome, collector.events())
+    }
+
+    #[test]
+    fn profile_floor_only_tightens() {
+        let store = Store::open_in_memory().expect("store");
+        // Deny floor beats an engine allow.
+        let mut auto = broker(&store, Mode::Auto);
+        let (outcome, _) = floored(&mut auto, &read(), Some(&Floor::Deny("profile".into())));
+        assert_eq!(outcome.decision, "deny");
+        assert!(!outcome.result.ok);
+        // Ask floor turns an allow into an approval (approved once here).
+        let mut asking = broker(&store, Mode::Auto).with_approver(Scripted(Approval::Allow));
+        let (outcome, events) = floored(
+            &mut asking,
+            &read(),
+            Some(&Floor::Ask("profile asks".into())),
+        );
+        assert_eq!(outcome.decision, "allow");
+        assert!(events.iter().any(|e| e.data()["decision"] == "ask"));
+        // ...and fails closed with no approver.
+        let mut silent = broker(&store, Mode::Auto);
+        let (outcome, _) = floored(&mut silent, &read(), Some(&Floor::Ask("p".into())));
+        assert!(!outcome.result.ok);
+        // A floor can never loosen an engine deny.
+        let mut bypass = broker(&store, Mode::BypassPermissions);
+        let rm = ToolRequest::Exec {
+            command: "rm -rf /".into(),
+            cwd: "/work/project".into(),
+        };
+        let (outcome, _) = floored(&mut bypass, &rm, Some(&Floor::Ask("p".into())));
+        assert_eq!(outcome.decision, "deny");
+        // Tightening table.
+        let allow = || Decision::Allow { reason: "a".into() };
+        assert!(matches!(tighten(allow(), None), Decision::Allow { .. }));
+        assert!(matches!(
+            tighten(
+                Decision::Ask { reason: "x".into() },
+                Some(&Floor::Deny("d".into()))
+            ),
+            Decision::Deny { .. }
+        ));
+    }
+
+    struct CountingSnapshots(std::rc::Rc<std::cell::Cell<usize>>);
+    impl StepSnapshots for CountingSnapshots {
+        fn capture(&mut self) -> Result<crate::snapshot::CapturedStep, String> {
+            self.0.set(self.0.get() + 1);
+            Ok(crate::snapshot::CapturedStep {
+                work_tree: "/work/project".into(),
+                git_dir: "/data/snapshot/x".into(),
+                tree: format!("tree{}", self.0.get()),
+            })
+        }
+    }
+
+    #[test]
+    fn mutating_allowed_calls_are_snapshotted_first() {
+        let store = Store::open_in_memory().expect("store");
+        let count = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut broker = SqliteBroker::new(
+            &store,
+            Mode::BypassPermissions,
+            context_for("/work/project".into(), "ws_1".into(), None),
+        )
+        .with_executor(StubExecutor)
+        .with_snapshots(Box::new(CountingSnapshots(count.clone())))
+        .for_task("t1");
+        let write = ToolRequest::Write {
+            path: "/work/project/a.rs".into(),
+            contents: "x".into(),
+        };
+        let (outcome, events) = floored(&mut broker, &write, None);
+        assert!(outcome.result.ok);
+        let kinds: Vec<&str> = events.iter().map(|e| e.kind.kind()).collect();
+        assert_eq!(
+            kinds,
+            ["permission_decided", "step_snapshot", "tool_started"]
+        );
+        // Reads and denied calls are not snapshotted.
+        let _ = floored(&mut broker, &read(), None);
+        let rm = ToolRequest::Exec {
+            command: "rm -rf /".into(),
+            cwd: "/work/project".into(),
+        };
+        let _ = floored(&mut broker, &rm, None);
+        assert_eq!(count.get(), 1);
+        let rows = store.step_snapshots("t1").expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].tool, "write_file");
     }
 
     #[test]

@@ -10,6 +10,9 @@
 //! [`discard`](WorktreeProvider::discard) / [`keep`](WorktreeProvider::keep).
 //!
 //! Nothing here ever writes to the main working tree until [`merge`](WorktreeProvider::merge).
+//!
+//! [`ShadowRepo`] (per-step undo) also lives here because it spawns git: it keeps snapshots in a
+//! private `GIT_DIR` under the app data directory and never touches the user's repository.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -661,6 +664,296 @@ impl WorktreeProvider for GitCli {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Shadow-git snapshots (per-step undo)
+// ---------------------------------------------------------------------------------------------
+//
+// Design adapted from opencode (MIT, © 2025 opencode): packages/core/src/snapshot.ts @
+// cbe71595e1f370ff91b3081872b96bbe56519c41. A private git directory outside the project
+// (`<data>/snapshot/<hash(work tree)>`) records content-addressed trees of the work tree, so a
+// step can be undone without touching the user's repository, index or history.
+
+/// Untracked files larger than this are left out of snapshots.
+pub const SNAPSHOT_MAX_UNTRACKED_BYTES: u64 = 2 * 1024 * 1024;
+/// `git gc --auto` runs at most this often per shadow repository.
+const SNAPSHOT_PACK_INTERVAL_SECS: u64 = 10 * 60;
+const SNAPSHOT_PACK_STAMP: &str = "next-agent-packed-at";
+
+/// A shadow repository for one work tree (a workspace root or a task worktree).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShadowRepo {
+    /// Private `GIT_DIR` under the app data directory.
+    pub git_dir: PathBuf,
+    /// Canonical work tree the snapshots describe.
+    pub work_tree: PathBuf,
+}
+
+impl ShadowRepo {
+    /// Where the shadow repository for `work_tree` and `scope` (a task id, so two tasks on
+    /// one work tree never share an index or lock) lives under `data_dir`.
+    #[must_use]
+    pub fn location(data_dir: &Path, work_tree: &Path, scope: &str) -> PathBuf {
+        let seed = format!("{}\0{scope}", work_tree.to_string_lossy());
+        let key = crate::hash::sha256_hex(seed.as_bytes());
+        data_dir.join("snapshot").join(&key[..16])
+    }
+
+    /// Open (initialising on first use) the shadow repository for `work_tree` and `scope`.
+    ///
+    /// # Errors
+    /// [`WorktreeError::NotAGitRepo`] if `work_tree` does not exist, or git failures.
+    pub fn open(data_dir: &Path, work_tree: &Path, scope: &str) -> Result<Self> {
+        let work_tree = work_tree
+            .canonicalize()
+            .map_err(|_| WorktreeError::NotAGitRepo(work_tree.to_path_buf()))?;
+        let git_dir = Self::location(data_dir, &work_tree, scope);
+        let repo = Self { git_dir, work_tree };
+        if !repo.git_dir.join("HEAD").exists() {
+            std::fs::create_dir_all(&repo.git_dir).map_err(|e| WorktreeError::Git {
+                command: "init (create dir)".into(),
+                stderr: e.to_string(),
+            })?;
+            repo.git(&["init", "-q"])?;
+            for (key, value) in [
+                ("core.autocrlf", "false"),
+                ("core.safecrlf", "false"),
+                ("core.symlinks", "true"),
+                ("gc.auto", "256"),
+            ] {
+                repo.git(&["config", key, value])?;
+            }
+        }
+        Ok(repo)
+    }
+
+    /// Re-open an existing shadow repository from stored paths (no init).
+    #[must_use]
+    pub fn from_parts(git_dir: PathBuf, work_tree: PathBuf) -> Self {
+        Self { git_dir, work_tree }
+    }
+
+    fn git(&self, args: &[&str]) -> Result<String> {
+        let git_dir = self.git_dir.to_string_lossy().into_owned();
+        let work_tree = self.work_tree.to_string_lossy().into_owned();
+        let mut full: Vec<&str> = vec![
+            "-c",
+            "core.autocrlf=false",
+            "--literal-pathspecs",
+            "--git-dir",
+            &git_dir,
+            "--work-tree",
+            &work_tree,
+        ];
+        full.extend_from_slice(args);
+        git(&self.work_tree, &full)
+    }
+
+    /// Capture the work tree as a tree id. Respects the project's ignore files
+    /// (`.gitignore` and `.git/info/exclude`), always skips `.git` and
+    /// `.next-agent/`, and leaves out untracked files over 2 MiB.
+    ///
+    /// # Errors
+    /// Git failures.
+    pub fn capture(&self) -> Result<String> {
+        let base = self.base_excludes();
+        self.write_excludes(&base)?;
+        let untracked = self.git(&["ls-files", "--others", "--exclude-standard", "-z"])?;
+        let large: Vec<String> = nul_list(&untracked)
+            .into_iter()
+            .filter(|path| {
+                std::fs::symlink_metadata(self.work_tree.join(path))
+                    .is_ok_and(|m| m.is_file() && m.len() > SNAPSHOT_MAX_UNTRACKED_BYTES)
+            })
+            .collect();
+        if !large.is_empty() {
+            let mut excludes = base;
+            for path in &large {
+                excludes.push('/');
+                excludes.push_str(&escape_exclude(path));
+                excludes.push('\n');
+            }
+            self.write_excludes(&excludes)?;
+        }
+        self.git(&["add", "-A", "--", "."])?;
+        let tree = self.git(&["write-tree"])?.trim().to_owned();
+        self.pack_when_due();
+        Ok(tree)
+    }
+
+    /// Paths (work-tree relative, `/`-separated) that differ between `from` and `to`, or
+    /// between `from` and the current work tree when `to` is `None`.
+    ///
+    /// # Errors
+    /// Git failures.
+    pub fn files(&self, from: &str, to: Option<&str>) -> Result<Vec<String>> {
+        let to = self.target(to)?;
+        let out = self.git(&["diff", "--name-only", "--no-renames", "-z", from, &to])?;
+        Ok(nul_list(&out))
+    }
+
+    /// Structured diff between two trees (or `from` and the current work tree).
+    ///
+    /// # Errors
+    /// Git failures.
+    pub fn diff(&self, from: &str, to: Option<&str>) -> Result<StructuredDiff> {
+        let to = self.target(to)?;
+        let raw = self.git(&[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-renames",
+            "-U3",
+            from,
+            &to,
+        ])?;
+        Ok(parse_unified_diff(&raw))
+    }
+
+    /// `to`, or a fresh capture of the work tree when `None`.
+    fn target(&self, to: Option<&str>) -> Result<String> {
+        match to {
+            Some(tree) => Ok(tree.to_owned()),
+            None => self.capture(),
+        }
+    }
+
+    /// Restore `paths` to their content in `tree`. A path absent from `tree` is removed.
+    /// Every path must be relative and stay inside the work tree (no `..`, no absolute
+    /// paths, no `.git`, no symlinked parent leading outside); otherwise nothing is restored.
+    ///
+    /// # Errors
+    /// [`WorktreeError::Git`] naming the offending path, or git failures.
+    pub fn restore(&self, tree: &str, paths: &[String]) -> Result<()> {
+        for path in paths {
+            self.check_inside(path)?;
+        }
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut args: Vec<&str> = vec!["ls-tree", "-r", "-z", "--name-only", tree, "--"];
+        args.extend(paths.iter().map(String::as_str));
+        let present: std::collections::HashSet<String> =
+            nul_list(&self.git(&args)?).into_iter().collect();
+        let (keep, gone): (Vec<&String>, Vec<&String>) =
+            paths.iter().partition(|path| present.contains(*path));
+        if !keep.is_empty() {
+            let mut args: Vec<&str> = vec!["checkout", tree, "--"];
+            args.extend(keep.iter().map(|p| p.as_str()));
+            self.git(&args)?;
+        }
+        for path in gone {
+            let full = self.work_tree.join(path);
+            match std::fs::symlink_metadata(&full) {
+                Ok(meta) if meta.is_dir() => {
+                    let _ = std::fs::remove_dir_all(&full);
+                }
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&full);
+                }
+                Err(_) => {}
+            }
+            // Drop now-empty parent directories the step created.
+            let mut parent = full.parent();
+            while let Some(dir) = parent {
+                if dir == self.work_tree || std::fs::remove_dir(dir).is_err() {
+                    break;
+                }
+                parent = dir.parent();
+            }
+        }
+        Ok(())
+    }
+
+    /// Restore the whole work tree to `tree`; returns the paths that changed.
+    ///
+    /// # Errors
+    /// Git failures.
+    pub fn restore_all(&self, tree: &str) -> Result<Vec<String>> {
+        let changed = self.files(tree, None)?;
+        self.restore(tree, &changed)?;
+        Ok(changed)
+    }
+
+    fn check_inside(&self, path: &str) -> Result<()> {
+        let reject = |why: &str| {
+            Err(WorktreeError::Git {
+                command: "restore".into(),
+                stderr: format!("path escapes the work tree ({why}): {path}"),
+            })
+        };
+        let relative = Path::new(path);
+        if path.is_empty() || relative.is_absolute() || relative.has_root() {
+            return reject("absolute");
+        }
+        for component in relative.components() {
+            match component {
+                // Case-insensitive: `.GIT` is the same directory on macOS and Windows.
+                std::path::Component::Normal(name)
+                    if name.to_string_lossy().eq_ignore_ascii_case(".git") =>
+                {
+                    return reject(".git")
+                }
+                std::path::Component::Normal(_) => {}
+                _ => return reject("not a plain relative path"),
+            }
+        }
+        // A symlinked directory on the way must not lead outside. The final component may
+        // itself be a symlink (restoring the link, not its target), so only its parent counts.
+        let full = self.work_tree.join(relative);
+        let parent = full.parent().unwrap_or(&full);
+        match crate::workspace::canonicalize_lenient(parent) {
+            Ok(real) if real.starts_with(&self.work_tree) => Ok(()),
+            _ => reject("outside"),
+        }
+    }
+
+    fn base_excludes(&self) -> String {
+        let mut excludes = String::from("/.git\n/.next-agent/\n");
+        if let Ok(project) = std::fs::read_to_string(self.work_tree.join(".git/info/exclude")) {
+            excludes.push_str(&project);
+            excludes.push('\n');
+        }
+        excludes
+    }
+
+    fn write_excludes(&self, contents: &str) -> Result<()> {
+        let info = self.git_dir.join("info");
+        std::fs::create_dir_all(&info)
+            .and_then(|()| std::fs::write(info.join("exclude"), contents))
+            .map_err(|e| WorktreeError::Git {
+                command: "write info/exclude".into(),
+                stderr: e.to_string(),
+            })
+    }
+
+    fn pack_when_due(&self) {
+        let stamp = self.git_dir.join(SNAPSHOT_PACK_STAMP);
+        let now = std::time::SystemTime::now();
+        let due = std::fs::metadata(&stamp)
+            .and_then(|m| m.modified())
+            .map_or(true, |at| {
+                now.duration_since(at)
+                    .is_ok_and(|age| age.as_secs() >= SNAPSHOT_PACK_INTERVAL_SECS)
+            });
+        if due {
+            let _ = std::fs::write(&stamp, b"");
+            let _ = self.git(&["gc", "--auto", "--quiet"]);
+        }
+    }
+}
+
+/// Escape gitignore metacharacters so a path matches literally.
+fn escape_exclude(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        if matches!(c, '\\' | '*' | '?' | '[' | '!' | '#' | ' ') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------------------
 // Unified diff parser
 // ---------------------------------------------------------------------------------------------
 
@@ -1201,5 +1494,111 @@ mod tests {
         assert_eq!(f.hunks[0].section, "fn a");
         assert_eq!((f.hunks[1].old_start, f.hunks[1].old_lines), (10, 1));
         assert_eq!((f.additions, f.deletions), (2, 2));
+    }
+
+    // --- shadow snapshots ------------------------------------------------------------------
+
+    #[test]
+    fn shadow_capture_and_restore_round_trip() {
+        let repo = init_repo();
+        let data = TempDir::new();
+        let before = snapshot(repo.path());
+        let shadow = ShadowRepo::open(data.path(), repo.path(), "t1").unwrap();
+        assert!(shadow.git_dir.starts_with(data.path()));
+        let tree = shadow.capture().unwrap();
+        assert_eq!(tree.len(), 40);
+        // Capturing again with no change yields the same tree.
+        assert_eq!(shadow.capture().unwrap(), tree);
+
+        std::fs::write(repo.path().join("a.txt"), "changed\n").unwrap();
+        std::fs::create_dir_all(repo.path().join("new/dir")).unwrap();
+        std::fs::write(repo.path().join("new/dir/c.txt"), "c\n").unwrap();
+        std::fs::remove_file(repo.path().join("b.txt")).unwrap();
+        let mut changed = shadow.files(&tree, None).unwrap();
+        changed.sort();
+        assert_eq!(changed, ["a.txt", "b.txt", "new/dir/c.txt"]);
+        let diff = shadow.diff(&tree, None).unwrap();
+        assert_eq!(diff.files.len(), 3);
+
+        let mut restored = shadow.restore_all(&tree).unwrap();
+        restored.sort();
+        assert_eq!(restored, ["a.txt", "b.txt", "new/dir/c.txt"]);
+        assert!(!repo.path().join("new").exists());
+        // The user's repo (HEAD, index, status, content) is exactly as before.
+        assert_eq!(snapshot(repo.path()), before);
+    }
+
+    #[test]
+    fn shadow_snapshots_respect_ignores_and_size_limit() {
+        let repo = init_repo();
+        let data = TempDir::new();
+        std::fs::write(repo.path().join(".gitignore"), "target/\n").unwrap();
+        std::fs::create_dir_all(repo.path().join("target")).unwrap();
+        std::fs::write(repo.path().join("target/out.bin"), "x").unwrap();
+        std::fs::create_dir_all(repo.path().join(".next-agent/agents")).unwrap();
+        std::fs::write(repo.path().join(".next-agent/agents/a.md"), "x").unwrap();
+        let big = vec![b'x'; usize::try_from(SNAPSHOT_MAX_UNTRACKED_BYTES).unwrap() + 1];
+        std::fs::write(repo.path().join("big.dat"), big).unwrap();
+        let shadow = ShadowRepo::open(data.path(), repo.path(), "t1").unwrap();
+        let tree = shadow.capture().unwrap();
+        let listed = shadow
+            .git(&["ls-tree", "-r", "--name-only", &tree])
+            .unwrap();
+        let listed: Vec<&str> = listed.lines().collect();
+        assert!(listed.contains(&"a.txt"));
+        assert!(listed.contains(&".gitignore"));
+        assert!(!listed.iter().any(|p| p.starts_with("target")));
+        assert!(!listed.iter().any(|p| p.starts_with(".next-agent")));
+        assert!(!listed.contains(&"big.dat"));
+    }
+
+    #[test]
+    fn shadow_restore_rejects_paths_outside_the_work_tree() {
+        let repo = init_repo();
+        let data = TempDir::new();
+        let shadow = ShadowRepo::open(data.path(), repo.path(), "t1").unwrap();
+        let tree = shadow.capture().unwrap();
+        for bad in [
+            "../escape.txt",
+            "/etc/passwd",
+            "a/../../x",
+            ".git/config",
+            ".GIT/hooks/pre-commit",
+            "sub/.Git/x",
+            "",
+        ] {
+            let err = shadow.restore(&tree, &[bad.to_string()]).unwrap_err();
+            assert!(err.to_string().contains("escapes"), "{bad}: {err}");
+        }
+        #[cfg(unix)]
+        {
+            let outside = TempDir::new();
+            std::os::unix::fs::symlink(outside.path(), repo.path().join("link")).unwrap();
+            let err = shadow
+                .restore(&tree, &["link/file.txt".to_string()])
+                .unwrap_err();
+            assert!(err.to_string().contains("escapes"), "{err}");
+        }
+        // One bad path means nothing is restored.
+        std::fs::write(repo.path().join("a.txt"), "edited\n").unwrap();
+        assert!(shadow
+            .restore(&tree, &["a.txt".to_string(), "../x".to_string()])
+            .is_err());
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
+            "edited\n"
+        );
+    }
+
+    #[test]
+    fn shadow_repo_location_is_keyed_by_work_tree() {
+        let data = Path::new("/data");
+        let a = ShadowRepo::location(data, Path::new("/w/one"), "t1");
+        let b = ShadowRepo::location(data, Path::new("/w/two"), "t1");
+        let other_task = ShadowRepo::location(data, Path::new("/w/one"), "t2");
+        assert_ne!(a, b);
+        assert_ne!(a, other_task);
+        assert!(a.starts_with("/data/snapshot"));
+        assert_eq!(a, ShadowRepo::location(data, Path::new("/w/one"), "t1"));
     }
 }

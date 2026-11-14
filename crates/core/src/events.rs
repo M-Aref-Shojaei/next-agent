@@ -104,6 +104,44 @@ pub enum EventKind {
         /// Truncated tool output for the timeline.
         summary: String,
     },
+    /// The built-in loop replaced older history with a checkpoint summary
+    /// (or tried to: `ok == false` carries the error).
+    ContextCompacted {
+        /// `auto` (estimate reached the ceiling) or `overflow` (provider
+        /// rejected the prompt as too long).
+        reason: String,
+        ok: bool,
+        tokens_before: u64,
+        tokens_after: u64,
+        kept_messages: usize,
+        summary_chars: usize,
+        error: Option<String>,
+    },
+    /// The work tree was captured before a mutating step (per-step undo).
+    StepSnapshot {
+        call_id: String,
+        seq: i64,
+        tree: String,
+    },
+    /// A subagent started under this task. Its tool calls appear in this
+    /// task's timeline with call ids prefixed by `subagent_id`.
+    SubagentStarted {
+        subagent_id: String,
+        parent_call_id: String,
+        profile: String,
+        goal: String,
+        depth: usize,
+    },
+    SubagentFinished {
+        subagent_id: String,
+        /// `completed` or `failed`.
+        status: String,
+        /// `done`, `max_steps`, `error`, `cancelled`.
+        exit_reason: String,
+        truncated: bool,
+        schema_valid: Option<bool>,
+        steps: usize,
+    },
     TaskCompleted {
         summary: String,
     },
@@ -129,6 +167,10 @@ impl EventKind {
             Self::ToolStarted { .. } => "tool_started",
             Self::ToolOutput { .. } => "tool_output",
             Self::ToolFinished { .. } => "tool_finished",
+            Self::ContextCompacted { .. } => "context_compacted",
+            Self::StepSnapshot { .. } => "step_snapshot",
+            Self::SubagentStarted { .. } => "subagent_started",
+            Self::SubagentFinished { .. } => "subagent_finished",
             Self::TaskCompleted { .. } => "task_completed",
             Self::TaskFailed { .. } => "task_failed",
             Self::TaskCancelled => "task_cancelled",
@@ -495,6 +537,35 @@ mod tests {
             },
             EventKind::ToolStarted {
                 call_id: "c".into(),
+            },
+            EventKind::ContextCompacted {
+                reason: "auto".into(),
+                ok: true,
+                tokens_before: 10,
+                tokens_after: 2,
+                kept_messages: 1,
+                summary_chars: 5,
+                error: None,
+            },
+            EventKind::StepSnapshot {
+                call_id: "c".into(),
+                seq: 1,
+                tree: "t".into(),
+            },
+            EventKind::SubagentStarted {
+                subagent_id: "sub1".into(),
+                parent_call_id: "c".into(),
+                profile: "explore".into(),
+                goal: "g".into(),
+                depth: 1,
+            },
+            EventKind::SubagentFinished {
+                subagent_id: "sub1".into(),
+                status: "completed".into(),
+                exit_reason: "done".into(),
+                truncated: false,
+                schema_valid: None,
+                steps: 2,
             },
             EventKind::ToolOutput {
                 call_id: "c".into(),

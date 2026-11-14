@@ -488,5 +488,6 @@ async fn builtin_executor_runs_a_tool_loop_against_the_router() {
         .and_then(|messages| messages.iter().find(|m| m["role"] == "tool"))
         .expect("tool message");
     assert_eq!(tool_message["tool_call_id"], "call_r");
-    assert_eq!(second["tools"].as_array().map(Vec::len), Some(7));
+    // Eight file/system tools plus `subagent`.
+    assert_eq!(second["tools"].as_array().map(Vec::len), Some(9));
 }

@@ -49,6 +49,60 @@ pub trait ToolBroker {
         });
         outcome
     }
+
+    /// [`ToolBroker::handle_in`] under an agent-profile [`Floor`].
+    ///
+    /// The default handles `Deny` itself and fails closed on `Ask` (a broker
+    /// that cannot prompt must not run the call); brokers with an approval
+    /// channel override this to prompt instead.
+    fn handle_floored(
+        &mut self,
+        ctx: &RunContext<'_>,
+        call_id: &str,
+        request: &ToolRequest,
+        floor: Option<&Floor>,
+    ) -> BrokerOutcome {
+        let reason = match floor {
+            None => return self.handle_in(ctx, call_id, request),
+            Some(Floor::Deny(reason)) => reason.clone(),
+            Some(Floor::Ask(reason)) => {
+                format!("{reason} (approval required, but this broker cannot ask)")
+            }
+        };
+        ctx.events.emit(EventKind::PermissionDecided {
+            call_id: call_id.to_string(),
+            decision: "deny".into(),
+            reason: reason.clone(),
+        });
+        BrokerOutcome {
+            decision: "deny",
+            reason: reason.clone(),
+            result: ToolResult::error(call_id, reason),
+        }
+    }
+}
+
+/// The least restrictive outcome an agent profile allows for one call.
+///
+/// A floor can only *tighten* the permission engine's decision: `Deny` turns
+/// anything into a denial, `Ask` turns an `Allow` into an approval prompt. It
+/// can never turn a denial or a prompt into an allow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Floor {
+    Ask(String),
+    Deny(String),
+}
+
+impl Floor {
+    /// The stricter of two floors: deny beats ask beats none.
+    #[must_use]
+    pub fn strictest(a: Option<Self>, b: Option<Self>) -> Option<Self> {
+        match (a, b) {
+            (Some(Self::Deny(r)), _) | (_, Some(Self::Deny(r))) => Some(Self::Deny(r)),
+            (Some(Self::Ask(r)), _) | (_, Some(Self::Ask(r))) => Some(Self::Ask(r)),
+            _ => None,
+        }
+    }
 }
 
 /// Broker verdict for one call.
@@ -60,7 +114,7 @@ pub struct BrokerOutcome {
 }
 
 /// Upper bound on steps so a misbehaving executor cannot loop forever.
-pub const MAX_STEPS: usize = 200;
+pub const MAX_STEPS: usize = 2_000;
 
 /// Longest tool output copied into a `tool_finished` summary.
 pub const SUMMARY_LIMIT: usize = 2_000;
@@ -121,7 +175,8 @@ pub fn run_task_with(
                     tool: request.name().to_string(),
                     args: request.args_json(),
                 });
-                let outcome = broker.handle_in(ctx, &call_id, &request);
+                let floor = executor.floor(&call_id, &request);
+                let outcome = broker.handle_floored(ctx, &call_id, &request, floor.as_ref());
                 events.emit(EventKind::ToolFinished {
                     call_id,
                     ok: outcome.result.ok,

@@ -14,6 +14,7 @@ use crate::agent::{AgentExecutor, TaskSpec};
 use crate::broker::{describe, Approval, Approver, SqliteBroker, ToolExecutor};
 use crate::events::{AgentEvent, Emitter, EventKind, StoreSink};
 use crate::runner::{run_task_with, RunContext};
+use crate::snapshot::StepSnapshots;
 use crate::store::Store;
 use crate::task::{TaskId, TaskStatus};
 use crate::tools::ToolRequest;
@@ -173,6 +174,15 @@ pub struct TaskLaunch {
     pub tools: Box<dyn ToolExecutor + Send>,
 }
 
+/// Optional extras for [`spawn_task_with`]. Kept apart from [`TaskLaunch`]
+/// so existing launch sites keep compiling.
+#[derive(Default)]
+pub struct TaskOptions {
+    /// Capture the work tree before each mutating step (per-step undo, see
+    /// [`crate::snapshot`]).
+    pub snapshots: Option<Box<dyn StepSnapshots + Send>>,
+}
+
 /// A running task. Dropping the handle does not cancel the task.
 #[derive(Debug)]
 pub struct TaskHandle {
@@ -232,13 +242,19 @@ impl TaskHandle {
 /// tool execution never stall an async runtime.
 #[must_use]
 pub fn spawn_task(launch: TaskLaunch) -> TaskHandle {
+    spawn_task_with(launch, TaskOptions::default())
+}
+
+/// [`spawn_task`] with [`TaskOptions`] (e.g. per-step snapshots).
+#[must_use]
+pub fn spawn_task_with(launch: TaskLaunch, options: TaskOptions) -> TaskHandle {
     let control = TaskControl::new();
     let (sender, events) = mpsc::channel();
     let task_id = launch.spec.id.clone();
     let thread_control = Arc::clone(&control);
     let join = std::thread::Builder::new()
         .name(format!("task-{task_id}"))
-        .spawn(move || run_launch(launch, &thread_control, sender))
+        .spawn(move || run_launch(launch, options, &thread_control, sender))
         .unwrap_or_else(|error| {
             // Spawning only fails on resource exhaustion; surface it through
             // `join` like any other startup failure.
@@ -255,6 +271,7 @@ pub fn spawn_task(launch: TaskLaunch) -> TaskHandle {
 
 fn run_launch(
     launch: TaskLaunch,
+    options: TaskOptions,
     control: &Arc<TaskControl>,
     forward: Sender<AgentEvent>,
 ) -> Result<TaskStatus, String> {
@@ -278,6 +295,9 @@ fn run_launch(
         .for_task(task_id.clone())
         .with_boxed_executor(tools)
         .with_approver(ChannelApprover::new(Arc::clone(control), events.clone()));
+    if let Some(snapshots) = options.snapshots {
+        broker = broker.with_snapshots(snapshots);
+    }
     broker.load_rules().map_err(|error| error.to_string())?;
 
     let cancelled = || control.is_cancelled();

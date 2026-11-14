@@ -24,6 +24,14 @@ pub enum ToolRequest {
         path: PathBuf,
         patch: String,
     },
+    /// Find-and-replace in one file with tiered matching
+    /// ([`crate::edit_match`]). Policy treats it as a write.
+    Edit {
+        path: PathBuf,
+        old_string: String,
+        new_string: String,
+        replace_all: bool,
+    },
     Exec {
         command: String,
         cwd: PathBuf,
@@ -44,7 +52,7 @@ impl ToolRequest {
             Self::Read { .. } => "read_file",
             Self::ListDir { .. } => "list_dir",
             Self::Search { .. } => "search",
-            Self::Write { .. } | Self::ApplyPatch { .. } => "write_file",
+            Self::Write { .. } | Self::ApplyPatch { .. } | Self::Edit { .. } => "write_file",
             Self::Exec { .. } => "run_command",
             Self::Network { .. } => "http_fetch",
             Self::AskUser { .. } => "ask_user",
@@ -52,12 +60,13 @@ impl ToolRequest {
     }
 
     /// Agent-facing tool name (what the model called). Differs from
-    /// [`ToolRequest::kind`] only for `apply_patch`, which policy, rules and
-    /// audit treat as `write_file`.
+    /// [`ToolRequest::kind`] only for `apply_patch` and `edit`, which policy,
+    /// rules and audit treat as `write_file`.
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
             Self::ApplyPatch { .. } => "apply_patch",
+            Self::Edit { .. } => "edit",
             other => other.kind(),
         }
     }
@@ -67,7 +76,7 @@ impl ToolRequest {
     pub fn is_mutating(&self) -> bool {
         matches!(
             self,
-            Self::Write { .. } | Self::ApplyPatch { .. } | Self::Exec { .. }
+            Self::Write { .. } | Self::ApplyPatch { .. } | Self::Edit { .. } | Self::Exec { .. }
         )
     }
 
@@ -81,6 +90,17 @@ impl ToolRequest {
             Self::Search { pattern, path } => json!({ "pattern": pattern, "path": path }),
             Self::Write { path, contents } => json!({ "path": path, "bytes": contents.len() }),
             Self::ApplyPatch { path, patch } => json!({ "path": path, "patch": patch }),
+            Self::Edit {
+                path,
+                old_string,
+                new_string,
+                replace_all,
+            } => json!({
+                "path": path,
+                "old_string": old_string,
+                "new_string": new_string,
+                "replace_all": replace_all,
+            }),
             Self::Exec { command, cwd } => json!({ "command": command, "cwd": cwd }),
             Self::Network { url } => json!({ "url": url }),
             Self::AskUser { question } => json!({ "question": question }),
@@ -96,6 +116,7 @@ impl ToolRequest {
             | Self::Search { path, .. }
             | Self::Write { path, .. }
             | Self::ApplyPatch { path, .. }
+            | Self::Edit { path, .. }
             | Self::Exec { cwd: path, .. } => Some(path),
             Self::Network { .. } | Self::AskUser { .. } => None,
         }
@@ -209,6 +230,20 @@ mod tests {
         };
         assert_eq!(write.name(), "write_file");
         assert_eq!(write.args_json()["bytes"], 3);
+    }
+
+    #[test]
+    fn edit_is_a_write_for_policy() {
+        let edit = ToolRequest::Edit {
+            path: PathBuf::from("/w/a"),
+            old_string: "a".into(),
+            new_string: "b".into(),
+            replace_all: false,
+        };
+        assert_eq!(edit.kind(), "write_file");
+        assert_eq!(edit.name(), "edit");
+        assert!(edit.is_mutating());
+        assert_eq!(edit.args_json()["old_string"], "a");
     }
 
     #[test]

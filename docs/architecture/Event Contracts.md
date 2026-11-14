@@ -32,6 +32,10 @@ Rust types in `crates/core` are the source of truth; TypeScript types and JSON S
 | `mode_changed` | from, to, by |
 | `task_completed` / `task_failed` / `task_cancelled` | summary / error |
 | `vault_record_written` | path |
+| `context_compacted` | reason (`auto`/`overflow`), ok, tokens_before, tokens_after, kept_messages, summary_chars, error? |
+| `step_snapshot` | call_id, seq, tree (work tree captured before a mutating step; per-step undo) |
+| `subagent_started` | subagent_id, parent_call_id, profile, goal, depth (child tool events follow with call ids `<subagent_id>.<call_id>`) |
+| `subagent_finished` | subagent_id, status, exit_reason, truncated, schema_valid?, steps |
 
 ## Transport
 - UI: Tauri `Channel<AgentEvent>` per subscribed task; commands via `invoke`.
