@@ -615,7 +615,21 @@ pub enum FileKind {
 #[derive(Debug, Clone)]
 pub struct Graph {
     root: PathBuf,
+    /// `root` with symlinks resolved, for containment checks.
+    real_root: PathBuf,
     config: GraphConfig,
+    /// Modification time of `config.edn` when it was last read.
+    config_mtime: Option<std::time::SystemTime>,
+}
+
+fn load_config(root: &Path) -> (GraphConfig, Option<std::time::SystemTime>) {
+    let path = root.join(CONFIG_PATH);
+    let mtime = fs::metadata(&path).and_then(|m| m.modified()).ok();
+    let config = fs::read_to_string(&path).map_or_else(
+        |_| GraphConfig::default(),
+        |text| GraphConfig::from_edn(&text),
+    );
+    (config, mtime)
 }
 
 /// Write via a temp file in the same folder + rename, so readers see the
@@ -632,8 +646,16 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
     let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    // A leftover temp file is ours to replace; `create_new` then refuses to
+    // follow a symlink planted at the temp path.
+    if fs::symlink_metadata(&tmp).is_ok() {
+        fs::remove_file(&tmp)?;
+    }
     let result = (|| {
-        let mut file = fs::File::create(&tmp)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
         fs::rename(&tmp, path)
@@ -655,11 +677,14 @@ impl Graph {
         if !root.is_dir() {
             return Err(GraphError::NotFound(root));
         }
-        let config = match fs::read_to_string(root.join(CONFIG_PATH)) {
-            Ok(text) => GraphConfig::from_edn(&text),
-            Err(_) => GraphConfig::default(),
-        };
-        Ok(Self { root, config })
+        let (config, config_mtime) = load_config(&root);
+        let real_root = root.canonicalize()?;
+        Ok(Self {
+            root,
+            real_root,
+            config,
+            config_mtime,
+        })
     }
 
     /// Create the graph folders and a minimal `logseq/config.edn` when
@@ -693,12 +718,32 @@ impl Graph {
         &self.config
     }
 
-    /// Re-read `logseq/config.edn`.
-    pub fn reload_config(&mut self) {
-        self.config = match fs::read_to_string(self.root.join(CONFIG_PATH)) {
-            Ok(text) => GraphConfig::from_edn(&text),
-            Err(_) => GraphConfig::default(),
-        };
+    /// Re-read `logseq/config.edn` if its modification time changed (one
+    /// `stat` otherwise). Returns `true` when the settings we use changed;
+    /// [`crate::Index::sync`] then rebuilds, since page names depend on them.
+    pub fn reload_config(&mut self) -> bool {
+        let mtime = fs::metadata(self.root.join(CONFIG_PATH))
+            .and_then(|m| m.modified())
+            .ok();
+        if mtime.is_some() && mtime == self.config_mtime {
+            return false;
+        }
+        let (config, mtime) = load_config(&self.root);
+        self.config_mtime = mtime;
+        let changed = config != self.config;
+        self.config = config;
+        changed
+    }
+
+    /// True when the folder already looks like a Logseq graph, or is empty.
+    #[must_use]
+    pub fn looks_like_graph(root: &Path) -> bool {
+        ["logseq", PAGES_DIR, JOURNALS_DIR]
+            .iter()
+            .any(|d| root.join(d).is_dir())
+            || fs::read_dir(root).is_ok_and(|mut entries| {
+                entries.all(|e| e.is_ok_and(|e| e.file_name().to_string_lossy().starts_with('.')))
+            })
     }
 
     /// Journal page title, e.g. `Nov 14th, 2026`.
@@ -723,20 +768,41 @@ impl Graph {
     }
 
     /// Absolute path for a graph-relative path, refusing anything that
-    /// would leave the graph folder.
+    /// would leave the graph folder: absolute paths, `..`, control
+    /// characters, and symlinks (on the file or any folder above it) that
+    /// point outside the graph.
     ///
     /// # Errors
-    /// [`GraphError::BadPath`] for absolute paths or `..`.
+    /// [`GraphError::BadPath`] for such paths.
     pub fn resolve(&self, rel: &str) -> Result<PathBuf, GraphError> {
+        let bad = || GraphError::BadPath(rel.to_string());
         let path = Path::new(rel);
         if rel.is_empty()
+            || rel.chars().any(char::is_control)
             || path
                 .components()
                 .any(|c| !matches!(c, Component::Normal(_)))
         {
-            return Err(GraphError::BadPath(rel.to_string()));
+            return Err(bad());
         }
-        Ok(self.root.join(path))
+        let full = self.root.join(path);
+        // The deepest part of the path that exists must resolve inside the
+        // graph root (whatever does not exist yet will be created there).
+        let mut probe = full.as_path();
+        loop {
+            if fs::symlink_metadata(probe).is_ok() {
+                let resolved = probe.canonicalize().map_err(|_| bad())?;
+                if !resolved.starts_with(&self.real_root) {
+                    return Err(bad());
+                }
+                break;
+            }
+            match probe.parent() {
+                Some(parent) => probe = parent,
+                None => return Err(bad()),
+            }
+        }
+        Ok(full)
     }
 
     /// True for paths Logseq skips (`ignored-path?` and `:hidden`).
@@ -784,9 +850,14 @@ impl Graph {
     /// then the file name.
     #[must_use]
     pub fn page_name(&self, rel: &str, doc: &Document) -> String {
-        if let Some(title) = doc
-            .page_properties()
-            .into_iter()
+        self.page_name_from(rel, &doc.page_properties())
+    }
+
+    /// [`Graph::page_name`] when the page properties are already at hand.
+    #[must_use]
+    pub fn page_name_from(&self, rel: &str, page_properties: &[crate::inline::Property]) -> String {
+        if let Some(title) = page_properties
+            .iter()
             .find(|p| p.key == "title" && !p.value.trim().is_empty())
         {
             return title.value.trim().to_string();
@@ -803,6 +874,37 @@ impl Graph {
             FileNameFormat::TripleLowbar => title_from_file_body(body),
             FileNameFormat::Legacy => legacy_title_from_file_body(body),
         }
+    }
+
+    /// Where a page with this name lives: a journal day when the name
+    /// parses with `:journal/page-title-format`, otherwise
+    /// `pages/<escaped name>.md`.
+    #[must_use]
+    pub fn rel_path_for_name(&self, name: &str) -> String {
+        let name = name.trim();
+        match parse_date(&self.config.journal_title_format, name) {
+            Some(date) => self.journal_rel_path(date),
+            None => self.page_rel_path(name),
+        }
+    }
+
+    /// An empty document for a new page called `name`: with a `title::`
+    /// property when the file name cannot carry the name (Logseq's rule).
+    ///
+    /// # Errors
+    /// [`GraphError::BadPath`] for an empty name or one with control
+    /// characters (a newline would inject property lines).
+    pub fn new_page_document(&self, name: &str) -> Result<Document, GraphError> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().any(char::is_control) {
+            return Err(GraphError::BadPath(name.to_string()));
+        }
+        let mut doc = Document::default();
+        let rel = self.rel_path_for_name(name);
+        if needs_title_property(name) && self.classify(&rel) == Some(FileKind::Page) {
+            doc.preamble = format!("title:: {name}\n\n");
+        }
+        Ok(doc)
     }
 
     /// Every page and journal file, graph-relative, sorted.
@@ -833,7 +935,11 @@ impl Graph {
             if self.is_ignored(&rel) {
                 continue;
             }
-            if entry.file_type()?.is_dir() {
+            let kind = entry.file_type()?;
+            if kind.is_symlink() {
+                continue; // never index content from outside the graph
+            }
+            if kind.is_dir() {
                 self.walk(&path, out)?;
             } else if self.classify(&rel).is_some() {
                 out.push(rel);
@@ -845,7 +951,11 @@ impl Graph {
     /// Graph-relative `/`-separated path for an absolute path inside it.
     #[must_use]
     pub fn relative(&self, path: &Path) -> Option<String> {
-        let rel = path.strip_prefix(&self.root).ok()?;
+        // OS events may report the resolved path (`/private/var/…` on macOS).
+        let rel = path
+            .strip_prefix(&self.root)
+            .or_else(|_| path.strip_prefix(&self.real_root))
+            .ok()?;
         let parts: Vec<String> = rel
             .components()
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
@@ -1004,5 +1114,46 @@ mod tests {
         assert!(g.resolve("../x").is_err());
         assert!(g.resolve("/etc/passwd").is_err());
         assert!(g.resolve("pages/ok.md").is_ok());
+        assert!(
+            g.resolve("pages/new/deeper.md").is_ok(),
+            "missing folders are fine"
+        );
+        assert!(g.resolve("pages/bad\nname.md").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_cannot_leave_the_graph() {
+        let outside = tempfile::tempdir().expect("outside");
+        fs::write(outside.path().join("secret.md"), "- secret\n").expect("secret");
+        let dir = tempfile::tempdir().expect("tmp");
+        let (g, _) = Graph::init(dir.path()).expect("init");
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.md"),
+            dir.path().join("pages/link.md"),
+        )
+        .expect("file link");
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("pages/linked-dir"))
+            .expect("dir link");
+        assert!(g.resolve("pages/link.md").is_err());
+        assert!(g.resolve("pages/linked-dir/secret.md").is_err());
+        assert!(
+            g.resolve("pages/linked-dir/new.md").is_err(),
+            "no writes through a link"
+        );
+        assert!(g.write_text("pages/linked-dir/new.md", "x").is_err());
+        assert!(!outside.path().join("new.md").exists());
+        assert_eq!(g.files().expect("files"), Vec::<String>::new());
+        // A symlink planted at the temp path is not followed.
+        let target = dir.path().join("pages/a.md");
+        std::os::unix::fs::symlink(
+            outside.path().join("planted"),
+            dir.path()
+                .join(format!("pages/.a.md.{}.tmp", std::process::id())),
+        )
+        .expect("tmp link");
+        write_atomic(&target, "- ok\n").expect("write");
+        assert!(!outside.path().join("planted").exists());
+        assert_eq!(fs::read_to_string(&target).expect("read"), "- ok\n");
     }
 }

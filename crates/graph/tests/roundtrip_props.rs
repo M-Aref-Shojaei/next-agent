@@ -136,3 +136,41 @@ proptest! {
         prop_assert!(pristine >= total - 1);
     }
 }
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(3000))]
+
+    /// Deriving facts never panics (char boundaries, unclosed brackets,
+    /// macros, fences) and every page ref is non-empty text from the input.
+    #[test]
+    fn analyze_never_panics(text in document_text()) {
+        let info = next_agent_graph::inline::analyze(&text);
+        for r in info.refs {
+            if let next_agent_graph::Ref::Page { name, .. } = r {
+                prop_assert!(!name.trim().is_empty());
+            }
+        }
+    }
+
+    /// Any title maps to a single safe file name inside `pages/`.
+    #[test]
+    fn file_names_are_single_safe_components(title in "\\PC{0,40}") {
+        let body = next_agent_graph::layout::page_file_body(&title);
+        prop_assert!(!body.contains('/') && !body.contains('\\'));
+        prop_assert!(!body.contains([':', '*', '?', '"', '<', '>', '|', '#']));
+        prop_assert!(!body.starts_with('.'));
+        prop_assert!(body != ".." && body != ".");
+    }
+
+    /// Titles without empty namespace parts survive title → file → title.
+    #[test]
+    fn titles_round_trip_through_file_names(
+        parts in prop::collection::vec("[^/\\p{C}]{1,12}", 1..4)
+    ) {
+        let title = parts.join("/");
+        prop_assume!(!title.ends_with('.') && !parts.iter().any(|p| p.trim().is_empty()));
+        prop_assume!(!["CON", "PRN", "AUX", "NUL"].contains(&title.as_str()));
+        let body = next_agent_graph::layout::page_file_body(&title);
+        prop_assert_eq!(next_agent_graph::title_from_file_body(&body), title);
+    }
+}

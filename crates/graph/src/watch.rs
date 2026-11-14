@@ -12,7 +12,7 @@ use std::time::Duration;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::index::Index;
-use crate::layout::{Graph, GraphError, CONFIG_PATH};
+use crate::layout::{Graph, GraphError, CONFIG_PATH, JOURNALS_DIR, PAGES_DIR};
 
 /// Called after each debounced batch with the graph-relative paths that
 /// were re-indexed (empty when a full sync ran instead).
@@ -49,13 +49,9 @@ impl GraphWatcher {
         watcher
             .watch(graph.root(), RecursiveMode::Recursive)
             .map_err(io_error)?;
-        let canonical = graph
-            .root()
-            .canonicalize()
-            .unwrap_or_else(|_| graph.root().to_path_buf());
         let thread = std::thread::Builder::new()
             .name("graph-watcher".into())
-            .spawn(move || run(graph, &canonical, &index, debounce, &rx, on_change.as_ref()))
+            .spawn(move || run(graph, &index, debounce, &rx, on_change.as_ref()))
             .map_err(GraphError::Io)?;
         Ok(Self {
             watcher: Some(watcher),
@@ -81,7 +77,6 @@ fn io_error(e: notify::Error) -> GraphError {
 
 fn run(
     mut graph: Graph,
-    canonical: &std::path::Path,
     index: &Mutex<Index>,
     debounce: Duration,
     rx: &mpsc::Receiver<notify::Result<notify::Event>>,
@@ -107,7 +102,7 @@ fn run(
                 }
             }
         }
-        flush(&mut graph, canonical, index, &paths, on_change);
+        flush(&mut graph, index, &paths, on_change);
         if closed {
             return;
         }
@@ -116,7 +111,6 @@ fn run(
 
 fn flush(
     graph: &mut Graph,
-    canonical: &std::path::Path,
     index: &Mutex<Index>,
     paths: &BTreeSet<PathBuf>,
     on_change: Option<&OnChange>,
@@ -124,22 +118,24 @@ fn flush(
     let mut files: Vec<String> = Vec::new();
     let mut full_sync = false;
     for path in paths {
-        let rel = graph.relative(path).or_else(|| {
-            path.strip_prefix(canonical)
-                .ok()
-                .map(|r| r.to_string_lossy().replace('\\', "/"))
-                .filter(|r| !r.is_empty())
-        });
-        let Some(rel) = rel else { continue };
+        let Some(rel) = graph.relative(path) else {
+            continue;
+        };
         if rel == CONFIG_PATH {
+            // `sync` rebuilds by itself when the settings changed.
             graph.reload_config();
             full_sync = true;
         } else if graph.is_ignored(&rel) {
             // Hidden, backup or temp file.
         } else if graph.classify(&rel).is_some() {
             files.push(rel);
-        } else if path.is_dir() || (rel == "pages" || rel == "journals") {
-            // A folder moved or appeared: let sync work out what changed.
+        } else if rel == PAGES_DIR
+            || rel == JOURNALS_DIR
+            || rel.starts_with("pages/")
+            || rel.starts_with("journals/")
+        {
+            // A folder inside the layout appeared, moved or went away (one
+            // event for the whole folder): let sync work out what changed.
             full_sync = true;
         }
     }

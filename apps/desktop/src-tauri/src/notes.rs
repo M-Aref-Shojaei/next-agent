@@ -3,10 +3,9 @@
 //! The Tauri commands at the bottom are thin wrappers over [`NotesService`].
 #![allow(clippy::needless_pass_by_value, clippy::missing_errors_doc)] // Tauri commands take owned args.
 
-use next_agent_graph::layout::needs_title_property;
 use next_agent_graph::{
-    parse_date, Backlink, BlockNode, Document, FileKind, Graph, GraphWatcher, Index, IndexStats,
-    JournalEntry, PageView, SearchHit,
+    Backlink, BlockNode, Document, FileKind, Graph, GraphWatcher, Index, IndexStats, JournalEntry,
+    PageView, SearchHit,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -59,14 +58,10 @@ fn lock<T>(m: &Mutex<T>) -> Result<MutexGuard<'_, T>, String> {
     m.lock().map_err(|_| "notes state is poisoned".to_string())
 }
 
-/// Stable file name for a graph's index (FNV-1a of its canonical path).
+/// Stable file name for a graph's index (hash of its canonical path).
 fn cache_name(root: &Path) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in root.to_string_lossy().as_bytes() {
-        hash ^= u64::from(*b);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("graph-{hash:016x}.sqlite")
+    let hash = next_agent_core::hash::sha256_hex(root.to_string_lossy().as_bytes());
+    format!("graph-{}.sqlite", &hash[..32])
 }
 
 impl NotesService {
@@ -87,15 +82,23 @@ impl NotesService {
         }
     }
 
-    /// Open a graph folder (creating `pages/`, `journals/`, `assets/` and a
-    /// minimal `logseq/config.edn` when missing), bring its index up to date
-    /// and start watching it. Replaces any graph opened before.
-    pub fn open(&self, path: &str) -> Result<GraphInfo, String> {
+    /// Open a graph folder, bring its index up to date and start watching
+    /// it. Replaces any graph opened before. Missing `pages/`, `journals/`,
+    /// `assets/` and `logseq/config.edn` are created only when the folder
+    /// already looks like a graph, is empty, or `create` is set, so opening
+    /// the wrong folder never litters it.
+    pub fn open(&self, path: &str, create: bool) -> Result<GraphInfo, String> {
         let root = PathBuf::from(path.trim());
         if !root.is_dir() {
             return Err(format!("not a folder: {}", root.display()));
         }
         let root = root.canonicalize().map_err(|e| e.to_string())?;
+        if !create && !Graph::looks_like_graph(&root) {
+            return Err(format!(
+                "{} is not a Logseq graph (no logseq/, pages/ or journals/); open it with create to make one",
+                root.display()
+            ));
+        }
         let (graph, created_config) = Graph::init(&root).map_err(|e| e.to_string())?;
         let mut index =
             Index::open(&self.cache_dir.join(cache_name(&root))).map_err(|e| e.to_string())?;
@@ -109,11 +112,13 @@ impl NotesService {
         // A graph still works without a watcher (e.g. on network drives).
         let watcher =
             GraphWatcher::start(graph.clone(), Arc::clone(&index), DEBOUNCE, on_change).ok();
-        *lock(&self.open)? = Some(OpenGraph {
+        let previous = lock(&self.open)?.replace(OpenGraph {
             graph,
             index,
             _watcher: watcher,
         });
+        // Stopping the old watcher may wait for a sync; don't hold the lock.
+        drop(previous);
         Ok(GraphInfo {
             root: root.display().to_string(),
             pages,
@@ -127,9 +132,15 @@ impl NotesService {
         &self,
         f: impl FnOnce(&Graph, &mut Index) -> Result<R, String>,
     ) -> Result<R, String> {
-        let open = lock(&self.open)?;
-        let open = open.as_ref().ok_or("open a graph first")?;
+        let mut open = lock(&self.open)?;
+        let open = open.as_mut().ok_or("open a graph first")?;
         let mut index = lock(&open.index)?;
+        // Follow config.edn edits (a stat unless it changed). `sync` rebuilds
+        // once if the settings differ from what the index was built with,
+        // whether the watcher or this call notices first.
+        if open.graph.reload_config() {
+            index.sync(&open.graph).map_err(|e| e.to_string())?;
+        }
         f(&open.graph, &mut index)
     }
 
@@ -147,24 +158,21 @@ impl NotesService {
         if let Some(page) = index.page(name).map_err(|e| e.to_string())? {
             return Ok((page.file, true));
         }
-        let journal = parse_date(&graph.config().journal_title_format, name.trim());
-        let rel = match journal {
-            Some(date) => graph.journal_rel_path(date),
-            None => graph.page_rel_path(name.trim()),
-        };
+        let rel = graph.rel_path_for_name(name);
         let exists = graph.resolve(&rel).map_err(|e| e.to_string())?.is_file();
         Ok((rel, exists))
     }
 
     fn view(graph: &Graph, rel: &str, doc: &Document) -> PageView {
+        let properties = doc.page_properties();
         PageView {
-            name: graph.page_name(rel, doc),
+            name: graph.page_name_from(rel, &properties),
             file: Some(rel.to_string()),
             journal_day: match graph.classify(rel) {
                 Some(FileKind::Journal(d)) => Some(d.as_int()),
                 _ => None,
             },
-            properties: doc.page_properties(),
+            properties,
             preamble: doc.preamble.clone(),
             blocks: doc.blocks.iter().map(BlockNode::from_block).collect(),
         }
@@ -214,26 +222,21 @@ impl NotesService {
     /// `title::` property, as Logseq does. Writes are atomic and re-indexed
     /// at once.
     pub fn save_page(&self, name: &str, tree: Vec<BlockNode>) -> Result<PageView, String> {
-        if name.trim().is_empty() {
-            return Err("page name is empty".into());
-        }
         self.with(|graph, index| {
             let (rel, exists) = Self::file_for(graph, index, name)?;
             let mut doc = if exists {
-                graph.read(&rel).map_err(|e| e.to_string())?
+                graph.read(&rel)
             } else {
-                let mut doc = Document::default();
-                if needs_title_property(name.trim()) && graph.classify(&rel) == Some(FileKind::Page)
-                {
-                    doc.preamble = format!("title:: {}\n\n", name.trim());
-                }
-                doc
-            };
+                // Rejects empty names and control characters (a newline
+                // would inject property lines via `title::`).
+                graph.new_page_document(name)
+            }
+            .map_err(|e| e.to_string())?;
             doc.replace_blocks(tree.iter().map(BlockNode::to_block).collect());
-            graph.write(&rel, &doc).map_err(|e| e.to_string())?;
+            let text = doc.render();
+            graph.write_text(&rel, &text).map_err(|e| e.to_string())?;
             index.index_file(graph, &rel).map_err(|e| e.to_string())?;
-            let saved = graph.read(&rel).map_err(|e| e.to_string())?;
-            Ok(Self::view(graph, &rel, &saved))
+            Ok(Self::view(graph, &rel, &Document::parse(&text)))
         })
     }
 
@@ -248,8 +251,8 @@ impl NotesService {
 type Notes<'a> = State<'a, Arc<NotesService>>;
 
 #[tauri::command]
-pub fn graph_open(notes: Notes, path: String) -> Result<GraphInfo, String> {
-    notes.open(&path)
+pub fn graph_open(notes: Notes, path: String, create: Option<bool>) -> Result<GraphInfo, String> {
+    notes.open(&path, create.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -317,7 +320,9 @@ mod tests {
             &graph,
         );
         let notes = NotesService::new(dir.path().join("cache"));
-        let info = notes.open(&graph.display().to_string()).expect("open");
+        let info = notes
+            .open(&graph.display().to_string(), false)
+            .expect("open");
         assert_eq!(info.pages, 49);
         assert!(!info.created_config);
         (dir, notes, graph)
@@ -327,7 +332,7 @@ mod tests {
     fn commands_need_an_open_graph() {
         let notes = NotesService::new(std::env::temp_dir().join("na-notes-none"));
         assert_eq!(notes.search("x", None).unwrap_err(), "open a graph first");
-        assert!(notes.open("/definitely/not/here").is_err());
+        assert!(notes.open("/definitely/not/here", true).is_err());
     }
 
     #[test]
@@ -443,6 +448,16 @@ mod tests {
             "Nov 15th, 2026"
         );
         assert!(notes.save_page("  ", Vec::new()).is_err());
+        assert!(notes.save_page("x\nalias:: injected", Vec::new()).is_err());
+        // Names that look like paths stay one file inside pages/.
+        let sneaky = notes
+            .save_page("../../etc/passwd", Vec::new())
+            .expect("escaped");
+        assert_eq!(
+            sneaky.file.as_deref(),
+            Some("pages/%2E.___..___etc___passwd.md")
+        );
+        assert!(graph.join("pages/%2E.___..___etc___passwd.md").is_file());
     }
 
     #[test]
@@ -454,7 +469,7 @@ mod tests {
             sink.lock().expect("lock").extend(files);
         }));
         notes
-            .open(&graph.display().to_string())
+            .open(&graph.display().to_string(), false)
             .expect("reopen with listener");
         std::thread::sleep(Duration::from_millis(300));
         fs::write(
@@ -483,13 +498,40 @@ mod tests {
     }
 
     #[test]
+    fn config_edits_rename_journals_without_a_manual_rebuild() {
+        let (_dir, notes, graph) = opened();
+        let config = graph.join("logseq/config.edn");
+        let text = fs::read_to_string(&config).expect("config");
+        fs::write(&config, text.replace("\"MMM do, yyyy\"", "\"yyyy-MM-dd\"")).expect("edit");
+        let page = notes.page("2026-11-14").expect("page");
+        assert_eq!(page.file.as_deref(), Some("journals/2026_11_14.md"));
+        assert_eq!(notes.journals(Some(1)).expect("j")[0].name, "2026-11-14");
+    }
+
+    #[test]
     fn opening_an_empty_folder_creates_the_layout() {
         let dir = tempfile::tempdir().expect("tmp");
         let notes = NotesService::new(dir.path().join("cache"));
         let vault = dir.path().join("vault");
         fs::create_dir_all(&vault).expect("mkdir");
-        let info = notes.open(&vault.display().to_string()).expect("open");
+        let info = notes
+            .open(&vault.display().to_string(), false)
+            .expect("empty folder is fine");
         assert!(info.created_config);
+        let project = dir.path().join("project");
+        fs::create_dir_all(&project).expect("mkdir");
+        fs::write(project.join("README.md"), "hi").expect("file");
+        assert!(notes.open(&project.display().to_string(), false).is_err());
+        assert!(
+            !project.join("logseq").exists(),
+            "nothing written into a non-graph folder"
+        );
+        assert!(
+            notes
+                .open(&project.display().to_string(), true)
+                .expect("create")
+                .created_config
+        );
         assert!(vault.join("logseq/config.edn").is_file());
         assert!(vault.join("pages").is_dir() && vault.join("journals").is_dir());
         assert_eq!(info.pages, 0);

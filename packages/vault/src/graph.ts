@@ -47,6 +47,7 @@ export interface IndexStats {
   conflicts: string[];
 }
 
+/** `graph_open({ path, create? })`: create defaults to false (see Notes Engine.md). */
 export interface GraphInfo {
   root: string;
   pages: number;

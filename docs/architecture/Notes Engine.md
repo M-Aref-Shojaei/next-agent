@@ -6,7 +6,7 @@ status: draft
 
 # Notes Engine
 
-`crates/graph` (`next-agent-graph`) reads and writes **Logseq Markdown file graphs** and keeps a SQLite index of them. It is steps 1–2 of the Logseq MVP in [[Logseq]]. The format follows Logseq **0.10.9 @ c67b8b5** (the last file-graph release), pinned in `upstream.lock.json`. Licence: AGPL-3.0, see [[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]].
+`crates/graph` (`next-agent-graph`) reads and writes **Logseq Markdown file graphs** and keeps a SQLite index of them. It is steps 1–2 of the Logseq MVP in [[Logseq]]. The format follows Logseq **0.10.9 @ c67b8b5** (the last file-graph release), pinned in `upstream.lock.json`. Licence: AGPL-3.0, see [[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]]. Why it is its own crate with its own index: [[ADR-0010 Notes Engine Crate With Its Own Index]].
 
 ## Modules
 | Module | Job |
@@ -24,7 +24,15 @@ status: draft
 - A changed or new block is rendered in Logseq's style: tab nesting, and continuation lines indented two spaces past the bullet.
 - `replace_blocks(tree)` takes the tree back from the editor. It matches blocks by `(depth, content)` along document order (LCS), so blocks the user didn't touch keep their bytes.
 - Text before the first bullet (frontmatter, page properties, plain Markdown) is the **preamble** and is kept verbatim.
-- Tests: 49 corpus files in `fixtures/logseq-graph` (a complete graph) and a proptest suite (`crates/graph/tests/roundtrip_props.rs`): random text round-trips, random trees render and re-parse, and edits stay local.
+- Tests:
+  - **Corpus:** 49 files in `fixtures/logseq-graph` (a complete graph). Each one round-trips through parse → render and through the editor path (tree → JSON → `replace_blocks`).
+  - **Property tests** (`crates/graph/tests/roundtrip_props.rs`):
+    - any text round-trips;
+    - random trees render and re-parse;
+    - edits stay local;
+    - `analyze` never panics;
+    - every title maps to one safe file name (no `/`, `\`, reserved characters or leading dot);
+    - titles survive title → file → title.
 
 ## Format coverage
 - Blocks: `- ` bullets (`-` alone is an empty block). Nesting with tabs or any number of spaces. Multi-line bodies. Bullets inside ```` ``` ```` / `~~~` fences are text.
@@ -46,7 +54,7 @@ All in `apps/desktop/src-tauri/src/notes.rs`. Arguments and results are camelCas
 
 | Command | Args | Returns |
 |---|---|---|
-| `graph_open` | `path` | `GraphInfo { root, pages, blocks, createdConfig, stats }`. Creates the layout if missing, syncs the index, starts the watcher |
+| `graph_open` | `path`, `create?` (false) | `GraphInfo { root, pages, blocks, createdConfig, stats }`. Syncs the index and starts the watcher. Missing folders and config are created only when the folder already looks like a graph (`logseq/`, `pages/` or `journals/`), is empty, or `create: true`. Otherwise it errors, so a wrong folder is never written to |
 | `graph_search` | `q`, `limit?` (50) | `SearchHit[] { page, blockId, uuid, content, snippet, score }` |
 | `graph_page` | `name` | `PageView { name, file, journalDay, properties, preamble, blocks: BlockNode[] }`. Read from the file. `file: null` for a page that is only referenced |
 | `graph_backlinks` | `name` | `{ linked: Backlink[], unlinked: Backlink[] }`, each `{ page, journalDay, blockId, uuid, content, breadcrumb }` |
@@ -56,11 +64,22 @@ All in `apps/desktop/src-tauri/src/notes.rs`. Arguments and results are camelCas
 
 The app emits a `graph-changed` event (payload: changed graph-relative paths; empty after a full sync) when the watcher re-indexes files.
 
+## Safety
+- `Graph::resolve` refuses:
+  - absolute paths, `..` and control characters;
+  - any path whose deepest existing part resolves outside the graph root through symlinks.
+
+  Reads and writes go through it, including the core vault writer.
+- Listing skips symlinks. Temp files are created with `create_new`, so a planted symlink is never followed.
+- Page names with control characters are rejected on save, so a name can't inject `title::` lines.
+- Config changes (from the watcher or picked up on the next command) trigger a full rebuild, because page names depend on the journal formats.
+
 ## Known gaps
 - No NFC normalisation of page names (Logseq applies it).
 - `*`/`+` bullets and org-mode files are treated as text. Org `:PROPERTIES:` drawers are kept but not read as properties.
 - An unclosed code fence swallows the rest of the file into one block (mldoc behaves much the same).
+- A file that starts with a `---` rule and has another `---` line before any bullet is read as YAML frontmatter, as in Logseq.
 - Editing a block drops trailing blank lines inside it. Blocks the user didn't touch are unaffected.
 - Legacy (`:legacy`) file names are read but never written. New pages always use triple-lowbar.
-- Two files with the same page name: the second is reported in `IndexStats.conflicts` and not indexed.
+- Two files with the same page name: the second is reported in `IndexStats.conflicts` and not indexed. It is retried, and takes over, when the first file changes or goes away.
 - Namespace parent pages (`a` for `a/b`) are not created as rows. They resolve as referenced pages.

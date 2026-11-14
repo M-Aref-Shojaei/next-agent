@@ -15,13 +15,13 @@ use std::time::UNIX_EPOCH;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use crate::inline::{self, Property, Ref};
+use crate::inline::{self, BlockInfo, Ref};
 use crate::layout::{FileKind, Graph, GraphError};
 use crate::model::BlockNode;
 use crate::parse::{Block, Document};
 
 /// Bump when the schema changes; older caches are dropped and rebuilt.
-const SCHEMA_VERSION: &str = "1";
+const SCHEMA_VERSION: &str = "3";
 
 /// Snippet highlight markers (Unicode private use), so the UI can split the
 /// snippet safely instead of rendering HTML.
@@ -31,6 +31,9 @@ pub const MATCH_END: char = '\u{E001}';
 const SCHEMA: &str = "
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE files(path TEXT PRIMARY KEY, mtime_ns INTEGER NOT NULL, size INTEGER NOT NULL);
+-- Files skipped because their page name was taken; retried after changes.
+CREATE TABLE pending(path TEXT PRIMARY KEY, name_lc TEXT NOT NULL);
+CREATE INDEX pending_name ON pending(name_lc);
 CREATE TABLE pages(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -170,6 +173,14 @@ fn mtime_ns(meta: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+/// `(mtime, size)`: what `sync` compares to decide a file changed.
+fn stamp(meta: &std::fs::Metadata) -> (i64, i64) {
+    (
+        mtime_ns(meta),
+        i64::try_from(meta.len()).unwrap_or(i64::MAX),
+    )
+}
+
 fn json<T: Serialize>(v: &T) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "[]".into())
 }
@@ -235,7 +246,7 @@ impl Index {
                 "DROP TABLE IF EXISTS blocks_fts; DROP TABLE IF EXISTS refs;
                  DROP TABLE IF EXISTS aliases; DROP TABLE IF EXISTS blocks;
                  DROP TABLE IF EXISTS pages; DROP TABLE IF EXISTS files;
-                 DROP TABLE IF EXISTS meta;",
+                 DROP TABLE IF EXISTS meta; DROP TABLE IF EXISTS pending;",
             )?;
             conn.execute_batch(SCHEMA)?;
             conn.execute(
@@ -251,15 +262,19 @@ impl Index {
     /// # Errors
     /// SQLite or I/O failures.
     pub fn rebuild(&mut self, graph: &Graph) -> Result<IndexStats> {
-        {
-            let tx = self.conn.transaction()?;
-            tx.execute_batch(
-                "DELETE FROM blocks_fts; DELETE FROM refs; DELETE FROM aliases;
-                 DELETE FROM blocks; DELETE FROM pages; DELETE FROM files;",
-            )?;
-            tx.commit()?;
-        }
+        self.clear()?;
         self.sync(graph)
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        self.conn.execute_batch(
+            "BEGIN;
+             DELETE FROM blocks_fts; DELETE FROM refs; DELETE FROM aliases;
+             DELETE FROM blocks; DELETE FROM pages; DELETE FROM files;
+             DELETE FROM pending; DELETE FROM meta WHERE key = 'config';
+             COMMIT;",
+        )?;
+        Ok(())
     }
 
     /// Incremental update: re-index files whose size or mtime changed and
@@ -268,6 +283,22 @@ impl Index {
     /// # Errors
     /// SQLite or I/O failures.
     pub fn sync(&mut self, graph: &Graph) -> Result<IndexStats> {
+        // Page names depend on the config (journal formats, file-name
+        // format): an index built under another config starts over.
+        let fingerprint = format!("{:?}", graph.config());
+        let built_with: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = 'config'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if built_with.as_deref() != Some(fingerprint.as_str()) {
+            self.clear()?;
+            self.conn.execute(
+                "INSERT INTO meta(key, value) VALUES ('config', ?1)",
+                [&fingerprint],
+            )?;
+        }
         let mut stats = IndexStats::default();
         let known: HashMap<String, (i64, i64)> = {
             let mut stmt = self
@@ -286,12 +317,9 @@ impl Index {
             }
         }
         for rel in &files {
-            let meta = std::fs::metadata(graph.resolve(rel)?)?;
-            let stamp = (
-                mtime_ns(&meta),
-                i64::try_from(meta.len()).unwrap_or(i64::MAX),
-            );
-            if known.get(rel) == Some(&stamp) {
+            // `files()` already skipped symlinks and ignored paths.
+            let meta = std::fs::metadata(graph.root().join(rel))?;
+            if known.get(rel) == Some(&stamp(&meta)) {
                 stats.unchanged += 1;
                 continue;
             }
@@ -312,7 +340,9 @@ impl Index {
     /// SQLite or I/O failures.
     pub fn index_file(&mut self, graph: &Graph, rel: &str) -> Result<bool> {
         let tx = self.conn.transaction()?;
+        let freed = page_name_of(&tx, rel)?;
         let result = index_file_tx(&tx, graph, rel)?;
+        retry_pending(&tx, graph, freed.as_deref(), rel)?;
         tx.commit()?;
         Ok(result == FileResult::Indexed)
     }
@@ -321,9 +351,11 @@ impl Index {
     ///
     /// # Errors
     /// SQLite failures.
-    pub fn remove_file(&mut self, rel: &str) -> Result<()> {
+    pub fn remove_file(&mut self, graph: &Graph, rel: &str) -> Result<()> {
         let tx = self.conn.transaction()?;
+        let freed = page_name_of(&tx, rel)?;
         remove_file_tx(&tx, rel)?;
+        retry_pending(&tx, graph, freed.as_deref(), rel)?;
         tx.commit()?;
         Ok(())
     }
@@ -449,41 +481,66 @@ impl Index {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
-    fn breadcrumb(&self, mut parent: Option<i64>) -> Result<Vec<String>> {
+    /// Ancestor first lines, outermost first. `seen` memoises
+    /// `id → (parent, first line)` across the rows of one query.
+    fn breadcrumb(
+        &self,
+        mut parent: Option<i64>,
+        seen: &mut HashMap<i64, (Option<i64>, String)>,
+    ) -> Result<Vec<String>> {
         let mut out = Vec::new();
         let mut stmt = self
             .conn
             .prepare_cached("SELECT parent_id, content FROM blocks WHERE id = ?1")?;
         while let Some(id) = parent {
-            let (next, content): (Option<i64>, String) =
-                stmt.query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            out.push(first_line(&content));
+            let (next, line) = if let Some(hit) = seen.get(&id) {
+                hit.clone()
+            } else {
+                let (next, content): (Option<i64>, String) =
+                    stmt.query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                let hit = (next, first_line(&content));
+                seen.insert(id, hit.clone());
+                hit
+            };
+            out.push(line);
             parent = next;
         }
         out.reverse();
         Ok(out)
     }
 
-    fn backlink_rows(&self, sql: &str, args: &[&dyn rusqlite::ToSql]) -> Result<Vec<Backlink>> {
-        let mut stmt = self.conn.prepare(sql)?;
-        let rows: Vec<(Backlink, Option<i64>)> = stmt
-            .query_map(args, |r| {
-                Ok((
-                    Backlink {
-                        block_id: r.get(0)?,
-                        uuid: r.get(1)?,
-                        content: r.get(2)?,
-                        page: r.get(3)?,
-                        journal_day: r.get(4)?,
-                        breadcrumb: Vec::new(),
-                    },
-                    r.get(5)?,
-                ))
-            })?
-            .collect::<std::result::Result<_, _>>()?;
+    /// Run a backlink query, keep the rows `keep` accepts (at most
+    /// `limit`), then add breadcrumbs to the survivors only.
+    fn backlink_rows(
+        &self,
+        sql: &str,
+        args: &[&dyn rusqlite::ToSql],
+        limit: usize,
+        mut keep: impl FnMut(&Backlink) -> bool,
+    ) -> Result<Vec<Backlink>> {
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        let mut rows: Vec<(Backlink, Option<i64>)> = Vec::new();
+        let mut cursor = stmt.query(args)?;
+        while let Some(r) = cursor.next()? {
+            let b = Backlink {
+                block_id: r.get(0)?,
+                uuid: r.get(1)?,
+                content: r.get(2)?,
+                page: r.get(3)?,
+                journal_day: r.get(4)?,
+                breadcrumb: Vec::new(),
+            };
+            if keep(&b) {
+                rows.push((b, r.get(5)?));
+                if rows.len() >= limit {
+                    break;
+                }
+            }
+        }
+        let mut seen = HashMap::new();
         rows.into_iter()
             .map(|(mut b, parent)| {
-                b.breadcrumb = self.breadcrumb(parent)?;
+                b.breadcrumb = self.breadcrumb(parent, &mut seen)?;
                 Ok(b)
             })
             .collect()
@@ -508,6 +565,8 @@ impl Index {
                AND b.page_id IS NOT ?2
              ORDER BY p.journal_day IS NULL, p.journal_day DESC, p.name_lc, b.ord",
             &[&names_json, &self_id],
+            usize::MAX,
+            |_| true,
         )
     }
 
@@ -519,11 +578,14 @@ impl Index {
     pub fn unlinked_references(&self, name: &str, limit: usize) -> Result<Vec<Backlink>> {
         let (names, self_id) = self.target_names(name)?;
         let names_json = json(&names);
-        let mut out = Vec::new();
+        let mut out: Vec<Backlink> = Vec::new();
         let mut seen = HashSet::new();
         for target in &names {
+            if out.len() >= limit {
+                break;
+            }
             let phrase = format!("\"{}\"", target.replace('"', ""));
-            let candidates = self.backlink_rows(
+            let found = self.backlink_rows(
                 "SELECT b.id, b.uuid, b.content, p.name, p.journal_day, b.parent_id
                  FROM blocks_fts
                  JOIN blocks b ON b.id = blocks_fts.rowid
@@ -534,14 +596,11 @@ impl Index {
                        AND r.dst_page_lc IN (SELECT value FROM json_each(?3)))
                  ORDER BY p.journal_day IS NULL, p.journal_day DESC, p.name_lc, b.ord",
                 &[&phrase, &self_id, &names_json],
+                limit - out.len(),
+                |c| c.content.to_lowercase().contains(target.as_str()) && seen.insert(c.block_id),
             )?;
-            for c in candidates {
-                if c.content.to_lowercase().contains(target.as_str()) && seen.insert(c.block_id) {
-                    out.push(c);
-                }
-            }
+            out.extend(found);
         }
-        out.truncate(limit);
         Ok(out)
     }
 
@@ -630,6 +689,40 @@ enum FileResult {
     Removed,
 }
 
+/// Lowercased page name a file currently holds in the index.
+fn page_name_of(tx: &rusqlite::Transaction<'_>, rel: &str) -> Result<Option<String>> {
+    Ok(tx
+        .query_row("SELECT name_lc FROM pages WHERE file = ?1", [rel], |r| {
+            r.get(0)
+        })
+        .optional()?)
+}
+
+/// After `rel` changed or went away, give the page name it held (if now
+/// free) to the first file that was skipped for it.
+fn retry_pending(
+    tx: &rusqlite::Transaction<'_>,
+    graph: &Graph,
+    freed: Option<&str>,
+    rel: &str,
+) -> Result<()> {
+    let Some(freed) = freed else { return Ok(()) };
+    let waiting: Vec<String> = {
+        let mut stmt = tx.prepare_cached(
+            "SELECT path FROM pending WHERE name_lc = ?1 AND path != ?2
+             AND NOT EXISTS (SELECT 1 FROM pages WHERE name_lc = ?1) ORDER BY path",
+        )?;
+        let rows = stmt.query_map([freed, rel], |r| r.get(0))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    for other in waiting {
+        if index_file_tx(tx, graph, &other)? == FileResult::Indexed {
+            break; // the name is taken again
+        }
+    }
+    Ok(())
+}
+
 fn remove_file_tx(tx: &rusqlite::Transaction<'_>, rel: &str) -> Result<()> {
     tx.execute(
         "DELETE FROM blocks_fts WHERE rowid IN
@@ -638,6 +731,7 @@ fn remove_file_tx(tx: &rusqlite::Transaction<'_>, rel: &str) -> Result<()> {
     )?;
     tx.execute("DELETE FROM pages WHERE file = ?1", [rel])?;
     tx.execute("DELETE FROM files WHERE path = ?1", [rel])?;
+    tx.execute("DELETE FROM pending WHERE path = ?1", [rel])?;
     Ok(())
 }
 
@@ -648,23 +742,21 @@ struct Inserter<'a, 'b> {
 }
 
 impl Inserter<'_, '_> {
-    #[allow(clippy::too_many_arguments)]
     fn insert(
         &mut self,
         content: &str,
-        props: &[Property],
-        refs: &[Ref],
-        text: &str,
+        info: &BlockInfo,
         parent: Option<i64>,
         depth: i64,
         ord: i64,
     ) -> Result<i64> {
-        let info = inline::analyze(content);
-        self.tx.execute(
-            "INSERT INTO blocks(page_id, parent_id, ord, depth, uuid, content, marker, priority,
-                                scheduled, deadline, properties)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
+        self.tx
+            .prepare_cached(
+                "INSERT INTO blocks(page_id, parent_id, ord, depth, uuid, content, marker,
+                                    priority, scheduled, deadline, properties)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            )?
+            .execute(params![
                 self.page_id,
                 parent,
                 ord,
@@ -675,14 +767,13 @@ impl Inserter<'_, '_> {
                 info.priority,
                 info.scheduled,
                 info.deadline,
-                json(&props),
-            ],
-        )?;
+                json(&info.properties),
+            ])?;
         let id = self.tx.last_insert_rowid();
-        self.tx.execute(
-            "INSERT INTO blocks_fts(rowid, text) VALUES (?1, ?2)",
-            params![id, text],
-        )?;
+        self.tx
+            .prepare_cached("INSERT INTO blocks_fts(rowid, text) VALUES (?1, ?2)")?
+            .execute(params![id, info.text])?;
+        let refs = &info.refs;
         let mut seen = HashSet::new();
         for r in refs {
             let (page, uuid, kind) = match r {
@@ -692,29 +783,27 @@ impl Inserter<'_, '_> {
             if !seen.insert((page.clone(), uuid.clone())) {
                 continue;
             }
-            self.tx.execute(
-                "INSERT INTO refs(src_block, src_page, dst_page_lc, dst_uuid, kind)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id, self.page_id, page, uuid, json(&kind).trim_matches('"')],
-            )?;
+            self.tx
+                .prepare_cached(
+                    "INSERT INTO refs(src_block, src_page, dst_page_lc, dst_uuid, kind)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )?
+                .execute(params![
+                    id,
+                    self.page_id,
+                    page,
+                    uuid,
+                    json(&kind).trim_matches('"')
+                ])?;
         }
         Ok(id)
     }
 
     fn insert_tree(&mut self, blocks: &[Block], parent: Option<i64>, depth: i64) -> Result<()> {
         for block in blocks {
-            let info = block.info();
             let ord = self.ord;
             self.ord += 1;
-            let id = self.insert(
-                &block.content,
-                &info.properties,
-                &info.refs,
-                &info.text,
-                parent,
-                depth,
-                ord,
-            )?;
+            let id = self.insert(&block.content, &block.info(), parent, depth, ord)?;
             self.insert_tree(&block.children, Some(id), depth + 1)?;
         }
         Ok(())
@@ -735,19 +824,21 @@ fn index_file_tx(tx: &rusqlite::Transaction<'_>, graph: &Graph, rel: &str) -> Re
         (Err(e), _) | (_, Err(e)) => return Err(e.into()),
     };
     let doc = Document::parse(&text);
-    let name = graph.page_name(rel, &doc);
+    let page_props = doc.page_properties();
+    let name = graph.page_name_from(rel, &page_props);
     let name_lc = name.to_lowercase();
-    let taken: Option<String> = tx
-        .query_row(
-            "SELECT file FROM pages WHERE name_lc = ?1",
-            [&name_lc],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if taken.is_some() {
+    let taken: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pages WHERE name_lc = ?1)",
+        [&name_lc],
+        |r| r.get(0),
+    )?;
+    if taken {
+        tx.execute(
+            "INSERT OR REPLACE INTO pending(path, name_lc) VALUES (?1, ?2)",
+            [rel, name_lc.as_str()],
+        )?;
         return Ok(FileResult::Conflict);
     }
-    let page_props = doc.page_properties();
     let journal_day = match kind {
         FileKind::Journal(d) => Some(d.as_int()),
         FileKind::Page => None,
@@ -776,35 +867,33 @@ fn index_file_tx(tx: &rusqlite::Transaction<'_>, graph: &Graph, rel: &str) -> Re
     // The preamble (frontmatter / page properties) is indexed as a
     // pre-block with ord -1 so its text is searchable and its tags count.
     if !doc.preamble.trim().is_empty() {
-        let mut refs = Vec::new();
-        for p in &page_props {
-            let line = format!("{}:: {}", p.key, p.value);
-            refs.extend(inline::analyze(&line).refs);
-        }
         let body = &doc.preamble[crate::frontmatter::body_offset(&doc.preamble)..];
-        for line in body.lines() {
-            if inline::property_line(line).is_none() {
-                inline::scan_refs(line, &mut refs);
-            }
-        }
-        ins.insert(
-            &doc.preamble,
-            &page_props,
-            &refs,
-            doc.preamble.trim(),
-            None,
-            0,
-            -1,
-        )?;
+        // Stored as readable `key:: value` lines plus any text, not raw YAML;
+        // analysing that text yields the property refs (tags, alias, links).
+        let text_lines: Vec<&str> = body
+            .lines()
+            .filter(|l| !l.trim().is_empty() && inline::property_line(l).is_none())
+            .collect();
+        let shown: Vec<String> = page_props
+            .iter()
+            .map(|p| format!("{}:: {}", p.raw_key, p.value))
+            .chain(text_lines.iter().map(|l| (*l).to_string()))
+            .collect();
+        let content = shown.join("\n");
+        let normalised: Vec<String> = page_props
+            .iter()
+            .map(|p| format!("{}:: {}", p.key, p.value))
+            .chain(text_lines.iter().map(|l| (*l).to_string()))
+            .collect();
+        let mut info = inline::analyze(&normalised.join("\n"));
+        info.properties.clone_from(&page_props);
+        info.text.clone_from(&content);
+        ins.insert(&content, &info, None, 0, -1)?;
     }
     ins.insert_tree(&doc.blocks, None, 0)?;
     tx.execute(
         "INSERT OR REPLACE INTO files(path, mtime_ns, size) VALUES (?1, ?2, ?3)",
-        params![
-            rel,
-            mtime_ns(&meta),
-            i64::try_from(meta.len()).unwrap_or(i64::MAX)
-        ],
+        params![rel, stamp(&meta).0, stamp(&meta).1],
     )?;
     Ok(FileResult::Indexed)
 }

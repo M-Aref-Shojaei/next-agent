@@ -357,6 +357,23 @@ fn duplicate_page_names_are_reported_not_merged() {
     let mut index = Index::open_in_memory().expect("index");
     let stats = index.rebuild(&graph).expect("rebuild");
     assert_eq!(stats.conflicts, ["pages/Two.md"]);
+    // When the owner of the name goes away, the skipped file takes over.
+    fs::remove_file(dir.path().join("pages/One.md")).expect("rm");
+    index.index_file(&graph, "pages/One.md").expect("remove");
+    let page = index.page("same").expect("page").expect("re-indexed");
+    assert_eq!(page.file, "pages/Two.md");
+}
+
+#[test]
+fn frontmatter_backlinks_read_as_properties_not_yaml() {
+    let (_dir, _graph, index) = indexed_copy();
+    let hit = &index.backlinks("alpha").expect("tag")[0];
+    assert!(!hit.content.contains("---"), "{}", hit.content);
+    assert!(
+        hit.content.contains("tags:: alpha, beta"),
+        "{}",
+        hit.content
+    );
 }
 
 #[test]

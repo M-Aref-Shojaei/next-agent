@@ -357,15 +357,7 @@ impl Document {
     /// Every block in document order with its depth (0 = top level).
     #[must_use]
     pub fn walk(&self) -> Vec<(usize, &Block)> {
-        fn go<'a>(blocks: &'a [Block], depth: usize, out: &mut Vec<(usize, &'a Block)>) {
-            for b in blocks {
-                out.push((depth, b));
-                go(&b.children, depth + 1, out);
-            }
-        }
-        let mut out = Vec::new();
-        go(&self.blocks, 0, &mut out);
-        out
+        flatten(&self.blocks)
     }
 
     /// Page properties: YAML frontmatter, `key:: value` lines before the
@@ -408,15 +400,15 @@ impl Document {
     /// matched by `(depth, content)` along document order, so inserting,
     /// deleting or editing one block leaves the others byte-identical.
     pub fn replace_blocks(&mut self, mut blocks: Vec<Block>) {
-        let mut old: Vec<(usize, Option<Origin>)> = Vec::new();
-        flatten_origins(&self.blocks, 0, &mut old);
-        let mut new_keys: Vec<(usize, String)> = Vec::new();
-        flatten_keys(&blocks, 0, &mut new_keys);
-        let matches = lcs_matches(&old, &new_keys);
-        let mut assigned: Vec<Option<Origin>> = vec![None; new_keys.len()];
-        for (old_i, new_i) in matches {
-            assigned[new_i].clone_from(&old[old_i].1);
-        }
+        let mut assigned: Vec<Option<Origin>> = {
+            let old = flatten(&self.blocks);
+            let new = flatten(&blocks);
+            let mut assigned = vec![None; new.len()];
+            for (o, n) in lcs_matches(&old, &new) {
+                assigned[n].clone_from(&old[o].1.origin);
+            }
+            assigned
+        };
         let mut cursor = 0;
         assign_origins(&mut blocks, &mut assigned, &mut cursor);
         self.blocks = blocks;
@@ -460,31 +452,23 @@ fn build_tree(flat: Vec<Flat>) -> Vec<Block> {
     roots
 }
 
-fn flatten_origins(blocks: &[Block], depth: usize, out: &mut Vec<(usize, Option<Origin>)>) {
-    for b in blocks {
-        // Only pristine blocks are worth matching.
-        let origin = b.origin.clone().filter(|o| o.content == b.content);
-        out.push((depth, origin));
-        flatten_origins(&b.children, depth + 1, out);
+/// Blocks in document order with their depth.
+fn flatten(blocks: &[Block]) -> Vec<(usize, &Block)> {
+    fn go<'a>(blocks: &'a [Block], depth: usize, out: &mut Vec<(usize, &'a Block)>) {
+        for b in blocks {
+            out.push((depth, b));
+            go(&b.children, depth + 1, out);
+        }
     }
+    let mut out = Vec::new();
+    go(blocks, 0, &mut out);
+    out
 }
 
-fn flatten_keys(blocks: &[Block], depth: usize, out: &mut Vec<(usize, String)>) {
-    for b in blocks {
-        out.push((depth, b.content.clone()));
-        flatten_keys(&b.children, depth + 1, out);
-    }
-}
-
+/// Give each block (in document order) its matched source bytes, if any.
 fn assign_origins(blocks: &mut [Block], assigned: &mut [Option<Origin>], cursor: &mut usize) {
     for b in blocks {
-        if let Some(o) = assigned[*cursor].take() {
-            b.origin = Some(o);
-        } else if b.origin.as_ref().is_some_and(|o| o.content != b.content) {
-            // Keep an edited block's indentation style, drop its old bytes.
-        } else {
-            b.origin = None;
-        }
+        b.origin = assigned[*cursor].take();
         *cursor += 1;
         assign_origins(&mut b.children, assigned, cursor);
     }
@@ -492,10 +476,10 @@ fn assign_origins(blocks: &mut [Block], assigned: &mut [Option<Origin>], cursor:
 
 /// Longest common subsequence of `(depth, content)` keys. Falls back to
 /// position-by-position matching for very large pages.
-fn lcs_matches(old: &[(usize, Option<Origin>)], new: &[(usize, String)]) -> Vec<(usize, usize)> {
-    let eq = |o: &(usize, Option<Origin>), n: &(usize, String)| {
-        o.1.as_ref()
-            .is_some_and(|origin| o.0 == n.0 && origin.content == n.1)
+/// Only pristine old blocks can match (their bytes are worth keeping).
+fn lcs_matches(old: &[(usize, &Block)], new: &[(usize, &Block)]) -> Vec<(usize, usize)> {
+    let eq = |o: &(usize, &Block), n: &(usize, &Block)| {
+        o.0 == n.0 && o.1.is_pristine() && o.1.content == n.1.content
     };
     let (n, m) = (old.len(), new.len());
     if n.saturating_mul(m) > 4_000_000 {

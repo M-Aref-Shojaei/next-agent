@@ -201,8 +201,8 @@ impl TaskMeta {
             .as_deref()
             .filter(|t| !t.trim().is_empty())
             .unwrap_or_else(|| self.prompt.lines().next().unwrap_or(""));
-        let one_line: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-        let title: String = one_line.chars().take(100).collect();
+        let flat = one_line(raw);
+        let title: String = flat.chars().take(100).collect();
         if title.is_empty() {
             "Untitled task".to_string()
         } else {
@@ -504,10 +504,7 @@ impl Summarizer for DeterministicSummarizer {
             } else {
                 "Agent note"
             };
-            text.push_str(&format!(
-                " {label}: {}",
-                note.split_whitespace().collect::<Vec<_>>().join(" ")
-            ));
+            text.push_str(&format!(" {label}: {}", one_line(note)));
         }
         let follow_ups = match facts.status {
             TaskStatus::Failed => vec!["Investigate the failure and retry".to_string()],
@@ -705,12 +702,12 @@ impl From<std::io::Error> for VaultError {
 /// (Shared with the notes engine.)
 pub use next_agent_graph::write_atomic;
 
-fn id_of(source: &str) -> Option<&str> {
-    let body = source.strip_prefix("---\n")?;
-    body.lines()
-        .take_while(|l| *l != "---")
-        .find_map(|l| l.strip_prefix("id: "))
-        .map(str::trim)
+/// The task id in a record's frontmatter (any line endings, quoted or not).
+fn id_of(source: &str) -> Option<String> {
+    next_agent_graph::frontmatter::parse(source)
+        .into_iter()
+        .find(|p| p.key == "id")
+        .map(|p| p.value)
 }
 
 /// Writes task records into a vault.
@@ -765,12 +762,12 @@ impl VaultWriter {
         // date+slug gets `-2`, `-3`, ... instead of overwriting.
         let id = doc.meta.id.as_str();
         let mut page = task_page_title(&doc.meta.workspace, &stem);
-        let mut record_path = self.root.join(graph.page_rel_path(&page));
+        let mut record_path = graph.resolve(&graph.page_rel_path(&page))?;
         for n in 2.. {
             match fs::read_to_string(&record_path) {
-                Ok(existing) if id_of(&existing) != Some(id) => {
+                Ok(existing) if id_of(&existing).as_deref() != Some(id) => {
                     page = task_page_title(&doc.meta.workspace, &format!("{stem}-{n}"));
-                    record_path = self.root.join(graph.page_rel_path(&page));
+                    record_path = graph.resolve(&graph.page_rel_path(&page))?;
                 }
                 _ => break,
             }
@@ -801,7 +798,7 @@ impl VaultWriter {
             )?;
         }
 
-        let journal_path = self.root.join(graph.journal_rel_path(date));
+        let journal_path = graph.resolve(&graph.journal_rel_path(date))?;
         let journal = self.update_journal(store, doc, &journal_path, &page, facts.status)?;
 
         Ok(WriteOutcome {
