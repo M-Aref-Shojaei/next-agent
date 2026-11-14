@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { api, type BoardDoc, type BoardMeta } from "$lib/api.ts";
   import BoardCanvas from "$lib/components/BoardCanvas.svelte";
+  import { judgeSave } from "$lib/boards/guard.ts";
   import { createAutosaver, type Autosaver, type SaveStatus } from "$lib/boards/autosave.ts";
   import { TEMPLATES } from "$lib/boards/templates.ts";
   import { STICKY_PRESETS, sticky } from "$lib/boards/stickies.ts";
@@ -9,6 +10,7 @@
   import type { ExcalidrawImperativeAPI } from "$lib/boards/excalidraw.ts";
 
   type Engine = typeof import("$lib/boards/excalidraw.ts");
+  type Snap = { json: string; liveCount: number };
 
   let hasVault = $state<boolean | null>(null);
   let boards = $state<BoardMeta[]>([]);
@@ -16,7 +18,9 @@
   let scene = $state<unknown>(null);
   let mountKey = $state(0);
   let status = $state<SaveStatus>("idle");
-  let conflict = $state(false);
+  let conflict = $state<"changed" | "deleted" | null>(null);
+  /** An empty scene is being held back from overwriting a non-empty board. */
+  let emptyHeld = $state(false);
   let notice = $state("");
   let problem = $state("");
   let newName = $state("");
@@ -30,11 +34,16 @@
 
   let boardApi: ExcalidrawImperativeAPI | null = null;
   let engine: Engine | null = null;
-  let saver: Autosaver<true> | null = null;
+  let saver: Autosaver<Snap | null> | null = null;
   let revision: string | undefined;
   let lastSignature = "";
+  /** The board on disk has elements; an empty scene needs an explicit OK to replace it. */
+  let diskHasContent = false;
+  let allowEmpty = false;
   let pendingTemplate: Skeleton[] | null = null;
   let stickyCount = 0;
+  /** Bumped whenever a canvas unmounts, so a late onReady from a dead canvas is ignored. */
+  let generation = 0;
 
   const fail = (e: unknown) => (problem = String(e instanceof Error ? e.message : e));
 
@@ -60,49 +69,74 @@
     window.addEventListener("beforeunload", leave);
     return () => {
       window.removeEventListener("beforeunload", leave);
-      void saver?.flush();
+      void saver?.flush(); // no-op once the canvas teardown already flushed
     };
   });
 
-  function newSaver(name: string): Autosaver<true> {
-    return createAutosaver<true>({
+  /**
+   * Snapshot of the scene for autosave, or null when there is nothing safe to
+   * save. Runs synchronously (see `snapshotScene`): null once the canvas is gone,
+   * and null for an empty scene over a non-empty file unless the user said so.
+   */
+  function snapshot(): Snap | null {
+    if (!boardApi || !engine) return null;
+    const snap = engine.snapshotScene(boardApi);
+    const verdict = judgeSave(snap.liveCount, { diskHasContent, allowEmpty });
+    emptyHeld = verdict === "empty-held";
+    return verdict === "save" ? snap : null;
+  }
+
+  function scheduleSave() {
+    saver?.schedule(snapshot);
+  }
+
+  function newSaver(name: string): Autosaver<Snap | null> {
+    return createAutosaver<Snap | null>({
       delayMs: 800,
       onStatus: (s, e) => {
         status = s;
         if (s === "error") {
           if (String(e).startsWith("conflict:")) {
-            conflict = true;
+            conflict = String(e).startsWith("conflict: deleted") ? "deleted" : "changed";
             saver?.cancel();
           } else fail(e);
         }
       },
-      save: async () => {
-        if (!boardApi || !engine || conflict) return;
-        const content = await engine.serializeScene(boardApi);
-        revision = await api.boardSave(name, content, revision);
+      save: async (snap) => {
+        if (snap === null || conflict) return;
+        revision = await api.boardSave(name, snap.json, revision);
+        diskHasContent = snap.liveCount > 0;
       },
     });
   }
 
-  async function open(name: string) {
+  async function open(name: string, template: Skeleton[] | null = null): Promise<boolean> {
     problem = "";
     notice = "";
+    pendingTemplate = null; // never carry a template over from an earlier, failed open
     try {
       await saver?.flush();
       const opened = await api.boardOpen(name);
       saver = newSaver(opened.name);
       revision = opened.revision;
-      conflict = false;
+      conflict = null;
+      emptyHeld = false;
+      allowEmpty = false;
       confirmDelete = false;
       renaming = false;
       boardApi = null;
-      lastSignature = "";
       status = "idle";
-      scene = JSON.parse(opened.content);
+      const parsed = JSON.parse(opened.content) as { elements?: { version: number; isDeleted?: boolean }[]; appState?: AppBits };
+      lastSignature = signature(parsed.elements ?? [], parsed.appState);
+      diskHasContent = (parsed.elements ?? []).some((e) => !e.isDeleted);
+      pendingTemplate = template;
+      scene = parsed;
       doc = opened;
       mountKey += 1;
+      return true;
     } catch (e) {
       fail(e);
+      return false;
     }
   }
 
@@ -113,39 +147,44 @@
     try {
       const created = await api.boardCreate(newName);
       newName = "";
-      pendingTemplate = template && template.elements.length > 0 ? template.elements : null;
       await refresh();
-      await open(created.name);
+      await open(created.name, template && template.elements.length > 0 ? template.elements : null);
     } catch (e) {
       fail(e);
     }
   }
 
-  function signature(elements: readonly { version: number; id: string }[]): string {
-    let sum = 0;
-    for (const e of elements) sum += e.version;
-    return `${elements.length}:${sum}`;
+  interface AppBits {
+    viewBackgroundColor?: string;
+    gridModeEnabled?: boolean;
   }
 
-  function onChange(elements: readonly { version: number; id: string }[]) {
-    const sig = signature(elements);
+  /** What makes a scene worth saving: elements (count + versions) and the saved appState bits. */
+  function signature(elements: readonly { version: number }[], app: AppBits | undefined): string {
+    let sum = 0;
+    for (const e of elements) sum += e.version;
+    return `${elements.length}:${sum}:${app?.viewBackgroundColor ?? "#ffffff"}:${app?.gridModeEnabled ?? false}`;
+  }
+
+  function onChange(elements: readonly { version: number }[], app: unknown) {
+    const sig = signature(elements, app as AppBits);
     if (sig === lastSignature) return; // scroll/zoom/selection only
-    const first = lastSignature === "";
     lastSignature = sig;
-    if (first || conflict) return;
-    saver?.schedule(true);
+    if (!conflict) scheduleSave();
   }
 
   async function onReady(boardApiNext: ExcalidrawImperativeAPI) {
-    boardApi = boardApiNext;
+    const gen = generation;
     const e = await loadEngine();
+    if (gen !== generation) return; // the board was switched or closed while loading
+    boardApi = boardApiNext;
     void e.installLibrary(boardApiNext).catch(fail);
     if (pendingTemplate) {
       const centre = e.viewportCentre(boardApiNext);
       const items = placeAt(reId(pendingTemplate, "t-"), centre.x, centre.y);
       pendingTemplate = null;
       await e.insertSkeletons(boardApiNext, items, true);
-      saver?.schedule(true);
+      scheduleSave();
     }
   }
 
@@ -156,7 +195,7 @@
     const c = e.viewportCentre(boardApi);
     const jitter = ((stickyCount - 1) % 5) * 24;
     await e.insertSkeletons(boardApi, [sticky(color, "Idea", c.x - 90 + jitter, c.y - 90 + jitter)]);
-    saver?.schedule(true);
+    scheduleSave();
   }
 
   async function addFrame() {
@@ -164,7 +203,7 @@
     const e = await loadEngine();
     const c = e.viewportCentre(boardApi);
     await e.insertSkeletons(boardApi, [{ type: "frame", x: c.x - 320, y: c.y - 220, width: 640, height: 440, name: "Frame" }]);
-    saver?.schedule(true);
+    scheduleSave();
   }
 
   async function importMermaid(event: SubmitEvent) {
@@ -177,7 +216,7 @@
       const n = await e.importMermaid(boardApi, mermaidText);
       notice = `Imported ${n} elements from Mermaid.`;
       mermaidOpen = false;
-      saver?.schedule(true);
+      scheduleSave();
     } catch (err) {
       fail(`Mermaid import failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -223,6 +262,7 @@
       const reopened = await api.boardOpen(meta.name);
       saver = newSaver(reopened.name);
       revision = reopened.revision;
+      diskHasContent = JSON.parse(reopened.content).elements?.some((e: { isDeleted?: boolean }) => !e.isDeleted) ?? false;
       doc = { ...doc, name: reopened.name };
       renaming = false;
       await refresh();
@@ -236,6 +276,7 @@
     problem = "";
     try {
       saver?.cancel();
+      await saver?.flush(); // let an in-flight save finish so it cannot recreate the board
       const trashed = await api.boardDelete(doc.name);
       notice = `Moved "${doc.name}" to ${trashed}`;
       doc = null;
@@ -249,6 +290,20 @@
     }
   }
 
+  /** Canvas is about to unmount: capture any pending save now, then refuse further ones. */
+  function teardown() {
+    void saver?.flush();
+    boardApi = null;
+    generation += 1;
+  }
+
+  /** The user confirmed saving an empty board over a non-empty one. */
+  function saveEmpty() {
+    allowEmpty = true;
+    emptyHeld = false;
+    scheduleSave();
+  }
+
   async function reloadFromDisk() {
     if (doc) await open(doc.name);
   }
@@ -256,8 +311,10 @@
   async function overwriteDisk() {
     if (!doc || !boardApi || !engine) return;
     try {
-      revision = await api.boardSave(doc.name, await engine.serializeScene(boardApi), undefined);
-      conflict = false;
+      const { json, liveCount } = engine.snapshotScene(boardApi);
+      revision = await api.boardSave(doc.name, json, undefined);
+      diskHasContent = liveCount > 0;
+      conflict = null;
       status = "saved";
     } catch (e) {
       fail(e);
@@ -278,7 +335,7 @@
   }
 
   const statusText = $derived(
-    conflict ? "Changed on disk" : { idle: "", dirty: "Unsaved changes…", saving: "Saving…", saved: "Saved", error: "Save failed" }[status],
+    conflict ? "Changed on disk" : emptyHeld ? "Not saved (board is empty)" : { idle: "", dirty: "Unsaved changes…", saving: "Saving…", saved: "Saved", error: "Save failed" }[status],
   );
 </script>
 
@@ -349,9 +406,15 @@
         {/if}
         <span class="status" role="status" aria-live="polite">{statusText}</span>
       </div>
+      {#if emptyHeld}
+        <div class="problem" role="alert">
+          The board is empty, so autosave is paused to protect what is saved on disk.
+          <button class="danger" onclick={saveEmpty}>Save empty board</button>
+        </div>
+      {/if}
       {#if conflict}
         <div class="problem" role="alert">
-          This board changed on disk while it was open.
+          {conflict === "deleted" ? "This board was deleted or moved on disk while it was open." : "This board changed on disk while it was open."}
           <button onclick={reloadFromDisk}>Reload from disk</button>
           <button class="danger" onclick={overwriteDisk}>Keep mine (overwrite)</button>
         </div>
@@ -368,7 +431,7 @@
       {/if}
       <div class="canvas">
         {#key mountKey}
-          <BoardCanvas {scene} onchange={onChange} onready={onReady} onerror={fail} />
+          <BoardCanvas {scene} onchange={onChange} onready={onReady} onerror={fail} onteardown={teardown} />
         {/key}
       </div>
     {:else if hasVault}

@@ -43,6 +43,7 @@ const assets = new Map<string, string>();
 function boardName(raw: string): string {
   const name = raw.trim();
   if (!name || /[/\\:*?"<>|]/.test(name) || name.startsWith(".") || name.endsWith(".")) throw `invalid board name: ${raw}`;
+  if (/^(con|prn|aux|nul|conin\$|conout\$|(com|lpt)[1-9¹²³])$/i.test((name.split(".")[0] ?? "").trimEnd())) throw `board name is reserved by the operating system: ${raw}`;
   return name;
 }
 function boardDoc(name: string): BoardDoc {
@@ -335,6 +336,7 @@ export const mockApi: Api = {
     requireVault();
     const n = boardName(name);
     const b = boards.get(n);
+    if (!b && baseRevision !== undefined) throw `conflict: deleted: board "${n}" no longer exists on disk`;
     if (b && baseRevision !== undefined && baseRevision !== String(b.rev)) {
       throw `conflict: board "${n}" changed on disk since it was opened`;
     }
@@ -348,7 +350,7 @@ export const mockApi: Api = {
     const t = boardName(to);
     const b = boards.get(f);
     if (!b) throw `board "${f}" not found`;
-    if (boards.has(t)) throw `a board named "${t}" already exists`;
+    if (boards.has(t) && f.toLowerCase() !== t.toLowerCase()) throw `a board named "${t}" already exists`;
     boards.delete(f);
     boards.set(t, b);
     return { name: t, modifiedMs: b.modifiedMs, size: b.content.length };

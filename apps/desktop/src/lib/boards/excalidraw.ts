@@ -13,14 +13,15 @@ export const ASSET_PATH = "/excalidraw-assets/";
 
 type Excalidraw = typeof import("@excalidraw/excalidraw");
 let loaded: Promise<Excalidraw> | null = null;
+let lib: Excalidraw | null = null;
 
 /** Load Excalidraw once (code, CSS, fonts path). */
 export function loadExcalidraw(): Promise<Excalidraw> {
   loaded ??= (async () => {
     (window as unknown as { EXCALIDRAW_ASSET_PATH: string }).EXCALIDRAW_ASSET_PATH = ASSET_PATH;
-    const [lib] = await Promise.all([import("@excalidraw/excalidraw"), import("@excalidraw/excalidraw/index.css")]);
-    return lib;
-  })();
+    const [l] = await Promise.all([import("@excalidraw/excalidraw"), import("@excalidraw/excalidraw/index.css")]);
+    return l;
+  })().then((l) => (lib = l));
   return loaded;
 }
 
@@ -61,10 +62,25 @@ export function mountBoard(el: HTMLElement, initial: BoardProps): Island<BoardPr
   }, initial);
 }
 
-/** Serialise the current scene as standard `.excalidraw` JSON. */
-export async function serializeScene(api: ExcalidrawImperativeAPI): Promise<string> {
-  const { serializeAsJSON } = await loadExcalidraw();
-  return serializeAsJSON(api.getSceneElements(), api.getAppState(), api.getFiles(), "local");
+export interface SceneSnapshot {
+  json: string;
+  /** Elements that are not soft-deleted. */
+  liveCount: number;
+}
+
+/**
+ * Serialise the current scene as standard `.excalidraw` JSON, synchronously.
+ * Sync on purpose: autosave must capture the scene before the canvas is torn
+ * down, and an `await` in between lets React unmount and the scene read empty.
+ * Only callable once a board has mounted (which implies Excalidraw is loaded).
+ */
+export function snapshotScene(api: ExcalidrawImperativeAPI): SceneSnapshot {
+  if (!lib) throw new Error("Excalidraw is not loaded yet");
+  const elements = api.getSceneElements();
+  return {
+    json: lib.serializeAsJSON(elements, api.getAppState(), api.getFiles(), "local"),
+    liveCount: elements.filter((e) => !e.isDeleted).length,
+  };
 }
 
 /** Centre of the visible canvas in scene coordinates. */

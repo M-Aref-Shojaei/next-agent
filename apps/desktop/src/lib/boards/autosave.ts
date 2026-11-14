@@ -1,5 +1,11 @@
 // Debounced autosave. `save` runs after `delayMs` of quiet; a save already in
 // flight is never overlapped (the newest value is written right after it).
+//
+// `schedule` takes a getter, not a value, so a large snapshot is built once per
+// save rather than once per change. The getter always runs synchronously: when
+// the timer fires, or at the start of `flush()` (which freezes it before its
+// first await). A caller that must tear its source down can therefore
+// `void flush()` first and be sure the value was captured while it still existed.
 
 export type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -10,8 +16,8 @@ export interface AutosaveOptions<T> {
 }
 
 export interface Autosaver<T> {
-  /** Queue a value; resets the debounce timer. */
-  schedule(value: T): void;
+  /** Queue a snapshot getter; resets the debounce timer. */
+  schedule(get: () => T): void;
   /** Save any pending value now and wait for it. */
   flush(): Promise<void>;
   /** Drop the pending value without saving (e.g. after a conflict reload). */
@@ -22,7 +28,7 @@ export interface Autosaver<T> {
 export function createAutosaver<T>(options: AutosaveOptions<T>): Autosaver<T> {
   const delay = options.delayMs ?? 800;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let pendingValue: { value: T } | null = null;
+  let pending: { get: () => T } | null = null;
   let running: Promise<void> | null = null;
   const status = (s: SaveStatus, e?: unknown) => options.onStatus?.(s, e);
 
@@ -32,13 +38,13 @@ export function createAutosaver<T>(options: AutosaveOptions<T>): Autosaver<T> {
   };
 
   async function run(): Promise<void> {
-    while (pendingValue) {
-      const { value } = pendingValue;
-      pendingValue = null;
+    while (pending) {
+      const { get } = pending;
+      pending = null;
       status("saving");
       try {
-        await options.save(value);
-        status(pendingValue ? "dirty" : "saved");
+        await options.save(get());
+        status(pending ? "dirty" : "saved");
       } catch (error) {
         status("error", error);
         return; // keep nothing queued; the next change schedules a new save
@@ -56,8 +62,8 @@ export function createAutosaver<T>(options: AutosaveOptions<T>): Autosaver<T> {
   }
 
   return {
-    schedule(value) {
-      pendingValue = { value };
+    schedule(get) {
+      pending = { get };
       status("dirty");
       clear();
       timer = setTimeout(() => {
@@ -67,15 +73,24 @@ export function createAutosaver<T>(options: AutosaveOptions<T>): Autosaver<T> {
     },
     async flush() {
       clear();
-      if (pendingValue) await start();
-      else if (running) await running;
+      if (pending) {
+        try {
+          const value = pending.get(); // capture now, before anything can tear the source down
+          pending = { get: () => value };
+        } catch (error) {
+          pending = null;
+          status("error", error);
+          return;
+        }
+        await start();
+      } else if (running) await running;
     },
     cancel() {
       clear();
-      pendingValue = null;
+      pending = null;
     },
     get pending() {
-      return pendingValue !== null || running !== null;
+      return pending !== null || running !== null;
     },
   };
 }

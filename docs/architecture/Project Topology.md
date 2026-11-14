@@ -32,7 +32,6 @@ flowchart LR
   end
   subgraph planned["Planned (no code yet)"]
     direction TB
-    ui["ui<br/><small>packages/ui</small>"]
     agent_gateway["agent-gateway<br/><small>services/agent-gateway</small>"]
     channel_gateway["channel-gateway<br/><small>services/channel-gateway</small>"]
     hermes_adapter["hermes-adapter<br/><small>services/hermes-adapter</small>"]
@@ -74,7 +73,6 @@ flowchart LR
   class ts_desktop ts
   class ts_contracts ts
   class ts_policy ts
-  class ui planned
   class ts_vault ts
   class agent_gateway planned
   class channel_gateway planned
@@ -98,7 +96,6 @@ flowchart LR
 | desktop UI | TS package | `apps/desktop` | contracts, desktop backend (Tauri) | — | — |
 | contracts | TS package | `packages/contracts` | — | desktop UI | core |
 | policy | TS package | `packages/policy` | — | — | permission-engine |
-| ui | planned (stub) | `packages/ui` | — | — | — |
 | vault | TS package | `packages/vault` | — | — | core, graph |
 | agent-gateway | planned (stub) | `services/agent-gateway` | — | — | — |
 | channel-gateway | planned (stub) | `services/channel-gateway` | — | — | — |

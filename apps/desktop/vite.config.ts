@@ -1,6 +1,6 @@
 import { sveltekit } from "@sveltejs/kit/vite";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 
@@ -24,7 +24,7 @@ function excalidrawFonts(): Plugin {
     configureServer(server) {
       server.middlewares.use(URL_BASE, (req, res, next) => {
         const file = resolve(FONT_DIR, decodeURIComponent((req.url ?? "").split("?")[0]!).replace(/^\/+/, ""));
-        if (!file.startsWith(FONT_DIR) || !existsSync(file) || !statSync(file).isFile()) return next();
+        if (!file.startsWith(FONT_DIR + sep) || !existsSync(file) || !statSync(file).isFile()) return next();
         res.setHeader("Content-Type", "font/woff2");
         res.end(readFileSync(file));
       });
