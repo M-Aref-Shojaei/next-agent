@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  APPROVAL_TIMEOUT_MS,
   activeTask,
   emptyModel,
+  nextTimeout,
+  runningCount,
   ingest,
   ingestStarted,
   markAnswered,
@@ -81,4 +84,23 @@ test("events may arrive before the started notice", () => {
   m = ingestStarted(m, { taskId: "t", title: "Late title", mode: "manual" });
   assert.equal(m.tasks.length, 1);
   assert.equal(activeTask(m)?.title, "Late title");
+});
+
+test("a request leaves the island after Coucou's 115 s wait but is still counted", () => {
+  const t0 = 1_000_000;
+  let m = emptyModel();
+  for (const msg of ask("a", "a1")) m = ingest(m, msg, t0);
+  for (const msg of ask("a", "a2")) m = ingest(m, msg, t0 + 60_000);
+  assert.equal(nextTimeout(m, t0), t0 + APPROVAL_TIMEOUT_MS);
+  const later = pendingQueue(m, undefined, t0 + APPROVAL_TIMEOUT_MS);
+  assert.deepEqual(later.visible.map((i) => i.approvalId), ["a2"]);
+  assert.equal(later.expired, 1);
+  assert.equal(later.total, 2);
+  assert.equal(wantsAttention(m, t0 + 60_000 + APPROVAL_TIMEOUT_MS), false);
+});
+
+test("running tasks are counted", () => {
+  let m = run(ev("a", "task_started", { mode: "manual" }));
+  m = ingestStarted(m, { taskId: "b", title: "B", mode: "auto" });
+  assert.equal(runningCount(m), 2);
 });

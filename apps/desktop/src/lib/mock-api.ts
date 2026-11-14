@@ -294,14 +294,22 @@ export const mockApi: Api = {
   async overlayInfo() {
     return {
       settings: { enabled: true, position: "top-center" as const, monitor: null },
-      monitors: ["Mock display"],
-      transparent: true,
-      notch: null,
+      monitors: [{ key: "display:MOCK", label: "Mock display" }],
+      island: {
+        hasNotch: true,
+        width: 185,
+        height: 32,
+        compactExtra: 160,
+        panel: [720, 560] as [number, number],
+        position: "top-center" as const,
+        platform: "macos" as const,
+      },
     };
   },
   async overlaySetSettings() {},
   async overlaySetRect() {},
   async overlaySetExpanded() {},
+  async overlaySetCollapsed() {},
   async overlayOpenTask() {},
   async onTaskStream() {
     return () => {};
@@ -310,6 +318,9 @@ export const mockApi: Api = {
     return () => {};
   },
   async onOverlayPointer() {
+    return () => {};
+  },
+  async onOverlayGeometry() {
     return () => {};
   },
   async onFocusTask() {

@@ -50,6 +50,7 @@ flowchart LR
   next_agent_desktop --> next_agent_permission_engine
   next_agent_desktop --> next_agent_process_manager
   next_agent_desktop --> next_agent_graph
+  next_agent_desktop --> next_agent_macos_panel
   ts_desktop --> ts_contracts
   ts_desktop ==>|"IPC: invoke / Channel"| next_agent_desktop
   ts_policy <-.->|"rule parity (check-policy-parity)"| next_agent_permission_engine
@@ -91,8 +92,8 @@ flowchart LR
 | permission-engine | Rust crate | `crates/permission-engine` | — | core, desktop backend (Tauri) | policy |
 | process-manager | Rust crate | `crates/process-manager` | — | core, desktop backend (Tauri) | — |
 | graph | Rust crate | `crates/graph` | — | core, desktop backend (Tauri) | vault |
-| macos-panel | Rust crate | `crates/macos-panel` | — | — | — |
-| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph | desktop UI | — |
+| macos-panel | Rust crate | `crates/macos-panel` | — | desktop backend (Tauri) | — |
+| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph, macos-panel | desktop UI | — |
 | desktop UI | TS package | `apps/desktop` | contracts, desktop backend (Tauri) | — | — |
 | contracts | TS package | `packages/contracts` | — | desktop UI | core |
 | policy | TS package | `packages/policy` | — | — | permission-engine |

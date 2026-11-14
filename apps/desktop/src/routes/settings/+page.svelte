@@ -75,7 +75,7 @@
   {#if overlay}
     <section aria-labelledby="h-overlay">
       <h2 id="h-overlay">Overlay</h2>
-      <p class="muted">An always-on-top island showing the active task and pending approvals.</p>
+      <p class="muted">An island around the notch (or at the top of the screen) showing running tasks and pending approvals. Changes apply at once. Behaviour ported from Coucou (MIT).</p>
       <label>
         <input
           type="checkbox"
@@ -100,8 +100,10 @@
         value={overlay.settings.monitor ?? ""}
         onchange={(e) => saveOverlay({ monitor: e.currentTarget.value || null })}
       >
-        <option value="">Follow the cursor (then primary)</option>
-        {#each overlay.monitors as name (name)}<option value={name}>{name}</option>{/each}
+        <option value="">The screen with a notch (else the main one)</option>
+        <option value="menuBar">The screen with the menu bar</option>
+        <option value="followMouse">Follow the mouse</option>
+        {#each overlay.monitors as m (m.key)}<option value={m.key}>{m.label}</option>{/each}
       </select>
     </section>
   {/if}

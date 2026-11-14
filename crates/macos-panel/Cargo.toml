@@ -1,18 +1,21 @@
 [package]
 name = "next-agent-macos-panel"
-description = "macOS notch detection and panel-like window behaviour for the overlay (public AppKit APIs only)."
+description = "Overlay island geometry ported from Coucou (all platforms) and its macOS NSPanel (public AppKit API)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSScreen", "NSWindow", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSColor", "NSEvent", "NSGraphics", "NSPanel", "NSResponder", "NSScreen", "NSStatusBar", "NSView", "NSWindow", "objc2-core-foundation"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFString", "CFUUID"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "libc", "CGDirectDisplay", "CGDisplayConfiguration", "CGEvent", "CGEventTypes"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSEnumerator", "NSGeometry", "NSString", "NSValue"] }
 
-# Own lint table: this is the one crate that must dereference the raw NSWindow
-# pointer Tauri hands out, so `unsafe` is denied by default and allowed on that
-# single function (the workspace table forbids it everywhere else).
+# Own lint table: this is the one crate that needs `unsafe` (the NSWindow
+# pointer Tauri hands out, the NSPanel class swap, one ColorSync call), so it
+# is denied by default and allowed only on those items in `src/mac.rs` (the
+# workspace table forbids it everywhere else).
 [lints.rust]
 unsafe_code = "deny"
 unused_must_use = "deny"

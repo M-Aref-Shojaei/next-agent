@@ -26,9 +26,15 @@ next-agent-permission-engine = { path = "../../../crates/permission-engine" }
 next-agent-process-manager = { path = "../../../crates/process-manager" }
 next-agent-graph = { path = "../../../crates/graph" }
 tokio = { version = "1", features = ["sync", "macros"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
+# Island geometry ported from Coucou (all platforms) and the macOS NSPanel.
 next-agent-macos-panel = { path = "../../../crates/macos-panel" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Overlay input region and window type (Tauri already links GTK 3).
+gtk = "0.18"
+# Overlay as a layer-shell surface on wlroots, KDE and COSMIC. Opt-in: it
+# links libgtk-layer-shell, which the build machine and the system need.
+gtk-layer-shell = { version = "0.8", optional = true, features = ["v0_6"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -37,3 +43,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [lints]
 workspace = true
+
+[features]
+layer-shell = ["dep:gtk-layer-shell"]

@@ -115,6 +115,7 @@ jobs:
           node scripts/check-rust-structure.mjs
           node scripts/check-policy-parity.mjs
           node scripts/check-boundaries.mjs
+          node scripts/check-no-coucou-assets.mjs
 
       - name: pnpm -r check
         if: hashFiles('pnpm-lock.yaml') != ''

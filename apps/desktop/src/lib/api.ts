@@ -2,6 +2,7 @@
 // (vite dev, screenshots) it falls back to an in-memory mock so the UI is usable.
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { IslandInfo } from "./island/layout.ts";
 import type { DiffAction } from "./diff.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 import { mockApi } from "./mock-api.ts";
@@ -50,15 +51,18 @@ export interface ReviewOutcome {
 export interface OverlaySettings {
   enabled: boolean;
   position: "top-center" | "top-left" | "top-right";
+  /** `notch` (default), `menuBar`, `followMouse` or `display:<id>`; null = default. */
   monitor: string | null;
+}
+export interface OverlayMonitor {
+  key: string;
+  label: string;
 }
 export interface OverlayInfo {
   settings: OverlaySettings;
-  monitors: string[];
-  /** False on macOS: the page paints an opaque island. */
-  transparent: boolean;
-  /** Notch size in points (macOS), if any. */
-  notch: [number, number] | null;
+  monitors: OverlayMonitor[];
+  /** The resting island on the current screen, and the panel around it. */
+  island: IslandInfo;
 }
 export interface AgentProfileInfo {
   name: string;
@@ -154,6 +158,8 @@ export interface Api {
   /** Island rectangle (CSS px, window-relative) used for click-through. */
   overlaySetRect(rect: OverlayRect | null): Promise<void>;
   overlaySetExpanded(expanded: boolean): Promise<void>;
+  /** PC: fold the window to the hidden island (size), or back to the panel (null). */
+  overlaySetCollapsed(size: [number, number] | null): Promise<void>;
   /** Focus the main window on a task. */
   overlayOpenTask(taskId: string): Promise<void>;
   /** Every sequenced task event, broadcast to all windows. */
@@ -161,6 +167,8 @@ export interface Api {
   onTaskStarted(callback: (started: TaskStarted) => void): Promise<() => void>;
   /** Pointer entered/left the overlay island (the window is click-through otherwise). */
   onOverlayPointer(callback: (inside: boolean) => void): Promise<() => void>;
+  /** The island's screen or placement changed (re-measured resting island). */
+  onOverlayGeometry(callback: (island: IslandInfo) => void): Promise<() => void>;
   /** The overlay asked the main window to show a task. */
   onFocusTask(callback: (taskId: string) => void): Promise<() => void>;
   // Design boards: vault `boards/*.excalidraw`. Save errors starting with "conflict:" mean the file changed on disk.
@@ -232,10 +240,12 @@ const tauriApi: Api = {
   overlaySetSettings: (settings) => invoke("overlay_set_settings", { settings }),
   overlaySetRect: (rect) => invoke("overlay_set_rect", { rect }),
   overlaySetExpanded: (expanded) => invoke("overlay_set_expanded", { expanded }),
+  overlaySetCollapsed: (size) => invoke("overlay_set_collapsed", { size }),
   overlayOpenTask: (taskId) => invoke("overlay_open_task", { taskId }),
   onTaskStream: (callback) => listen<StreamMessage>("task-stream", (e) => callback(e.payload)),
   onTaskStarted: (callback) => listen<TaskStarted>("task-started", (e) => callback(e.payload)),
   onOverlayPointer: (callback) => listen<boolean>("overlay-pointer", (e) => callback(e.payload)),
+  onOverlayGeometry: (callback) => listen<IslandInfo>("overlay-geometry", (e) => callback(e.payload)),
   onFocusTask: (callback) => listen<string>("focus-task", (e) => callback(e.payload)),
 };
 
