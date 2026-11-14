@@ -20,12 +20,19 @@
 // Provider and format names (OpenAI, Gemini, SSE…) appear in prose throughout.
 #![allow(clippy::doc_markdown)]
 
+pub mod affinity;
+pub mod breaker;
+pub mod budget;
+pub mod cache;
+pub mod catalog;
 pub mod client;
 pub mod combo;
 pub mod fetch;
 pub mod gateway;
+pub mod overflow;
 pub mod pricing;
 pub mod providers;
+pub mod reasoning;
 pub mod savers;
 pub mod settings;
 pub mod smart;

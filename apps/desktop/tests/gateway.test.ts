@@ -3,7 +3,11 @@ import test from "node:test";
 import {
   dailyBars,
   defaultSettings,
+  budgetLabel,
+  budgetPercent,
+  cacheHitRate,
   effectiveStrategy,
+  parseWeights,
   formatCost,
   formatTs,
   formatTokens,
@@ -65,4 +69,19 @@ test("switch reasons read as plain words", () => {
   assert.equal(switchReason("quality:truncated"), "Low quality: truncated answers");
   assert.equal(switchReason("quality:bad-tool-json"), "Low quality: broken tool-call JSON");
   assert.equal(switchReason("quality:new-kind"), "Low quality: new-kind");
+});
+
+test("cache hit rate, budgets and weights", () => {
+  assert.equal(cacheHitRate({ promptTokens: 1000, cachedTokens: 250 }), 25);
+  assert.equal(cacheHitRate({ promptTokens: 0, cachedTokens: 0 }), 0);
+  const budget = { role: "chat", period: "daily" as const, limitUsd: 4 };
+  assert.equal(budgetLabel(budget), "Daily budget for chat");
+  assert.equal(budgetLabel({ ...budget, role: null, period: "monthly" }), "Monthly budget");
+  assert.equal(budgetPercent({ budget, spent: 3, level: "warn" }), 75);
+  assert.equal(budgetPercent({ budget, spent: 9, level: "over" }), 100);
+  assert.deepEqual(parseWeights("3, 1\n x"), [3, 1, 1]);
+  assert.deepEqual(parseWeights(""), []);
+  const settings = defaultSettings();
+  assert.equal(settings.responseCache.enabled, false);
+  assert.equal(settings.budgetAction, "block");
 });

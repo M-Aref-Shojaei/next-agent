@@ -124,7 +124,8 @@ pub const MIGRATIONS: &[&str] = &[
         models TEXT NOT NULL DEFAULT '[]',
         strategy TEXT,
         sticky_limit INTEGER,
-        confidence_threshold REAL
+        confidence_threshold REAL,
+        weights TEXT
     )",
     "CREATE TABLE IF NOT EXISTS llm_usage (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,6 +182,25 @@ pub const MIGRATIONS: &[&str] = &[
         to_model TEXT NOT NULL,
         reason TEXT NOT NULL,
         confidence REAL NOT NULL DEFAULT 1
+    )",
+    // Exact-match response cache. `key` is a SHA-256 of the canonical
+    // request (no account, no key material); `body` is the stored answer.
+    "CREATE TABLE IF NOT EXISTS llm_response_cache (
+        key TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+    )",
+    "CREATE TABLE IF NOT EXISTS llm_cache_hits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT '',
+        saved_tokens INTEGER NOT NULL DEFAULT 0,
+        saved_cost REAL NOT NULL DEFAULT 0
     )",
     // --- end llm-gateway ---
 ];
@@ -922,6 +942,19 @@ pub struct ComboRow {
     pub sticky_limit: Option<i64>,
     /// Smart strategy: switch below this confidence (`None` = 0.8).
     pub confidence_threshold: Option<f64>,
+    /// Weighted strategy: JSON array of weights, one per model.
+    pub weights: Option<String>,
+}
+
+/// Row in `llm_cache_hits`: an answer served from the response cache.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CacheHitRow {
+    pub provider: String,
+    pub model: String,
+    pub role: String,
+    /// Prompt + completion tokens the provider did not have to process.
+    pub saved_tokens: i64,
+    pub saved_cost: f64,
 }
 
 /// Row in `llm_smart_sticky`: a session's sticky model for one combo.
@@ -1001,6 +1034,10 @@ pub struct UsageSummary {
     pub recent: Vec<UsageRow>,
     /// Smart-combo model switches in the period, newest first.
     pub switches: Vec<SwitchRow>,
+    /// Answers served from the response cache in the period.
+    pub cache_hits: i64,
+    pub cache_saved_tokens: i64,
+    pub cache_saved_cost: f64,
     /// Bytes of tool output before / after RTK compression in the period.
     pub saver_bytes_before: i64,
     pub saver_bytes_after: i64,
@@ -1073,12 +1110,13 @@ impl Store {
     pub fn upsert_combo(&self, row: &ComboRow) -> Result<(), StoreError> {
         self.conn.execute(
             "INSERT INTO llm_combos (id, name, kind, models, strategy, sticky_limit,
-                confidence_threshold)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                confidence_threshold, weights)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind,
                 models = excluded.models, strategy = excluded.strategy,
                 sticky_limit = excluded.sticky_limit,
-                confidence_threshold = excluded.confidence_threshold",
+                confidence_threshold = excluded.confidence_threshold,
+                weights = excluded.weights",
             rusqlite::params![
                 row.id,
                 row.name,
@@ -1086,7 +1124,8 @@ impl Store {
                 row.models,
                 row.strategy,
                 row.sticky_limit,
-                row.confidence_threshold
+                row.confidence_threshold,
+                row.weights
             ],
         )?;
         Ok(())
@@ -1098,7 +1137,7 @@ impl Store {
     /// Returns [`StoreError`] if the query fails.
     pub fn list_combos(&self) -> Result<Vec<ComboRow>, StoreError> {
         let mut statement = self.conn.prepare(
-            "SELECT id, name, kind, models, strategy, sticky_limit, confidence_threshold
+            "SELECT id, name, kind, models, strategy, sticky_limit, confidence_threshold, weights
              FROM llm_combos ORDER BY name",
         )?;
         let rows = statement.query_map([], |row| {
@@ -1110,6 +1149,7 @@ impl Store {
                 strategy: row.get(4)?,
                 sticky_limit: row.get(5)?,
                 confidence_threshold: row.get(6)?,
+                weights: row.get(7)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -1180,6 +1220,111 @@ impl Store {
             ],
         )?;
         Ok(())
+    }
+
+    /// A cached answer that has not expired at `now` (Unix seconds).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn cache_get(&self, key: &str, now: i64) -> Result<Option<String>, StoreError> {
+        let mut statement = self.conn.prepare_cached(
+            "SELECT body FROM llm_response_cache WHERE key = ?1 AND expires_at > ?2",
+        )?;
+        let mut rows = statement.query_map(rusqlite::params![key, now], |row| row.get(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Store an answer, then drop expired entries and the oldest beyond
+    /// `max_entries`.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a write fails.
+    #[allow(clippy::too_many_arguments)] // One row's columns.
+    pub fn cache_put(
+        &self,
+        key: &str,
+        provider: &str,
+        model: &str,
+        body: &str,
+        now: i64,
+        ttl_secs: i64,
+        max_entries: i64,
+    ) -> Result<(), StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT OR REPLACE INTO llm_response_cache (key, provider, model, body, created_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![key, provider, model, body, now, now.saturating_add(ttl_secs)],
+        )?;
+        tx.execute(
+            "DELETE FROM llm_response_cache WHERE expires_at <= ?1",
+            [now],
+        )?;
+        tx.execute(
+            "DELETE FROM llm_response_cache WHERE key NOT IN
+                (SELECT key FROM llm_response_cache ORDER BY created_at DESC, rowid DESC LIMIT ?1)",
+            [max_entries.max(0)],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Remove every cached answer; returns how many there were.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn cache_clear(&self) -> Result<usize, StoreError> {
+        Ok(self.conn.execute("DELETE FROM llm_response_cache", [])?)
+    }
+
+    /// Number of cached answers.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn cache_count(&self) -> Result<i64, StoreError> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM llm_response_cache", [], |row| {
+                row.get(0)
+            })?)
+    }
+
+    /// Record an answer served from the cache.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn record_cache_hit(&self, row: &CacheHitRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO llm_cache_hits (provider, model, role, saved_tokens, saved_cost)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                row.provider,
+                row.model,
+                row.role,
+                row.saved_tokens,
+                row.saved_cost
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Recorded spend (USD) today or this calendar month (UTC), for one role
+    /// or (`None`) overall.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn spend(&self, role: Option<&str>, monthly: bool) -> Result<f64, StoreError> {
+        let sql = if monthly {
+            "SELECT COALESCE(SUM(cost), 0) FROM llm_usage_daily
+             WHERE day >= date('now', 'start of month') AND (?1 IS NULL OR role = ?1)"
+        } else {
+            "SELECT COALESCE(SUM(cost), 0) FROM llm_usage_daily
+             WHERE day >= date('now') AND (?1 IS NULL OR role = ?1)"
+        };
+        Ok(self
+            .conn
+            .prepare_cached(sql)?
+            .query_row([role], |row| row.get(0))?)
     }
 
     fn switches_since(&self, since: &str, limit: i64) -> Result<Vec<SwitchRow>, StoreError> {
@@ -1271,6 +1416,7 @@ impl Store {
     ///
     /// # Errors
     /// Returns [`StoreError`] if a query fails.
+    #[allow(clippy::too_many_lines)] // One query per section of the summary.
     pub fn usage_summary(&self, days: u32, recent: usize) -> Result<UsageSummary, StoreError> {
         // `date('now', '-0 days')` is today, so N days = offset N-1.
         let since = if days == 0 {
@@ -1362,6 +1508,12 @@ impl Store {
         })?;
         let recent_rows = rows.collect::<Result<_, _>>()?;
         let switches = self.switches_since(&since, limit)?;
+        let (cache_hits, cache_saved_tokens, cache_saved_cost) = self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(saved_tokens), 0), COALESCE(SUM(saved_cost), 0)
+             FROM llm_cache_hits WHERE substr(ts, 1, 10) >= ?1",
+            [&since],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
         Ok(UsageSummary {
             totals,
             by_provider,
@@ -1370,6 +1522,9 @@ impl Store {
             daily,
             recent: recent_rows,
             switches,
+            cache_hits,
+            cache_saved_tokens,
+            cache_saved_cost,
             saver_bytes_before,
             saver_bytes_after,
         })
@@ -1408,6 +1563,7 @@ mod gateway_tests {
             strategy: Some("smart".into()),
             sticky_limit: None,
             confidence_threshold: Some(0.9),
+            weights: None,
         };
         store.upsert_combo(&combo).expect("combo");
         let clash = ComboRow {
@@ -1417,6 +1573,64 @@ mod gateway_tests {
         assert!(store.upsert_combo(&clash).is_err(), "names are unique");
         assert_eq!(store.list_combos().expect("list"), vec![combo]);
         assert!(store.delete_combo("k1").expect("delete"));
+    }
+
+    #[test]
+    fn response_cache_expires_evicts_and_counts_hits() {
+        let store = Store::open_in_memory().expect("open");
+        store
+            .cache_put("k1", "openai", "m", "one", 100, 60, 2)
+            .expect("put");
+        assert_eq!(
+            store.cache_get("k1", 120).expect("get").as_deref(),
+            Some("one")
+        );
+        assert_eq!(store.cache_get("k1", 160).expect("expired"), None);
+        store
+            .cache_put("k2", "openai", "m", "two", 101, 60, 2)
+            .expect("put");
+        store
+            .cache_put("k3", "openai", "m", "three", 102, 60, 2)
+            .expect("put");
+        assert_eq!(store.cache_count().expect("count"), 2, "oldest evicted");
+        assert_eq!(store.cache_get("k1", 103).expect("get"), None);
+        store
+            .record_cache_hit(&CacheHitRow {
+                provider: "openai".into(),
+                model: "m".into(),
+                role: "chat".into(),
+                saved_tokens: 150,
+                saved_cost: 0.25,
+            })
+            .expect("hit");
+        let summary = store.usage_summary(1, 5).expect("summary");
+        assert_eq!((summary.cache_hits, summary.cache_saved_tokens), (1, 150));
+        assert!((summary.cache_saved_cost - 0.25).abs() < 1e-9);
+        assert_eq!(store.cache_clear().expect("clear"), 2);
+    }
+
+    #[test]
+    fn spend_is_summed_per_role_and_period() {
+        let store = Store::open_in_memory().expect("open");
+        let row = |role: &str, cost: f64, ts: Option<&str>| UsageRow {
+            provider: "p".into(),
+            model: "m".into(),
+            role: role.into(),
+            status: 200,
+            cost,
+            ts: ts.map(str::to_string),
+            ..UsageRow::default()
+        };
+        store.record_usage(&row("chat", 1.5, None)).expect("chat");
+        store
+            .record_usage(&row("review", 0.5, None))
+            .expect("review");
+        store
+            .record_usage(&row("chat", 9.0, Some("2001-01-01T00:00:00Z")))
+            .expect("old");
+        assert!((store.spend(Some("chat"), false).expect("day") - 1.5).abs() < 1e-9);
+        assert!((store.spend(None, false).expect("all") - 2.0).abs() < 1e-9);
+        assert!((store.spend(None, true).expect("month") - 2.0).abs() < 1e-9);
     }
 
     #[test]

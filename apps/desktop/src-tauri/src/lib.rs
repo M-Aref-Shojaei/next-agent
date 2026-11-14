@@ -61,6 +61,10 @@ pub fn run() {
             gateway::gateway_settings_set,
             gateway::gateway_targets,
             gateway::usage_summary,
+            gateway::gateway_catalog_status,
+            gateway::gateway_catalog_refresh,
+            gateway::gateway_cache_count,
+            gateway::gateway_cache_clear,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Agent");

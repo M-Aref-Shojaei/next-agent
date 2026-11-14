@@ -2,7 +2,27 @@
 // Providers, Usage). The IPC calls live in api.ts.
 
 export type CavemanLevel = "lite" | "full" | "ultra";
-export type ComboStrategy = "fallback" | "round-robin" | "smart";
+export type ComboStrategy =
+  | "fallback"
+  | "round-robin"
+  | "smart"
+  | "weighted"
+  | "cost-optimized"
+  | "lkgp"
+  | "context-optimized";
+export const STRATEGIES: { value: ComboStrategy; label: string }[] = [
+  { value: "fallback", label: "Fallback (in order)" },
+  { value: "round-robin", label: "Round-robin" },
+  { value: "smart", label: "Smart (one model per task)" },
+  { value: "weighted", label: "Weighted (random by weight)" },
+  { value: "cost-optimized", label: "Cheapest first" },
+  { value: "lkgp", label: "Last model that worked first" },
+  { value: "context-optimized", label: "Largest context first" },
+];
+export type Effort = "off" | "low" | "medium" | "high" | "max";
+export const EFFORTS: Effort[] = ["off", "low", "medium", "high", "max"];
+export type BudgetPeriod = "daily" | "monthly";
+export type BudgetAction = "block" | "cheapest";
 /** Smart-combo confidence thresholds offered in the editor (0.8 is the default). */
 export const THRESHOLDS = [0.7, 0.8, 0.9] as const;
 export const DEFAULT_THRESHOLD = 0.8;
@@ -54,6 +74,40 @@ export interface Combo {
   stickyLimit: number | null;
   /** Smart only: switch models when answer quality drops below this. */
   confidenceThreshold: number | null;
+  /** Weighted only: one weight per model ([] = all 1). */
+  weights: number[];
+}
+
+export interface ResponseCacheSettings {
+  enabled: boolean;
+  ttlSecs: number;
+  maxEntries: number;
+  anyTemperature: boolean;
+}
+
+export interface ReasoningSetting {
+  effort: Effort;
+  /** Wins over `effort` when set. */
+  maxTokens: number | null;
+}
+
+export interface Budget {
+  /** A role, or null for all spend. */
+  role: string | null;
+  period: BudgetPeriod;
+  limitUsd: number;
+}
+
+export interface BudgetStatus {
+  budget: Budget;
+  spent: number;
+  level: "ok" | "warn" | "over";
+}
+
+export interface CatalogStatus {
+  models: number;
+  /** Unix seconds; null = never imported. */
+  updatedAt: number | null;
 }
 
 export interface GatewaySettings {
@@ -65,6 +119,12 @@ export interface GatewaySettings {
   cacheControl: boolean;
   comboStrategy: ComboStrategy;
   roles: Partial<Record<Role, string>>;
+  cacheAffinity: boolean;
+  responseCache: ResponseCacheSettings;
+  /** Role → setting (roles without an entry are off). */
+  reasoning: Record<string, ReasoningSetting>;
+  budgets: Budget[];
+  budgetAction: BudgetAction;
 }
 
 export interface GatewayTarget {
@@ -126,6 +186,10 @@ export interface UsageSummary {
   daily: UsageTotals[];
   recent: UsageRecent[];
   switches: ModelSwitch[];
+  cacheHits: number;
+  cacheSavedTokens: number;
+  cacheSavedCost: number;
+  budgets: BudgetStatus[];
   saverBytesBefore: number;
   saverBytesAfter: number;
 }
@@ -140,6 +204,11 @@ export function defaultSettings(): GatewaySettings {
     cacheControl: true,
     comboStrategy: "fallback",
     roles: {},
+    cacheAffinity: true,
+    responseCache: { enabled: false, ttlSecs: 3600, maxEntries: 500, anyTemperature: false },
+    reasoning: Object.fromEntries(ROLES.map((role) => [role, { effort: "off", maxTokens: null }])),
+    budgets: [],
+    budgetAction: "block",
   };
 }
 
@@ -203,6 +272,32 @@ export function dailyBars(
   const max = Math.max(0, ...bars.map((b) => b.value));
   for (const bar of bars) bar.height = max > 0 ? bar.value / max : 0;
   return bars;
+}
+
+/** Share of input tokens served from the provider's prompt cache (0–100). */
+export function cacheHitRate(t: { promptTokens: number; cachedTokens: number }): number {
+  if (t.promptTokens <= 0) return 0;
+  return Math.round((t.cachedTokens / t.promptTokens) * 100);
+}
+
+/** Spend as a share of a budget (0–100, capped). */
+export function budgetPercent(status: BudgetStatus): number {
+  if (status.budget.limitUsd <= 0) return 0;
+  return Math.min(100, Math.round((status.spent / status.budget.limitUsd) * 100));
+}
+
+/** "Daily budget for chat" / "Monthly budget". */
+export function budgetLabel(b: Budget): string {
+  const period = b.period === "daily" ? "Daily" : "Monthly";
+  return b.role ? `${period} budget for ${b.role}` : `${period} budget`;
+}
+
+/** Weights text "3, 1" → [3, 1]; blank → []. Invalid entries become 1. */
+export function parseWeights(text: string): number[] {
+  return parseList(text).map((w) => {
+    const n = Math.floor(Number(w));
+    return Number.isFinite(n) && n >= 0 ? n : 1;
+  });
 }
 
 /** "2026-11-14T10:25:04.123Z" → "2026-11-14 10:25:04". */

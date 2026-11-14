@@ -9,8 +9,12 @@
     type Combo,
     type ComboStrategy,
     DEFAULT_THRESHOLD,
+    EFFORTS,
+    STRATEGIES,
     effectiveStrategy,
+    parseWeights,
     THRESHOLDS,
+    type CatalogStatus,
     type ConnectionTest,
     type GatewaySettings,
     type GatewayTarget,
@@ -24,6 +28,9 @@
   let targets = $state<GatewayTarget[]>([]);
   let settings = $state<GatewaySettings>(defaultSettings());
   let tests = $state<Record<string, ConnectionTest | "running">>({});
+  let catalog = $state<CatalogStatus>({ models: 0, updatedAt: null });
+  let cacheEntries = $state(0);
+  let refreshing = $state(false);
   let message = $state("");
 
   // Connection form. The key field is write-only: it is never filled from the backend.
@@ -34,18 +41,25 @@
   const formPreset = $derived(presets.find((p) => p.id === form.provider));
 
   // Combo form.
-  const blankCombo = () => ({ id: "", name: "", models: "", strategy: "" as "" | ComboStrategy, stickyLimit: 1, threshold: DEFAULT_THRESHOLD });
+  const blankCombo = () => ({
+    id: "", name: "", models: "", strategy: "" as "" | ComboStrategy, stickyLimit: 1, threshold: DEFAULT_THRESHOLD, weights: "",
+  });
   let comboForm = $state(blankCombo());
-  const comboIsSmart = $derived(effectiveStrategy(comboForm.strategy, settings.comboStrategy) === "smart");
+  const comboStrategy = $derived(effectiveStrategy(comboForm.strategy, settings.comboStrategy));
+  const comboIsSmart = $derived(comboStrategy === "smart");
 
   async function load() {
-    [presets, connections, combos, targets, settings] = await Promise.all([
+    [presets, connections, combos, targets, settings, catalog, cacheEntries] = await Promise.all([
       api.gatewayPresets(),
       api.gatewayConnections(),
       api.gatewayCombos(),
       api.gatewayTargets(),
       api.gatewaySettingsGet(),
+      api.gatewayCatalogStatus(),
+      api.gatewayCacheCount(),
     ]);
+    // Every role gets an editable entry; "off" ones are dropped on save.
+    for (const role of ROLES) settings.reasoning[role] ??= { effort: "off", maxTokens: null };
   }
   onMount(() => void load().catch((e) => (message = String(e))));
 
@@ -100,6 +114,10 @@
       ...settings,
       defaultModel: settings.defaultModel?.trim() || null,
       roles: Object.fromEntries(Object.entries(settings.roles).filter(([, v]) => v && v.trim())),
+      reasoning: Object.fromEntries(
+        Object.entries(settings.reasoning).filter(([, r]) => r && (r.effort !== "off" || (r.maxTokens ?? 0) > 0)),
+      ),
+      budgets: settings.budgets.filter((b) => Number(b.limitUsd) > 0).map((b) => ({ ...b, limitUsd: Number(b.limitUsd) })),
     };
     void attempt(() => api.gatewaySettingsSet(clean), done);
   }
@@ -109,6 +127,7 @@
       id: combo.id, name: combo.name, models: combo.models.join("\n"),
       strategy: combo.strategy ?? "", stickyLimit: combo.stickyLimit ?? 1,
       threshold: combo.confidenceThreshold ?? DEFAULT_THRESHOLD,
+      weights: combo.weights.join(", "),
     };
   }
 
@@ -119,6 +138,7 @@
       strategy: comboForm.strategy || null, stickyLimit: Number(comboForm.stickyLimit) || null,
       // Kept for "use the global strategy" too, so it survives a later switch to smart.
       confidenceThreshold: comboForm.strategy === "" || comboForm.strategy === "smart" ? Number(comboForm.threshold) : null,
+      weights: comboStrategy === "weighted" ? parseWeights(comboForm.weights) : [],
     };
     void attempt(async () => {
       await api.gatewayComboSave(input);
@@ -131,6 +151,27 @@
       await api.gatewayComboDelete(combo.id);
     }, `Combo ${combo.name} removed.`);
   }
+
+  function refreshCatalog() {
+    refreshing = true;
+    void attempt(async () => {
+      const status = await api.gatewayCatalogRefresh();
+      message = `Imported ${status.models} models.`;
+    }, "Model catalog refreshed.").finally(() => (refreshing = false));
+  }
+
+  function clearCache() {
+    void attempt(async () => {
+      await api.gatewayCacheClear();
+    }, "Response cache cleared.");
+  }
+
+  function addBudget() {
+    settings.budgets = [...settings.budgets, { role: null, period: "daily", limitUsd: 5 }];
+  }
+
+  const updatedText = (status: CatalogStatus) =>
+    status.updatedAt ? new Date(status.updatedAt * 1000).toLocaleString() : "never";
 
   const levelOptions: Array<{ value: CavemanLevel | null; label: string }> = [
     { value: null, label: "Off" },
@@ -275,10 +316,12 @@
       <label for="k-strategy">Strategy</label>
       <select id="k-strategy" bind:value={comboForm.strategy}>
         <option value="">Use the global strategy</option>
-        <option value="fallback">Fallback (in order)</option>
-        <option value="round-robin">Round-robin</option>
-        <option value="smart">Smart (one model per task)</option>
+        {#each STRATEGIES as strategy (strategy.value)}<option value={strategy.value}>{strategy.label}</option>{/each}
       </select>
+      {#if comboStrategy === "weighted"}
+        <label for="k-weights">Weights (one per model)</label>
+        <input id="k-weights" bind:value={comboForm.weights} placeholder="3, 1 (empty = equal)" />
+      {/if}
       {#if comboForm.strategy === "round-robin"}
         <label for="k-sticky">Uses before rotating</label>
         <input id="k-sticky" type="number" min="1" bind:value={comboForm.stickyLimit} />
@@ -319,14 +362,96 @@
       <label><input type="checkbox" bind:checked={settings.cacheControl} disabled={!settings.tokenSaver} /> Anthropic prompt caching</label>
       <label for="s-strategy">Global combo strategy</label>
       <select id="s-strategy" bind:value={settings.comboStrategy}>
-        <option value="fallback">Fallback</option>
-        <option value="round-robin">Round-robin</option>
-        <option value="smart">Smart</option>
+        {#each STRATEGIES as strategy (strategy.value)}<option value={strategy.value}>{strategy.label}</option>{/each}
       </select>
       <span></span>
       <div class="buttons"><button type="submit" class="primary">Save token savers</button></div>
     </form>
     <p class="muted">Savers fail open: if one errors, the request is sent unchanged.</p>
+  </section>
+
+  <section aria-labelledby="h-reasoning">
+    <h2 id="h-reasoning">Reasoning</h2>
+    <form class="grid" onsubmit={(e) => saveSettings(e, "Reasoning saved.")}>
+      {#each ROLES as role (role)}
+        <label for="t-{role}">{role}</label>
+        <div class="checks">
+          <select id="t-{role}" bind:value={settings.reasoning[role].effort}>
+            {#each EFFORTS as effort (effort)}<option value={effort}>{effort === "off" ? "Off (provider default)" : effort}</option>{/each}
+          </select>
+          <label for="t-{role}-tokens" class="muted">or budget</label>
+          <input id="t-{role}-tokens" type="number" min="0" step="1024" placeholder="tokens" bind:value={settings.reasoning[role].maxTokens} />
+        </div>
+      {/each}
+      <span></span>
+      <div class="buttons"><button type="submit" class="primary">Save reasoning</button></div>
+    </form>
+    <p class="muted">One setting per role, mapped per provider: OpenAI <code>reasoning_effort</code>, Anthropic thinking budget, Gemini thinking level or budget. A token budget wins over the effort.</p>
+  </section>
+
+  <section aria-labelledby="h-cache">
+    <h2 id="h-cache">Routing and caching</h2>
+    <form class="grid" onsubmit={(e) => saveSettings(e, "Caching saved.")}>
+      <span></span>
+      <label><input type="checkbox" bind:checked={settings.cacheAffinity} /> Keep a conversation on one account (prompt-cache affinity)</label>
+      <span></span>
+      <label><input type="checkbox" bind:checked={settings.responseCache.enabled} /> Reuse identical answers (response cache)</label>
+      <span></span>
+      <label><input type="checkbox" bind:checked={settings.responseCache.anyTemperature} disabled={!settings.responseCache.enabled} /> Also for requests with a temperature above 0</label>
+      <label for="c-ttl">Keep answers for (minutes)</label>
+      <input id="c-ttl" type="number" min="1" value={Math.round(settings.responseCache.ttlSecs / 60)}
+        oninput={(e) => (settings.responseCache.ttlSecs = Math.max(1, Number(e.currentTarget.value)) * 60)} disabled={!settings.responseCache.enabled} />
+      <label for="c-max">Most answers kept</label>
+      <input id="c-max" type="number" min="1" bind:value={settings.responseCache.maxEntries} disabled={!settings.responseCache.enabled} />
+      <span></span>
+      <div class="buttons">
+        <button type="submit" class="primary">Save caching</button>
+        <button type="button" onclick={clearCache} disabled={cacheEntries === 0}>Clear cache ({cacheEntries})</button>
+      </div>
+    </form>
+    <p class="muted">Only byte-identical requests reuse an answer. Off by default.</p>
+  </section>
+
+  <section aria-labelledby="h-budgets">
+    <h2 id="h-budgets">Budgets</h2>
+    <form class="grid" onsubmit={(e) => saveSettings(e, "Budgets saved.")}>
+      {#each settings.budgets as budget, i (i)}
+        <label for="b-{i}-limit">Budget {i + 1}</label>
+        <div class="checks">
+          <select aria-label="Role for budget {i + 1}" bind:value={budget.role}>
+            <option value={null}>All roles</option>
+            {#each ROLES as role (role)}<option value={role}>{role}</option>{/each}
+          </select>
+          <select aria-label="Period for budget {i + 1}" bind:value={budget.period}>
+            <option value="daily">per day</option>
+            <option value="monthly">per month</option>
+          </select>
+          <span>$</span>
+          <input id="b-{i}-limit" type="number" min="0" step="0.5" bind:value={budget.limitUsd} />
+          <button type="button" class="danger" onclick={() => (settings.budgets = settings.budgets.filter((_, j) => j !== i))}>Remove</button>
+        </div>
+      {/each}
+      <label for="b-action">When a budget is reached</label>
+      <select id="b-action" bind:value={settings.budgetAction}>
+        <option value="block">Stop with a message</option>
+        <option value="cheapest">Use the cheapest model in the combo</option>
+      </select>
+      <span></span>
+      <div class="buttons">
+        <button type="button" onclick={addBudget}>Add budget</button>
+        <button type="submit" class="primary">Save budgets</button>
+      </div>
+    </form>
+    <p class="muted">Uses the estimated costs on the Usage page. You get a warning at 80%.</p>
+  </section>
+
+  <section aria-labelledby="h-catalog">
+    <h2 id="h-catalog">Model catalog</h2>
+    <p>{catalog.models} models imported · last refresh: {updatedText(catalog)}</p>
+    <div class="buttons">
+      <button type="button" class="primary" onclick={refreshCatalog} disabled={refreshing}>{refreshing ? "Refreshing…" : "Refresh from OpenRouter"}</button>
+    </div>
+    <p class="muted">Downloads OpenRouter's public model list once (no API key is sent) to fill in prices, context windows and capabilities. It is kept only on this computer. Your own <code>pricing.json</code> wins over it.</p>
   </section>
 </div>
 

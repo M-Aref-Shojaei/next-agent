@@ -4,6 +4,8 @@
 #![allow(clippy::needless_pass_by_value, clippy::missing_errors_doc)] // Tauri commands take owned args.
 
 use crate::service::AppService;
+use next_agent_core::router::budget::BudgetStatus;
+use next_agent_core::router::catalog;
 use next_agent_core::router::gateway::Target;
 use next_agent_core::router::providers::{preset, ConnectionData, LEGACY_ROUTER_ID};
 use next_agent_core::router::settings::normalize_base_url;
@@ -98,6 +100,9 @@ pub struct ComboDto {
     /// Smart: switch models below this confidence (null = 0.8).
     #[serde(default)]
     pub confidence_threshold: Option<f64>,
+    /// Weighted: one weight per model (empty = all 1).
+    #[serde(default)]
+    pub weights: Vec<u32>,
 }
 
 impl From<ComboRow> for ComboDto {
@@ -109,8 +114,22 @@ impl From<ComboRow> for ComboDto {
             strategy: row.strategy,
             sticky_limit: row.sticky_limit,
             confidence_threshold: row.confidence_threshold,
+            weights: row
+                .weights
+                .as_deref()
+                .and_then(|w| serde_json::from_str(w).ok())
+                .unwrap_or_default(),
         }
     }
+}
+
+/// The imported `OpenRouter` catalog.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogDto {
+    pub models: usize,
+    /// Unix seconds of the last refresh; null = never imported.
+    pub updated_at: Option<u64>,
 }
 
 /// Something a role or default model can point at.
@@ -234,6 +253,12 @@ pub struct UsageDto {
     pub switches: Vec<SwitchDto>,
     pub saver_bytes_before: i64,
     pub saver_bytes_after: i64,
+    /// Answers served from the response cache, and what they saved.
+    pub cache_hits: i64,
+    pub cache_saved_tokens: i64,
+    pub cache_saved_cost: f64,
+    /// Budget caps with today's / this month's spend.
+    pub budgets: Vec<BudgetStatus>,
 }
 
 impl UsageDto {
@@ -250,6 +275,10 @@ impl UsageDto {
             switches: s.switches.iter().map(SwitchDto::from).collect(),
             saver_bytes_before: s.saver_bytes_before,
             saver_bytes_after: s.saver_bytes_after,
+            cache_hits: s.cache_hits,
+            cache_saved_tokens: s.cache_saved_tokens,
+            cache_saved_cost: s.cache_saved_cost,
+            budgets: Vec::new(),
         }
     }
 }
@@ -293,18 +322,56 @@ impl AppService {
     /// (`pricing.json` next to the database) layered on the shipped table.
     pub(crate) fn gateway_config(&self) -> Result<GatewayConfig, String> {
         let config = GatewayConfig::load(&*self.store()?).map_err(|e| e.to_string())?;
+        // Layers: the user's pricing.json over the imported catalog over the
+        // shipped table.
+        let mut pricing = Pricing::builtin();
+        if let Ok(text) = std::fs::read_to_string(self.catalog_path()) {
+            pricing = pricing.with_override(catalog::load(&text));
+        }
         let user_file = self.db_path().with_file_name("pricing.json");
-        let pricing = match std::fs::read_to_string(&user_file) {
-            Ok(text) => match Pricing::from_json(&text) {
-                Ok(user) => Pricing::builtin().with_override(user),
-                Err(error) => {
-                    eprintln!("ignoring pricing override: {error}");
-                    Pricing::builtin()
-                }
-            },
-            Err(_) => Pricing::builtin(),
-        };
+        if let Ok(text) = std::fs::read_to_string(&user_file) {
+            match Pricing::from_json(&text) {
+                Ok(user) => pricing = pricing.with_override(user),
+                Err(error) => eprintln!("ignoring pricing override: {error}"),
+            }
+        }
         Ok(config.with_pricing(pricing))
+    }
+
+    /// Where the imported `OpenRouter` catalog is kept (app data folder).
+    fn catalog_path(&self) -> std::path::PathBuf {
+        self.db_path().with_file_name(catalog::CATALOG_FILE)
+    }
+
+    pub fn gateway_catalog_status(&self) -> CatalogDto {
+        let path = self.catalog_path();
+        let models = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| catalog::parse_openrouter(&text).ok())
+            .map_or(0, |table| table.len());
+        let updated_at = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        CatalogDto { models, updated_at }
+    }
+
+    /// Download the catalog from `url` (manual refresh only) and save it.
+    pub fn gateway_catalog_refresh(&self, url: &str) -> Result<CatalogDto, String> {
+        let (text, _) = catalog::fetch_blocking(url).map_err(|e| e.to_string())?;
+        std::fs::write(self.catalog_path(), text)
+            .map_err(|e| format!("could not save the catalog: {e}"))?;
+        self.bump_router_generation();
+        Ok(self.gateway_catalog_status())
+    }
+
+    pub fn gateway_cache_count(&self) -> Result<i64, String> {
+        self.store()?.cache_count().map_err(|e| e.to_string())
+    }
+
+    pub fn gateway_cache_clear(&self) -> Result<usize, String> {
+        self.store()?.cache_clear().map_err(|e| e.to_string())
     }
 
     /// A gateway for `role`, recording usage to the database.
@@ -527,13 +594,16 @@ impl AppService {
         if let Some(s) = &strategy {
             if next_agent_core::router::Strategy::parse(s).is_none() {
                 return Err(format!(
-                    "unknown strategy `{s}` (use fallback, round-robin or smart)"
+                    "unknown strategy `{s}` (use fallback, round-robin, smart, weighted, cost-optimized, lkgp or context-optimized)"
                 ));
             }
         }
         let threshold = input.confidence_threshold;
         if threshold.is_some_and(|t| !(0.0..=1.0).contains(&t)) {
             return Err("the confidence threshold must be between 0 and 1".into());
+        }
+        if !input.weights.is_empty() && input.weights.len() != models.len() {
+            return Err("give one weight per model, or none".into());
         }
         let id = if input.id.trim().is_empty() {
             new_id("combo")
@@ -548,6 +618,8 @@ impl AppService {
             strategy: strategy.clone(),
             sticky_limit: input.sticky_limit.filter(|n| *n > 0),
             confidence_threshold: threshold,
+            weights: (!input.weights.is_empty())
+                .then(|| serde_json::to_string(&input.weights).unwrap_or_default()),
         };
         self.store()?
             .upsert_combo(&row)
@@ -567,8 +639,20 @@ impl AppService {
     }
 
     pub fn gateway_settings_set(&self, settings: &GatewaySettings) -> Result<(), String> {
-        if let Some(role) = settings.roles.keys().find(|r| !ROLES.contains(&r.as_str())) {
+        let roles = settings
+            .roles
+            .keys()
+            .chain(settings.reasoning.keys())
+            .chain(settings.budgets.iter().filter_map(|b| b.role.as_ref()));
+        if let Some(role) = roles.into_iter().find(|r| !ROLES.contains(&r.as_str())) {
             return Err(format!("unknown role `{role}`"));
+        }
+        if settings
+            .budgets
+            .iter()
+            .any(|b| !b.limit_usd.is_finite() || b.limit_usd < 0.0)
+        {
+            return Err("a budget limit must be a positive amount".into());
         }
         settings.save(&*self.store()?).map_err(|e| e.to_string())?;
         self.bump_router_generation();
@@ -614,7 +698,12 @@ impl AppService {
             .store()?
             .usage_summary(days, 20)
             .map_err(|e| e.to_string())?;
-        Ok(UsageDto::new(days, &summary))
+        let mut dto = UsageDto::new(days, &summary);
+        // Budgets are extra: a gateway that cannot be built hides them only.
+        dto.budgets = self
+            .gateway("chat")
+            .map_or_else(|_| Vec::new(), |g| g.budget_status());
+        Ok(dto)
     }
 }
 
@@ -653,6 +742,32 @@ pub async fn gateway_connection_test(
     tauri::async_runtime::spawn_blocking(move || service.gateway_connection_test(&id))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[must_use]
+pub fn gateway_catalog_status(service: Svc) -> CatalogDto {
+    service.gateway_catalog_status()
+}
+
+#[tauri::command]
+pub async fn gateway_catalog_refresh(service: Svc<'_>) -> Result<CatalogDto, String> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        service.gateway_catalog_refresh(catalog::OPENROUTER_MODELS_URL)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn gateway_cache_count(service: Svc) -> Result<i64, String> {
+    service.gateway_cache_count()
+}
+
+#[tauri::command]
+pub fn gateway_cache_clear(service: Svc) -> Result<usize, String> {
+    service.gateway_cache_clear()
 }
 
 #[tauri::command]
@@ -838,7 +953,7 @@ mod tests {
                 models: vec!["openai/gpt-4o-mini".into(), "openai/gpt-4o".into()],
                 strategy: Some("round-robin".into()),
                 sticky_limit: Some(2),
-                confidence_threshold: None,
+                ..ComboDto::default()
             })
             .expect("combo");
         assert_eq!(svc.gateway_combos().expect("list"), vec![combo.clone()]);
@@ -1017,5 +1132,87 @@ mod tests {
         assert_eq!(usage.recent[0].model, "gpt-4o");
         let json = serde_json::to_value(&usage).expect("json");
         assert!(json.get("byProvider").is_some() && json["recent"][0].get("costKnown").is_some());
+    }
+
+    #[test]
+    fn catalog_layers_between_user_prices_and_the_shipped_table() {
+        let (_dir, svc) = service();
+        assert_eq!(svc.gateway_catalog_status().models, 0);
+        std::fs::write(
+            svc.catalog_path(),
+            r#"{"data":[{"id":"acme/rocket-1","context_length":50000,
+                "pricing":{"prompt":"0.000002","completion":"0.000004"}}]}"#,
+        )
+        .expect("catalog");
+        std::fs::write(
+            svc.db_path().with_file_name("pricing.json"),
+            r#"{"models":{"rocket-1":{"output":9}}}"#,
+        )
+        .expect("user prices");
+        let pricing = svc.gateway_config().expect("config").pricing;
+        let price = pricing.lookup("acme", "rocket-1").expect("imported");
+        assert_eq!(price.input, Some(2.0), "from the catalog");
+        assert_eq!(price.output, Some(9.0), "the user's price wins");
+        assert_eq!(price.context_length, Some(50_000));
+        let status = svc.gateway_catalog_status();
+        assert!(status.models >= 1 && status.updated_at.is_some());
+        assert!(
+            svc.gateway_catalog_refresh("http://example.com/x").is_err(),
+            "https only"
+        );
+    }
+
+    #[test]
+    fn new_settings_validate_and_the_cache_can_be_cleared() {
+        let (_dir, svc) = service();
+        let mut settings = svc.gateway_settings_get().expect("defaults");
+        assert!(!settings.response_cache.enabled, "off by default");
+        assert!(settings.cache_affinity);
+        settings
+            .budgets
+            .push(next_agent_core::router::budget::Budget {
+                role: Some("poet".into()),
+                period: next_agent_core::router::budget::Period::Daily,
+                limit_usd: 1.0,
+            });
+        assert!(svc.gateway_settings_set(&settings).is_err(), "unknown role");
+        settings.budgets[0].role = None;
+        settings.response_cache.enabled = true;
+        svc.gateway_settings_set(&settings).expect("save");
+        let saved = svc.gateway_settings_get().expect("load");
+        assert_eq!(saved.budgets.len(), 1);
+        assert!(saved.response_cache.enabled);
+        let usage = svc.usage_summary(7).expect("usage");
+        assert_eq!(usage.budgets.len(), 1);
+        assert_eq!(usage.budgets[0].spent, 0.0);
+        let store = svc.store().expect("store");
+        store
+            .cache_put("k", "openai", "m", "{}", 1, i64::MAX / 2, 10)
+            .expect("put");
+        drop(store);
+        assert_eq!(svc.gateway_cache_count().expect("count"), 1);
+        assert_eq!(svc.gateway_cache_clear().expect("clear"), 1);
+        assert!(
+            svc.gateway_combo_save(&ComboDto {
+                name: "w".into(),
+                models: vec!["a/b".into(), "c/d".into()],
+                strategy: Some("weighted".into()),
+                weights: vec![3],
+                ..ComboDto::default()
+            })
+            .is_err(),
+            "one weight per model"
+        );
+        let weighted = svc
+            .gateway_combo_save(&ComboDto {
+                name: "w".into(),
+                models: vec!["a/b".into(), "c/d".into()],
+                strategy: Some("weighted".into()),
+                weights: vec![3, 1],
+                ..ComboDto::default()
+            })
+            .expect("weighted");
+        assert_eq!(svc.gateway_combos().expect("list")[0].weights, [3, 1]);
+        assert!(svc.gateway_combo_delete(&weighted.id).expect("delete"));
     }
 }

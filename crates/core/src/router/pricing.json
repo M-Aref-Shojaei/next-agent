@@ -1,6 +1,14 @@
 {
-  "$comment": "USD per 1M tokens. Estimates for the usage page; edit freely. Lookup order: providers.<provider>.<model>, free_providers, models (vendor prefix stripped), patterns (first match, '*' wildcard). Unknown models cost 0. Fields: input, output, cached (cache read), cache_creation (cache write), reasoning, max_output (output-token ceiling), caps (vision, pdf, audio, video). A user file named pricing.json in the app data folder overrides entries here.",
+  "$comment": "USD per 1M tokens. Estimates for the usage page; edit freely. Lookup order: providers.<provider>.<model>, free_providers, models (vendor prefix stripped), patterns (first match, '*' wildcard). Unknown models cost 0. Fields: input, output, cached (cache read), cache_creation (cache write), reasoning, max_output (output-token ceiling), context_length, caps (vision, pdf, audio, video), params (supported request parameters). cache_multipliers: cache read/write price as a share of the input price, per provider, used when a model has no explicit cache price. A user file named pricing.json in the app data folder overrides entries here.",
   "free_providers": ["ollama", "lmstudio"],
+  "cache_multipliers": {
+    "anthropic": { "read": 0.1, "write": 1.25 },
+    "deepseek": { "read": 0.1 },
+    "openai": { "read": 0.5 },
+    "xai": { "read": 0.25 },
+    "gemini": { "read": 0.25 },
+    "google": { "read": 0.25 }
+  },
   "providers": {},
   "models": {
     "gpt-4o": { "input": 2.5, "output": 10, "cached": 1.25, "max_output": 16384, "caps": ["vision"] },

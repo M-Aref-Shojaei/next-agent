@@ -7,6 +7,8 @@ It re-implements or ports selected features from the open-source projects below 
 | Project | Repository | Licence | Copyright | What we take |
 |---|---|---|---|---|
 | 9Router | https://github.com/decolua/9router | MIT | © 2024-2026 decolua and contributors | Caveman / Ponytail prompt injection, RTK tool-output compression, model combos and fallback, provider translation (OpenAI ↔ Anthropic ↔ Gemini), usage and cost reports |
+| OmniRoute | https://github.com/diegosouzapw/OmniRoute | MIT | © 2026 diegosouzapw | Exact-match response cache, per-provider circuit breaker, prompt-cache affinity, combo orderings (weighted, cost-optimized, last-known-good, context-optimized), the budget-cap idea |
+| OpenRouter (docs only) | https://openrouter.ai/docs | n/a: closed-source service; **no code taken** | — | Ideas re-implemented from public docs: models catalog import (fetched by the user on demand, never bundled), cache-aware cost, unified reasoning setting, context-overflow model switch |
 | opencode | https://github.com/anomalyco/opencode | MIT | © 2025 opencode | Context compaction, tiered edit matching, shadow-git snapshots/undo, Markdown agent profiles and subagents, permission-rule refinements |
 | Hermes Agent | https://github.com/NousResearch/hermes-agent | MIT | © 2025 Nous Research | Skills (SKILL.md, progressive disclosure, curator), curated memory, session search, background review, cron scheduling, prompt-cache rules |
 | OpenClaw | https://github.com/openclaw/openclaw | MIT | © 2026 OpenClaw Foundation | Channel adapter design, DM pairing and allow-lists, session routing, group gating, outbound chunking, scheduler |

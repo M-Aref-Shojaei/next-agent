@@ -1,7 +1,14 @@
 // Ported from 9Router (MIT, © 2024-2026 decolua and contributors): open-sse/providers/pricing.js @ 1855aa4
-//! Model prices (USD per 1M tokens), output ceilings and input capabilities,
-//! from the editable `pricing.json` shipped next to this file plus an optional
-//! user override. Every cost is an estimate; unknown models cost 0.
+// Design adapted from OpenRouter docs: https://openrouter.ai/docs/guides/best-practices/prompt-caching
+//! Model prices (USD per 1M tokens), output ceilings, context windows and
+//! capabilities. Layers, first match per field wins: the user's `pricing.json`,
+//! the imported OpenRouter catalog ([`super::catalog`]), then the
+//! `pricing.json` shipped next to this file. Every cost is an estimate;
+//! unknown models cost 0.
+//!
+//! Cache-aware cost: when a model has no explicit cache price, cache reads and
+//! writes are billed at the input price times the provider's multiplier
+//! (`cache_multipliers`, e.g. Anthropic 0.1× read / 1.25× write).
 
 use super::translate::Usage;
 use serde::Deserialize;
@@ -25,8 +32,47 @@ pub struct Price {
     pub reasoning: Option<f64>,
     #[serde(default)]
     pub max_output: Option<u32>,
+    /// Context window in tokens.
+    #[serde(default)]
+    pub context_length: Option<u64>,
     #[serde(default)]
     pub caps: Vec<String>,
+    /// Supported request parameters (`tools`, `reasoning`…); empty = unknown.
+    #[serde(default)]
+    pub params: Vec<String>,
+}
+
+impl Price {
+    /// Fill fields this entry lacks from `other` (a lower layer).
+    fn fill(&mut self, other: &Self) {
+        fn take<T: Clone>(slot: &mut Option<T>, from: Option<&T>) {
+            if slot.is_none() {
+                *slot = from.cloned();
+            }
+        }
+        take(&mut self.input, other.input.as_ref());
+        take(&mut self.output, other.output.as_ref());
+        take(&mut self.cached, other.cached.as_ref());
+        take(&mut self.cache_creation, other.cache_creation.as_ref());
+        take(&mut self.reasoning, other.reasoning.as_ref());
+        take(&mut self.max_output, other.max_output.as_ref());
+        take(&mut self.context_length, other.context_length.as_ref());
+        if self.caps.is_empty() {
+            self.caps.clone_from(&other.caps);
+        }
+        if self.params.is_empty() {
+            self.params.clone_from(&other.params);
+        }
+    }
+}
+
+/// Cache price multipliers of the input price.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+pub struct CacheMultiplier {
+    #[serde(default)]
+    pub read: Option<f64>,
+    #[serde(default)]
+    pub write: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -37,9 +83,9 @@ struct Pattern {
     price: Price,
 }
 
-/// The price table.
+/// One price file.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-pub struct Pricing {
+pub struct Table {
     #[serde(default)]
     free_providers: Vec<String>,
     #[serde(default)]
@@ -48,6 +94,67 @@ pub struct Pricing {
     models: HashMap<String, Price>,
     #[serde(default)]
     patterns: Vec<Pattern>,
+    #[serde(default)]
+    cache_multipliers: HashMap<String, CacheMultiplier>,
+}
+
+impl Table {
+    /// A table of models keyed by id (used by the catalog import).
+    #[must_use]
+    pub fn of_models(models: HashMap<String, Price>) -> Self {
+        Self {
+            models,
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.models.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.models.is_empty()
+    }
+
+    fn find(&self, provider: &str, model: &str) -> Option<&Price> {
+        if let Some(price) = self.providers.get(provider).and_then(|m| m.get(model)) {
+            return Some(price);
+        }
+        let bare = model.rsplit('/').next().unwrap_or(model);
+        self.models
+            .get(model)
+            .or_else(|| self.models.get(bare))
+            .or_else(|| self.models.get(&normalize(bare)))
+            .or_else(|| {
+                self.patterns
+                    .iter()
+                    .find(|p| glob(&p.pattern, bare))
+                    .map(|p| &p.price)
+            })
+    }
+}
+
+/// `Claude-Sonnet-4.5-20250929:free` → `claude-sonnet-4-5`: lower case, dots
+/// to dashes, no `:variant`, no trailing date.
+#[must_use]
+pub fn normalize(model: &str) -> String {
+    let base = model.split(':').next().unwrap_or(model);
+    let mut id = base.to_ascii_lowercase().replace('.', "-");
+    if let Some((head, tail)) = id.rsplit_once('-') {
+        if tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_digit()) {
+            id = head.to_string();
+        }
+    }
+    id.strip_suffix("-latest").map(str::to_string).unwrap_or(id)
+}
+
+/// The layered price table.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Pricing {
+    /// Highest priority first.
+    layers: Vec<Table>,
 }
 
 /// A computed cost.
@@ -73,46 +180,42 @@ impl Pricing {
     /// # Errors
     /// Returns the JSON error message.
     pub fn from_json(text: &str) -> Result<Self, String> {
-        serde_json::from_str(text).map_err(|e| format!("pricing file: {e}"))
+        let table: Table = serde_json::from_str(text).map_err(|e| format!("pricing file: {e}"))?;
+        Ok(Self::from_table(table))
     }
 
-    /// Layer `user` on top: its entries win, its patterns are tried first.
     #[must_use]
-    pub fn with_override(mut self, user: Self) -> Self {
-        for provider in user.free_providers {
-            if !self.free_providers.contains(&provider) {
-                self.free_providers.push(provider);
-            }
+    pub fn from_table(table: Table) -> Self {
+        Self {
+            layers: vec![table],
         }
-        for (provider, models) in user.providers {
-            self.providers.entry(provider).or_default().extend(models);
-        }
-        self.models.extend(user.models);
-        let mut patterns = user.patterns;
-        patterns.append(&mut self.patterns);
-        self.patterns = patterns;
+    }
+
+    /// Put `top` above every existing layer: its fields win.
+    #[must_use]
+    pub fn with_override(mut self, top: Self) -> Self {
+        let mut layers = top.layers;
+        layers.append(&mut self.layers);
+        self.layers = layers;
         self
     }
 
-    /// Entry for a model, in lookup order. Free providers get a zero price.
+    /// Entry for a model: each field from the highest layer that has it.
+    /// Free providers get a zero price.
     #[must_use]
     pub fn lookup(&self, provider: &str, model: &str) -> Option<Price> {
-        if let Some(price) = self.providers.get(provider).and_then(|m| m.get(model)) {
-            return Some(price.clone());
+        let mut info: Option<Price> = None;
+        for found in self.layers.iter().filter_map(|t| t.find(provider, model)) {
+            match &mut info {
+                Some(price) => price.fill(found),
+                None => info = Some(found.clone()),
+            }
         }
-        let bare = model.rsplit('/').next().unwrap_or(model);
-        let info = self
-            .models
-            .get(model)
-            .or_else(|| self.models.get(bare))
-            .cloned()
-            .or_else(|| {
-                self.patterns
-                    .iter()
-                    .find(|p| glob(&p.pattern, bare))
-                    .map(|p| p.price.clone())
-            });
-        if self.free_providers.iter().any(|p| p == provider) {
+        let free = self
+            .layers
+            .iter()
+            .any(|t| t.free_providers.iter().any(|p| p == provider));
+        if free {
             return Some(Price {
                 input: Some(0.0),
                 output: Some(0.0),
@@ -128,21 +231,56 @@ impl Pricing {
         self.lookup(provider, model).and_then(|p| p.max_output)
     }
 
-    /// Capabilities (`vision`, `pdf`, `audio`, `video`) of a model.
+    /// Context window of a model, if known.
+    #[must_use]
+    pub fn context_length(&self, provider: &str, model: &str) -> Option<u64> {
+        self.lookup(provider, model).and_then(|p| p.context_length)
+    }
+
+    /// Capabilities (`vision`, `pdf`, `audio`, `video`, `tools`) of a model.
+    /// `tools` is assumed unless the parameter list is known and lacks it.
     #[must_use]
     pub fn caps(&self, provider: &str, model: &str) -> Vec<String> {
-        self.lookup(provider, model)
-            .map_or_else(Vec::new, |p| p.caps)
+        let Some(price) = self.lookup(provider, model) else {
+            return vec!["tools".into()];
+        };
+        let mut caps = price.caps;
+        if price.params.is_empty() || price.params.iter().any(|p| p == "tools") {
+            caps.push("tools".into());
+        }
+        caps
+    }
+
+    /// Cache multipliers for a provider, else for the model's vendor prefix
+    /// (`anthropic/claude…` through OpenRouter).
+    fn multiplier(&self, provider: &str, model: &str) -> CacheMultiplier {
+        let vendor = model.split_once('/').map_or("", |(v, _)| v);
+        let mut out = CacheMultiplier::default();
+        for key in [provider, vendor] {
+            for table in &self.layers {
+                if let Some(m) = table.cache_multipliers.get(key) {
+                    out.read = out.read.or(m.read);
+                    out.write = out.write.or(m.write);
+                }
+            }
+        }
+        out
     }
 
     /// Estimated cost of one request.
     #[must_use]
     pub fn cost(&self, provider: &str, model: &str, usage: &Usage) -> Cost {
         match self.lookup(provider, model) {
-            Some(price) if price.input.is_some() && price.output.is_some() => Cost {
-                usd: cost(usage, &price),
-                known: true,
-            },
+            Some(mut price) if price.input.is_some() && price.output.is_some() => {
+                let input = price.input.unwrap_or(0.0);
+                let m = self.multiplier(provider, model);
+                price.cached = price.cached.or(m.read.map(|r| input * r));
+                price.cache_creation = price.cache_creation.or(m.write.map(|w| input * w));
+                Cost {
+                    usd: cost(usage, &price),
+                    known: true,
+                }
+            }
             _ => Cost {
                 usd: 0.0,
                 known: false,
@@ -299,6 +437,58 @@ mod tests {
                 .and_then(|p| p.input),
             Some(7.0)
         );
+    }
+
+    #[test]
+    fn cache_multipliers_apply_without_explicit_cache_prices() {
+        let table = Pricing::from_json(
+            r#"{"models":{"m":{"input":10,"output":10}},"cache_multipliers":{"anthropic":{"read":0.1,"write":1.25},"deepseek":{"read":0.1}}}"#,
+        )
+        .expect("table");
+        let u = usage(1_000_000, 0, 500_000, 100_000, 0);
+        // 400k fresh·10 + 500k·1 + 100k·12.5
+        let anthropic = table.cost("anthropic", "m", &u).usd;
+        assert!((anthropic - (4.0 + 0.5 + 1.25)).abs() < 1e-9);
+        // Via OpenRouter, the vendor prefix picks the multiplier.
+        let routed = table.cost("openrouter", "anthropic/m", &u).usd;
+        assert!((routed - anthropic).abs() < 1e-9);
+        // No write multiplier: writes cost the input price.
+        let deepseek = table.cost("deepseek", "m", &u).usd;
+        assert!((deepseek - (4.0 + 0.5 + 1.0)).abs() < 1e-9);
+        // Unknown provider: cached tokens at the full input price.
+        assert!((table.cost("other", "m", &u).usd - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn layers_fill_missing_fields_and_ids_normalize() {
+        let builtin = Pricing::from_json(
+            r#"{"models":{"claude-sonnet-4-5":{"input":3,"output":15,"max_output":64000,"caps":["vision"]}}}"#,
+        )
+        .expect("builtin");
+        let catalog = Pricing::from_json(
+            r#"{"models":{"claude-sonnet-4-5":{"input":2,"output":14,"context_length":200000,"params":["reasoning"]}}}"#,
+        )
+        .expect("catalog");
+        let user =
+            Pricing::from_json(r#"{"models":{"claude-sonnet-4-5":{"input":1}}}"#).expect("user");
+        let merged = builtin.with_override(catalog).with_override(user);
+        let price = merged
+            .lookup("anthropic", "claude-sonnet-4.5-20250929")
+            .expect("found");
+        assert_eq!(price.input, Some(1.0), "user wins");
+        assert_eq!(price.output, Some(14.0), "catalog beats builtin");
+        assert_eq!(price.max_output, Some(64000), "builtin fills the gap");
+        assert_eq!(price.context_length, Some(200_000));
+        assert_eq!(
+            merged.caps("anthropic", "claude-sonnet-4-5"),
+            ["vision"],
+            "params known without tools"
+        );
+        assert_eq!(normalize("Gemini-2.5-Pro:free"), "gemini-2-5-pro");
+        assert_eq!(normalize("claude-3-5-haiku-latest"), "claude-3-5-haiku");
+        assert!(Pricing::builtin()
+            .caps("x", "unknown")
+            .contains(&"tools".to_string()));
     }
 
     #[test]

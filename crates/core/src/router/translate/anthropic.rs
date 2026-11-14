@@ -163,13 +163,38 @@ fn media_block(url: &str) -> Value {
     json!({"type": kind, "source": {"type": "url", "url": url}})
 }
 
+/// Anthropic thinking blocks from OpenRouter-style `reasoning_details`
+/// (they must come back unchanged, signature included, during tool use).
+fn thinking_blocks(message: &Value) -> Vec<Value> {
+    let details = message.get("reasoning_details").and_then(Value::as_array);
+    details
+        .into_iter()
+        .flatten()
+        .filter(|d| d.get("format").and_then(Value::as_str) == Some(REASONING_FORMAT))
+        .filter_map(|d| match d.get("type").and_then(Value::as_str) {
+            Some("reasoning.text") => Some(json!({
+                "type": "thinking",
+                "thinking": d.get("text").and_then(Value::as_str).unwrap_or(""),
+                "signature": d.get("signature").and_then(Value::as_str).unwrap_or(""),
+            })),
+            Some("reasoning.encrypted") => Some(json!({
+                "type": "redacted_thinking",
+                "data": d.get("data").and_then(Value::as_str).unwrap_or(""),
+            })),
+            _ => None,
+        })
+        .collect()
+}
+
 fn assistant_blocks(message: &Value) -> Vec<Value> {
-    let mut blocks: Vec<Value> = content_parts(message)
-        .iter()
-        .filter_map(|part| part.get("text").and_then(Value::as_str))
-        .filter(|t| !t.is_empty())
-        .map(|t| json!({"type": "text", "text": t}))
-        .collect();
+    let mut blocks = thinking_blocks(message);
+    blocks.extend(
+        content_parts(message)
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .filter(|t| !t.is_empty())
+            .map(|t| json!({"type": "text", "text": t})),
+    );
     for call in message
         .get("tool_calls")
         .and_then(Value::as_array)
@@ -245,6 +270,7 @@ fn usage(raw: &Value) -> Usage {
 pub fn response(message: &Value) -> Value {
     let mut text = String::new();
     let mut calls = Vec::new();
+    let mut details = Vec::new();
     for block in message
         .get("content")
         .and_then(Value::as_array)
@@ -253,6 +279,15 @@ pub fn response(message: &Value) -> Value {
     {
         match block.get("type").and_then(Value::as_str) {
             Some("text") => text.push_str(block.get("text").and_then(Value::as_str).unwrap_or("")),
+            Some("thinking") => details.push(json!({
+                "type": "reasoning.text", "format": REASONING_FORMAT, "index": details.len(),
+                "text": block.get("thinking").cloned().unwrap_or(Value::Null),
+                "signature": block.get("signature").cloned().unwrap_or(Value::Null),
+            })),
+            Some("redacted_thinking") => details.push(json!({
+                "type": "reasoning.encrypted", "format": REASONING_FORMAT, "index": details.len(),
+                "data": block.get("data").cloned().unwrap_or(Value::Null),
+            })),
             Some("tool_use") => calls.push(json!({
                 "id": block.get("id").cloned().unwrap_or(Value::Null),
                 "type": "function",
@@ -268,6 +303,9 @@ pub fn response(message: &Value) -> Value {
     if !calls.is_empty() {
         out_message["tool_calls"] = Value::Array(calls);
     }
+    if !details.is_empty() {
+        out_message["reasoning_details"] = Value::Array(details);
+    }
     let stop = message
         .get("stop_reason")
         .and_then(Value::as_str)
@@ -279,6 +317,14 @@ pub fn response(message: &Value) -> Value {
         "choices": [{"index": 0, "message": out_message, "finish_reason": finish_reason(stop)}],
         "usage": message.get("usage").map_or_else(Usage::default, usage).to_openai(),
     })
+}
+
+/// `reasoning_details` format tag for Anthropic thinking blocks.
+pub const REASONING_FORMAT: &str = "anthropic-claude-v1";
+
+fn detail(mut entry: Value) -> Value {
+    entry["format"] = json!(REASONING_FORMAT);
+    chunk(json!({"reasoning_details": [entry]}), None)
 }
 
 /// Anthropic SSE (`message_start`, `content_block_*`, `message_delta`, …) →
@@ -323,6 +369,14 @@ impl StreamDecoder for AnthropicDecoder {
                         }
                         _ => Vec::new(),
                     },
+                    Some("thinking") => vec![detail(json!({
+                        "type": "reasoning.text", "index": index,
+                        "text": block.get("thinking").and_then(Value::as_str).unwrap_or(""),
+                    }))],
+                    Some("redacted_thinking") => vec![detail(json!({
+                        "type": "reasoning.encrypted", "index": index,
+                        "data": block.get("data").and_then(Value::as_str).unwrap_or(""),
+                    }))],
                     _ => Vec::new(),
                 }
             }
@@ -335,6 +389,14 @@ impl StreamDecoder for AnthropicDecoder {
                             None,
                         )]
                     }
+                    Some("thinking_delta") => vec![detail(json!({
+                        "type": "reasoning.text", "index": index,
+                        "text": delta["thinking"].as_str().unwrap_or(""),
+                    }))],
+                    Some("signature_delta") => vec![detail(json!({
+                        "type": "reasoning.text", "index": index,
+                        "signature": delta["signature"].as_str().unwrap_or(""),
+                    }))],
                     Some("input_json_delta") => match self.tools.get(&index) {
                         Some(tool_index) => vec![chunk(
                             json!({"tool_calls": [{
@@ -524,5 +586,52 @@ mod tests {
                 &json!({"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}})
             )
             .is_err());
+    }
+    #[test]
+    fn thinking_round_trips_through_reasoning_details() {
+        let mut decoder = AnthropicDecoder::default();
+        let mut deltas = Vec::new();
+        for event in [
+            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Plan: read"}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "SIG"}}),
+            json!({"type": "content_block_start", "index": 1, "content_block": {"type": "redacted_thinking", "data": "ENC"}}),
+        ] {
+            for piece in decoder.decode("", &event).expect("decode") {
+                if let Some(found) = piece
+                    .pointer("/choices/0/delta/reasoning_details")
+                    .and_then(Value::as_array)
+                {
+                    crate::router::reasoning::merge_details(&mut deltas, found);
+                }
+            }
+        }
+        assert_eq!(deltas[0]["text"], "Plan: read");
+        assert_eq!(deltas[0]["signature"], "SIG");
+        assert_eq!(deltas[1]["data"], "ENC");
+        let openai = json!({"messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": null, "reasoning_details": deltas,
+             "tool_calls": [{"id": "t1", "type": "function", "function": {"name": "read", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "t1", "content": "ok"}
+        ]});
+        let body = request(&openai, "claude", 8192);
+        let blocks = &body["messages"][1]["content"];
+        assert_eq!(
+            blocks[0],
+            json!({"type": "thinking", "thinking": "Plan: read", "signature": "SIG"})
+        );
+        assert_eq!(
+            blocks[1],
+            json!({"type": "redacted_thinking", "data": "ENC"})
+        );
+        assert_eq!(blocks[2]["type"], "tool_use");
+        let whole = response(
+            &json!({"content": [{"type": "thinking", "thinking": "hm", "signature": "S"}, {"type": "text", "text": "hi"}]}),
+        );
+        assert_eq!(
+            whole["choices"][0]["message"]["reasoning_details"][0]["signature"],
+            "S"
+        );
     }
 }

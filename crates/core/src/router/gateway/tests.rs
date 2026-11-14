@@ -50,6 +50,7 @@ fn combo(name: &str, models: &[&str], strategy: Option<Strategy>) -> Combo {
         strategy,
         sticky_limit: 1,
         confidence_threshold: smart::DEFAULT_THRESHOLD,
+        weights: Vec::new(),
     }
 }
 
@@ -1021,7 +1022,7 @@ async fn roles_resolve_empty_models_and_savers_obey_per_request_off() {
     roles.insert("review".to_string(), "combo:reviewers".to_string());
     roles.insert("chat".to_string(), "openai/gpt-4o-mini".to_string());
     let settings = GatewaySettings {
-        caveman: Some(Level::Full),
+        caveman: Some(SaverLevel::Full),
         roles,
         ..GatewaySettings::default()
     };
@@ -1046,6 +1047,7 @@ async fn roles_resolve_empty_models_and_savers_obey_per_request_off() {
             &RequestOptions {
                 role: Some("summary".into()),
                 token_saver: false,
+                cache: true,
             },
             &mut |d| quiet.push_str(d),
         )
@@ -1167,6 +1169,7 @@ async fn config_loads_rows_and_reports_unknown_models() {
             strategy: None,
             sticky_limit: None,
             confidence_threshold: None,
+            weights: None,
         })
         .expect("combo");
     let settings = GatewaySettings {
@@ -1431,4 +1434,583 @@ async fn smart_combo_switches_when_quality_drops_below_the_threshold() {
     assert_eq!(switches[0].reason, "quality:truncated");
     assert!((switches[0].confidence - 0.8).abs() < 1e-9);
     assert_eq!(db.usage_summary(1, 20).expect("usage").totals.requests, 3);
+}
+
+// ---- OmniRoute / OpenRouter features ---------------------------------------------
+
+/// Prices and context windows for the fake providers `alpha`, `beta`, `gamma`.
+fn test_pricing() -> Pricing {
+    Pricing::builtin().with_override(
+        Pricing::from_json(
+            r#"{"providers":{
+                "alpha":{"m":{"input":5,"output":5,"context_length":8000}},
+                "beta":{"m":{"input":1,"output":1,"context_length":1000000}},
+                "gamma":{"m":{"input":0.5,"output":0.5,"context_length":32000}}
+            }}"#,
+        )
+        .expect("pricing"),
+    )
+}
+
+/// A gateway on an in-memory database with fresh routing state.
+fn db_gateway(
+    connections: Vec<Connection>,
+    combos: Vec<Combo>,
+    settings: GatewaySettings,
+) -> (Gateway, Arc<StoreUsage>) {
+    let keys: Vec<(String, String)> = connections
+        .iter()
+        .map(|c| (c.id.clone(), format!("key-{}", c.id)))
+        .collect();
+    let refs: Vec<(&str, &str)> = keys.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let config = GatewayConfig {
+        connections,
+        combos,
+        settings,
+        pricing: test_pricing(),
+        legacy_model: None,
+    };
+    let store = Arc::new(StoreUsage::new(Store::open_in_memory().expect("db")));
+    let state = GatewayState::new(CooldownPolicy {
+        base: Duration::from_millis(1),
+        max: Duration::from_millis(2),
+    })
+    .with_breaker_policy(breaker::BreakerPolicy {
+        threshold: 3,
+        base: Duration::from_millis(60),
+        max: Duration::from_millis(240),
+    });
+    let gateway = Gateway::new(config, Arc::new(MemoryKeys::with(&refs)))
+        .expect("gateway")
+        .with_state(Arc::new(state))
+        .with_usage(store.clone());
+    (gateway, store)
+}
+
+/// One server per fake provider, each answering with its own name.
+async fn providers(names: &[&str]) -> (Vec<MockServer>, Vec<Connection>) {
+    let mut servers = Vec::new();
+    let mut connections = Vec::new();
+    for name in names {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(openai_text(name))
+            .mount(&server)
+            .await;
+        connections.push(conn(
+            name,
+            name,
+            ProviderKind::OpenAi,
+            &format!("{}/v1", server.uri()),
+            1,
+        ));
+        servers.push(server);
+    }
+    (servers, connections)
+}
+
+async fn answer(gateway: &Gateway, body: Value) -> String {
+    run(gateway, body).await.0.expect("answer").content
+}
+
+#[tokio::test]
+async fn response_cache_replays_hits_and_skips_warm_or_opted_out_requests() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(openai_text("cached answer"))
+        .mount(&server)
+        .await;
+    let settings = GatewaySettings {
+        response_cache: ResponseCacheSettings {
+            enabled: true,
+            ..ResponseCacheSettings::default()
+        },
+        ..GatewaySettings::default()
+    };
+    let (gateway, store) = db_gateway(
+        vec![conn(
+            "o1",
+            "openai",
+            ProviderKind::OpenAi,
+            &format!("{}/v1", server.uri()),
+            1,
+        )],
+        vec![],
+        settings,
+    );
+    let cold = || {
+        let mut body = request("openai/gpt-4o");
+        body["temperature"] = json!(0);
+        body
+    };
+    let (first, streamed_first) = run(&gateway, cold()).await;
+    let (second, streamed_second) = run(&gateway, cold()).await;
+    assert_eq!(first.expect("miss"), second.expect("hit"));
+    assert_eq!(streamed_first, streamed_second, "the stream is replayed");
+    assert_eq!(hits(&server).await, 1, "second answer came from the cache");
+
+    let mut warm = request("openai/gpt-4o");
+    warm["temperature"] = json!(0.7);
+    answer(&gateway, warm).await;
+    assert_eq!(hits(&server).await, 2, "non-zero temperature is not cached");
+    answer(&gateway, request("openai/gpt-4o")).await;
+    assert_eq!(
+        hits(&server).await,
+        3,
+        "no temperature = provider default, not cached"
+    );
+    gateway
+        .chat_value(
+            cold(),
+            &RequestOptions {
+                cache: false,
+                ..RequestOptions::default()
+            },
+            &mut |_| {},
+        )
+        .await
+        .expect("bypass");
+    assert_eq!(hits(&server).await, 4, "per-request opt-out");
+
+    let db = store.store();
+    let summary = db.usage_summary(1, 10).expect("summary");
+    assert_eq!(summary.cache_hits, 1);
+    assert_eq!(summary.cache_saved_tokens, 1100);
+    assert!(summary.cache_saved_cost > 0.0);
+    assert_eq!(summary.totals.requests, 4, "hits are not provider requests");
+    assert!(db.cache_clear().expect("clear") >= 1);
+}
+
+#[tokio::test]
+async fn circuit_breaker_opens_after_three_failures_and_one_probe_closes_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("down"))
+        .up_to_n_times(3)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(openai_text("back"))
+        .mount(&server)
+        .await;
+    let (gateway, _) = db_gateway(
+        vec![conn(
+            "o1",
+            "openai",
+            ProviderKind::OpenAi,
+            &format!("{}/v1", server.uri()),
+            1,
+        )],
+        vec![],
+        GatewaySettings {
+            default_model: Some("openai/gpt-4o".into()),
+            ..GatewaySettings::default()
+        },
+    );
+    for _ in 0..3 {
+        assert!(run(&gateway, request("openai/gpt-4o")).await.0.is_err());
+    }
+    let refused = run(&gateway, request("openai/gpt-4o")).await.0.unwrap_err();
+    assert!(refused.to_string().contains("circuit open"), "{refused}");
+    assert_eq!(hits(&server).await, 3, "open breaker sends nothing");
+    let health = gateway.health().await;
+    assert_eq!(health.status, HealthStatus::Down);
+    assert!(health.detail.contains("circuit open"));
+    tokio::time::sleep(Duration::from_millis(70)).await;
+    assert_eq!(
+        answer(&gateway, request("openai/gpt-4o")).await,
+        "back",
+        "probe succeeds"
+    );
+    assert_eq!(
+        gateway.state().breakers.state("openai"),
+        breaker::BreakerState::Closed
+    );
+}
+
+#[tokio::test]
+async fn breaker_health_moves_failing_providers_behind_healthy_ones() {
+    let (servers, connections) = providers(&["alpha", "beta"]).await;
+    let (gateway, _) = db_gateway(
+        connections,
+        vec![combo("pair", &["alpha/m", "beta/m"], None)],
+        GatewaySettings::default(),
+    );
+    for _ in 0..3 {
+        gateway.state().breakers.failure("alpha");
+    }
+    assert_eq!(answer(&gateway, request("pair")).await, "beta");
+    assert_eq!(hits(&servers[0]).await, 0);
+}
+
+#[tokio::test]
+async fn prompt_cache_affinity_keeps_a_conversation_on_one_account() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(openai_text("ok"))
+        .mount(&server)
+        .await;
+    let base = format!("{}/v1", server.uri());
+    let (gateway, _) = db_gateway(
+        vec![
+            conn("k1", "openai", ProviderKind::OpenAi, &base, 1),
+            conn("k2", "openai", ProviderKind::OpenAi, &base, 1),
+        ],
+        vec![],
+        GatewaySettings::default(),
+    );
+    let conversation = |task: usize, turns: usize| {
+        let mut messages = vec![
+            json!({"role": "system", "content": "agent"}),
+            json!({"role": "user", "content": format!("task {task}")}),
+        ];
+        for turn in 0..turns {
+            messages.push(json!({"role": "assistant", "content": format!("step {turn}")}));
+            messages.push(json!({"role": "user", "content": "go on"}));
+        }
+        json!({"model": "openai/gpt-4o", "messages": messages})
+    };
+    for turns in 0..4 {
+        answer(&gateway, conversation(1, turns)).await;
+    }
+    for task in 2..14 {
+        answer(&gateway, conversation(task, 0)).await;
+    }
+    let keys: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| {
+            r.headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        keys[..4].iter().all(|k| *k == keys[0]),
+        "one conversation, one account: {keys:?}"
+    );
+    let distinct: std::collections::HashSet<&String> = keys.iter().collect();
+    assert_eq!(distinct.len(), 2, "conversations spread over both accounts");
+}
+
+#[tokio::test]
+async fn combo_orderings_pick_by_cost_context_last_good_and_weight() {
+    let (servers, connections) = providers(&["alpha", "beta", "gamma"]).await;
+    let models = ["alpha/m", "beta/m", "gamma/m"];
+    // `nobody/x` has no connection and is dropped; weights still follow models.
+    let mut weighted = combo(
+        "weighted",
+        &["nobody/x", "alpha/m", "beta/m", "gamma/m"],
+        Some(Strategy::Weighted),
+    );
+    weighted.weights = vec![9, 0, 1, 0];
+    let (gateway, _) = db_gateway(
+        connections,
+        vec![
+            combo("cheap", &models, Some(Strategy::CostOptimized)),
+            combo("wide", &models, Some(Strategy::ContextOptimized)),
+            combo("lkgp", &models, Some(Strategy::Lkgp)),
+            weighted,
+        ],
+        GatewaySettings::default(),
+    );
+    assert_eq!(
+        answer(&gateway, request("cheap")).await,
+        "gamma",
+        "$0.5 beats $1 and $5"
+    );
+    assert_eq!(
+        answer(&gateway, request("wide")).await,
+        "beta",
+        "1M context first"
+    );
+    for _ in 0..5 {
+        assert_eq!(
+            answer(&gateway, request("weighted")).await,
+            "beta",
+            "only beta has weight"
+        );
+    }
+    // lkgp: alpha answers first; once beta is the last good one, it leads.
+    assert_eq!(answer(&gateway, request("lkgp")).await, "alpha");
+    gateway.state().set_last_good("lkgp", "beta/m");
+    assert_eq!(answer(&gateway, request("lkgp")).await, "beta");
+    assert_eq!(hits(&servers[0]).await, 1);
+}
+
+#[tokio::test]
+async fn lkgp_remembers_the_model_that_answered_after_a_failure() {
+    let alpha = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&alpha)
+        .await;
+    let beta = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(openai_text("beta"))
+        .mount(&beta)
+        .await;
+    let (gateway, _) = db_gateway(
+        vec![
+            conn(
+                "alpha",
+                "alpha",
+                ProviderKind::OpenAi,
+                &format!("{}/v1", alpha.uri()),
+                1,
+            ),
+            conn(
+                "beta",
+                "beta",
+                ProviderKind::OpenAi,
+                &format!("{}/v1", beta.uri()),
+                1,
+            ),
+        ],
+        vec![combo("lkgp", &["alpha/m", "beta/m"], Some(Strategy::Lkgp))],
+        GatewaySettings::default(),
+    );
+    assert_eq!(answer(&gateway, request("lkgp")).await, "beta");
+    assert_eq!(answer(&gateway, request("lkgp")).await, "beta");
+    assert_eq!(
+        hits(&alpha).await,
+        1,
+        "second request went straight to beta"
+    );
+}
+
+#[tokio::test]
+async fn context_overflow_moves_to_a_model_that_fits() {
+    let (servers, connections) = providers(&["alpha", "beta"]).await;
+    let (gateway, _) = db_gateway(
+        connections,
+        vec![combo("pair", &["alpha/m", "beta/m"], None)],
+        GatewaySettings::default(),
+    );
+    assert_eq!(
+        answer(&gateway, request("pair")).await,
+        "alpha",
+        "small prompt: combo order"
+    );
+    let big =
+        json!({"model": "pair", "messages": [{"role": "user", "content": "x".repeat(100_000)}]});
+    assert_eq!(
+        answer(&gateway, big.clone()).await,
+        "beta",
+        "25k tokens > alpha's 8k"
+    );
+    let sent = bodies(&servers[1]).await;
+    assert_eq!(sent[0]["messages"], big["messages"], "nothing trimmed");
+}
+
+fn record_spend(store: &StoreUsage, cost: f64) {
+    store
+        .store()
+        .record_usage(&UsageRow {
+            provider: "alpha".into(),
+            model: "m".into(),
+            role: "chat".into(),
+            status: 200,
+            cost,
+            ..UsageRow::default()
+        })
+        .expect("usage");
+}
+
+#[tokio::test]
+async fn budgets_warn_then_block_or_fall_back_to_the_cheapest_model() {
+    let (servers, connections) = providers(&["alpha", "gamma"]).await;
+    let budget = |action| GatewaySettings {
+        budgets: vec![Budget {
+            role: Some("chat".into()),
+            period: Period::Daily,
+            limit_usd: 1.0,
+        }],
+        budget_action: action,
+        ..GatewaySettings::default()
+    };
+    let combos = vec![combo("pair", &["alpha/m", "gamma/m"], None)];
+    let (blocking, store) = db_gateway(
+        connections.clone(),
+        combos.clone(),
+        budget(BudgetAction::Block),
+    );
+    record_spend(&store, 0.85);
+    assert_eq!(blocking.budget_status()[0].level, Level::Warn);
+    assert_eq!(
+        answer(&blocking, request("pair")).await,
+        "alpha",
+        "80% only warns"
+    );
+    record_spend(&store, 0.5);
+    let error = run(&blocking, request("pair")).await.0.unwrap_err();
+    assert!(matches!(error, LlmError::Http { status: 402, .. }));
+    assert!(
+        error.to_string().contains("Daily budget for chat reached"),
+        "{error}"
+    );
+    let review = blocking.clone().with_role("review");
+    assert_eq!(
+        answer(&review, request("pair")).await,
+        "alpha",
+        "other roles are not capped"
+    );
+
+    let (cheapest, store) = db_gateway(connections, combos, budget(BudgetAction::Cheapest));
+    record_spend(&store, 2.0);
+    assert_eq!(
+        answer(&cheapest, request("pair")).await,
+        "gamma",
+        "cheapest model only"
+    );
+    assert_eq!(hits(&servers[1]).await, 1);
+}
+
+#[tokio::test]
+async fn reasoning_setting_maps_per_provider() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(openai_text("o"))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(anthropic_text("a"))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/models/gemini-2.5-flash:streamGenerateContent"))
+        .respond_with(gemini_text("g"))
+        .mount(&server)
+        .await;
+    let base = format!("{}/v1", server.uri());
+    let mut settings = GatewaySettings::default();
+    settings.reasoning.insert(
+        "chat".into(),
+        ReasoningSetting {
+            effort: reasoning::Effort::High,
+            max_tokens: None,
+        },
+    );
+    let (gateway, _) = db_gateway(
+        vec![
+            conn("o", "openai", ProviderKind::OpenAi, &base, 1),
+            conn("a", "anthropic", ProviderKind::Anthropic, &base, 1),
+            conn("g", "gemini", ProviderKind::Gemini, &base, 1),
+        ],
+        vec![],
+        settings,
+    );
+    answer(&gateway, request("openai/gpt-5")).await;
+    answer(&gateway, request("anthropic/claude-sonnet-4-5")).await;
+    answer(&gateway, request("gemini/gemini-2.5-flash")).await;
+    let sent = bodies(&server).await;
+    assert_eq!(sent[0]["reasoning_effort"], "high");
+    assert!(sent[0].get("reasoning").is_none());
+    assert_eq!(
+        sent[1]["thinking"],
+        json!({"type": "enabled", "budget_tokens": 51_200})
+    );
+    assert_eq!(sent[1]["max_tokens"], 64_000);
+    assert_eq!(
+        sent[2]["generationConfig"]["thinkingConfig"],
+        json!({"thinkingBudget": 32_768})
+    );
+}
+
+#[tokio::test]
+async fn anthropic_thinking_blocks_go_back_unchanged_during_tool_use() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse(&[
+            json!({"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I should read it"}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"SIG-1"}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"read_file"}}),
+            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"a\"}"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":9}}),
+            json!({"type":"message_stop"}),
+        ]))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(anthropic_text("done"))
+        .mount(&server)
+        .await;
+    let (gateway, _) = db_gateway(
+        vec![conn(
+            "a",
+            "anthropic",
+            ProviderKind::Anthropic,
+            &format!("{}/v1", server.uri()),
+            1,
+        )],
+        vec![],
+        GatewaySettings::default(),
+    );
+    let first = answer_completion(&gateway, request("anthropic/claude-sonnet-4-5")).await;
+    assert_eq!(first.tool_calls[0].id, "toolu_1");
+    // The agent sends back only text and tool calls, as it does today.
+    let follow_up = json!({"model": "anthropic/claude-sonnet-4-5", "messages": [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": null, "tool_calls": [
+            {"id": "toolu_1", "type": "function", "function": {"name": "read_file", "arguments": "{\"path\":\"a\"}"}}
+        ]},
+        {"role": "tool", "tool_call_id": "toolu_1", "content": "file text"}
+    ]});
+    answer(&gateway, follow_up).await;
+    let sent = bodies(&server).await;
+    assert_eq!(
+        sent[1]["messages"][1]["content"][0],
+        json!({"type": "thinking", "thinking": "I should read it", "signature": "SIG-1"})
+    );
+    assert_eq!(sent[1]["messages"][1]["content"][1]["type"], "tool_use");
+}
+
+async fn answer_completion(gateway: &Gateway, body: Value) -> Completion {
+    run(gateway, body).await.0.expect("answer")
+}
+
+#[tokio::test]
+async fn cache_reads_are_priced_with_the_provider_multiplier() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(openai_text("hi"))
+        .mount(&server)
+        .await;
+    let (gateway, store) = db_gateway(
+        vec![conn(
+            "d",
+            "deepseek",
+            ProviderKind::OpenAi,
+            &format!("{}/v1", server.uri()),
+            1,
+        )],
+        vec![],
+        GatewaySettings::default(),
+    );
+    answer(&gateway, request("deepseek/mystery-chat")).await;
+    // No price for the model: unknown, $0.
+    let row = &store.store().usage_summary(1, 5).expect("summary").recent[0];
+    assert!(!row.cost_known);
+    let priced = Pricing::from_json(r#"{"models":{"mystery-chat":{"input":1,"output":2}},"cache_multipliers":{"deepseek":{"read":0.1}}}"#)
+        .expect("pricing");
+    // openai_text reports 1000 prompt (200 cached) + 100 completion tokens.
+    let usage = Usage {
+        prompt: 1000,
+        completion: 100,
+        cached: 200,
+        cache_creation: 0,
+        reasoning: 0,
+    };
+    let expected = (800.0 * 1.0 + 200.0 * 0.1 + 100.0 * 2.0) / 1e6;
+    assert!((priced.cost("deepseek", "mystery-chat", &usage).usd - expected).abs() < 1e-12);
 }

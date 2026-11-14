@@ -16,22 +16,36 @@
 //!
 //! When everything failed: the first request-scoped error, otherwise 503.
 //!
+//! Before the attempts, in order: budget caps ([`super::budget`]), the combo
+//! strategy, capability reorder, the context overflow switch
+//! ([`super::overflow`]), circuit-breaker health ([`super::breaker`]),
+//! the per-role reasoning setting ([`super::reasoning`]) and the response
+//! cache ([`super::cache`]). Within a model, accounts are ranked by
+//! prompt-cache affinity ([`super::affinity`]) when there are several.
+//!
 //! A `smart` combo starts at the session's sticky model and updates it after
 //! the answer (see [`super::smart`]); the session is the task id given by
 //! [`Gateway::with_session`]. Calls without a
 //! session share one sticky model per combo. Concurrent calls of one session
 //! may overwrite each other's quality window (last write wins).
 
+use super::budget::{Budget, BudgetAction, BudgetStatus, Level, Period};
+use super::cache::{self, Entry, ResponseCacheSettings};
 use super::client::{classify_status, describe};
-use super::combo::{reorder_by_caps, required_caps, rotate, Combo, GatewayState, Strategy};
+use super::combo::{
+    reorder_by_caps, required_caps, rotate, sort_known, weighted_order, Combo, GatewayState,
+    Strategy,
+};
 use super::pricing::Pricing;
 use super::providers::{Connection, KeySource, ProviderKind, LEGACY_ROUTER_ID};
-use super::savers::{self, prompts::Level, Format, SaverConfig, SaverReport};
+use super::reasoning::{self, ReasoningSetting};
+use super::savers::{self, prompts::Level as SaverLevel, Format, SaverConfig, SaverReport};
 use super::settings::RouterSettings;
 use super::smart::{self, Sticky};
 use super::translate::{anthropic, gemini, OpenAiDecoder, StreamDecoder, Usage};
+use super::{affinity, breaker, combo, overflow};
 use crate::llm::{ChatRequest, Completion, CompletionClient, LlmError, StreamAccumulator};
-use crate::store::{StickyRow, Store, StoreError, SwitchRow, UsageRow};
+use crate::store::{CacheHitRow, StickyRow, Store, StoreError, SwitchRow, UsageRow};
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use next_agent_process_manager::{HealthProbe, HealthReport, HealthStatus, ProbeFuture};
@@ -51,21 +65,29 @@ const SHORT_COOLDOWN: Duration = Duration::from_secs(5);
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// User-editable gateway settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)] // Independent on/off switches.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GatewaySettings {
     /// `provider/model` or combo name used when a role has no assignment.
     pub default_model: Option<String>,
     /// Global token-saver switch.
     pub token_saver: bool,
-    pub caveman: Option<Level>,
-    pub ponytail: Option<Level>,
+    pub caveman: Option<SaverLevel>,
+    pub ponytail: Option<SaverLevel>,
     pub rtk: bool,
     pub cache_control: bool,
     /// Strategy for combos that do not set their own.
     pub combo_strategy: Strategy,
     /// Role (`chat`, `design`, `summary`, `review`) → model or combo.
     pub roles: BTreeMap<String, String>,
+    /// Keep a conversation on one account (prompt-cache affinity).
+    pub cache_affinity: bool,
+    pub response_cache: ResponseCacheSettings,
+    /// Role → reasoning effort or budget.
+    pub reasoning: BTreeMap<String, ReasoningSetting>,
+    pub budgets: Vec<Budget>,
+    pub budget_action: BudgetAction,
 }
 
 impl Default for GatewaySettings {
@@ -79,6 +101,11 @@ impl Default for GatewaySettings {
             cache_control: true,
             combo_strategy: Strategy::Fallback,
             roles: BTreeMap::new(),
+            cache_affinity: true,
+            response_cache: ResponseCacheSettings::default(),
+            reasoning: BTreeMap::new(),
+            budgets: Vec::new(),
+            budget_action: BudgetAction::Block,
         }
     }
 }
@@ -105,6 +132,10 @@ impl GatewaySettings {
             .roles
             .retain(|role, target| ROLES.contains(&role.as_str()) && !target.trim().is_empty());
         clean.default_model = clean.default_model.filter(|m| !m.trim().is_empty());
+        clean
+            .reasoning
+            .retain(|role, setting| ROLES.contains(&role.as_str()) && setting.to_body().is_some());
+        clean.budgets.retain(|b| b.limit_usd > 0.0);
         let text = serde_json::to_string(&clean).unwrap_or_else(|_| "{}".into());
         store.set_setting(SETTINGS_KEY, &text)
     }
@@ -330,6 +361,34 @@ pub trait UsageSink: Send + Sync {
     }
 
     fn save_sticky(&self, _session: &str, _combo: &str, _sticky: &Sticky) {}
+
+    /// A cached answer (serialized [`Entry`]) that has not expired.
+    fn cache_get(&self, _key: &str) -> Option<String> {
+        None
+    }
+
+    fn cache_put(
+        &self,
+        _key: &str,
+        _target: &Target,
+        _entry: &str,
+        _settings: &ResponseCacheSettings,
+    ) {
+    }
+
+    fn record_cache_hit(&self, _row: &CacheHitRow) {}
+
+    /// Spend today (`monthly = false`) or this month, for a role or overall;
+    /// `None` when unknown (budgets are then not enforced).
+    fn spend(&self, _role: Option<&str>, _monthly: bool) -> Option<f64> {
+        None
+    }
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// Writes usage rows to the metadata database.
@@ -393,6 +452,41 @@ impl UsageSink for StoreUsage {
             tracing::warn!(target: "router", %error, "could not save sticky model");
         }
     }
+
+    fn cache_get(&self, key: &str) -> Option<String> {
+        self.store()
+            .cache_get(key, unix_now())
+            .map_err(|error| tracing::warn!(target: "router", %error, "response cache read failed"))
+            .ok()?
+    }
+
+    fn cache_put(&self, key: &str, target: &Target, entry: &str, settings: &ResponseCacheSettings) {
+        let result = self.store().cache_put(
+            key,
+            &target.provider,
+            &target.model,
+            entry,
+            unix_now(),
+            i64::from(settings.ttl_secs),
+            i64::from(settings.max_entries),
+        );
+        if let Err(error) = result {
+            tracing::warn!(target: "router", %error, "response cache write failed");
+        }
+    }
+
+    fn record_cache_hit(&self, row: &CacheHitRow) {
+        if let Err(error) = self.store().record_cache_hit(row) {
+            tracing::warn!(target: "router", %error, "could not record a cache hit");
+        }
+    }
+
+    fn spend(&self, role: Option<&str>, monthly: bool) -> Option<f64> {
+        self.store()
+            .spend(role, monthly)
+            .map_err(|error| tracing::warn!(target: "router", %error, "could not read spend"))
+            .ok()
+    }
 }
 
 /// Per-request switches.
@@ -402,6 +496,8 @@ pub struct RequestOptions {
     pub role: Option<String>,
     /// `false` turns every token saver off for this request.
     pub token_saver: bool,
+    /// `false` bypasses the response cache for this request.
+    pub cache: bool,
 }
 
 impl Default for RequestOptions {
@@ -409,8 +505,17 @@ impl Default for RequestOptions {
         Self {
             role: None,
             token_saver: true,
+            cache: true,
         }
     }
+}
+
+/// A successful provider answer.
+struct Answer {
+    completion: Completion,
+    /// OpenRouter-style `reasoning_details` seen in the answer.
+    details: Vec<Value>,
+    usage: Usage,
 }
 
 /// A smart combo's state during one request.
@@ -424,9 +529,9 @@ struct SmartRun {
 }
 
 enum Outcome {
-    Done(Completion),
+    Done(Answer),
     /// 2xx but nothing came back.
-    Empty(Completion),
+    Empty(Answer),
     Http {
         status: u16,
         error: LlmError,
@@ -444,6 +549,21 @@ struct Attempt<'a> {
     target: &'a Target,
     role: &'a str,
     combo: Option<&'a str>,
+}
+
+/// Done or Empty, by whether anything came back.
+fn conclude(completion: Completion, details: Vec<Value>, usage: Usage) -> Outcome {
+    let empty = completion.content.is_empty() && completion.tool_calls.is_empty();
+    let answer = Answer {
+        completion,
+        details,
+        usage,
+    };
+    if empty {
+        Outcome::Empty(answer)
+    } else {
+        Outcome::Done(answer)
+    }
 }
 
 /// The gateway. Cheap to clone.
@@ -550,11 +670,12 @@ impl Gateway {
     /// Streaming chat for a raw OpenAI chat body (images, files, tool choice…).
     ///
     /// # Errors
-    /// [`LlmError`] when every model and account failed.
+    /// [`LlmError`] when a budget blocks the request or every model and
+    /// account failed.
     #[allow(clippy::too_many_lines)] // One loop holding all fall-through rules reads best.
     pub async fn chat_value(
         &self,
-        body: Value,
+        mut body: Value,
         options: &RequestOptions,
         on_delta: &mut dyn FnMut(&str),
     ) -> Result<Completion, LlmError> {
@@ -563,57 +684,74 @@ impl Gateway {
         let plan = self.config.resolve(requested, &role)?;
         let combo_name = plan.combo.as_ref().map(|c| c.name.clone());
         let mut targets = plan.targets;
-        let mut smart_run = None;
-        if let Some(combo) = &plan.combo {
-            match combo
-                .strategy
-                .unwrap_or(self.config.settings.combo_strategy)
-            {
-                Strategy::Fallback => {}
-                Strategy::RoundRobin => {
-                    targets = rotate(
-                        &targets,
-                        self.state.next_use(&combo.name),
-                        combo.sticky_limit,
-                    );
-                }
-                Strategy::Smart => {
-                    let session = self.session.clone().unwrap_or_default();
-                    let sticky = self.load_sticky(&session, &combo.name);
-                    let order: Vec<String> = targets.iter().map(Target::label).collect();
-                    targets.rotate_left(smart::start_index(&order, sticky.as_ref()));
-                    smart_run = Some(SmartRun {
-                        order,
-                        session,
-                        combo: combo.name.clone(),
-                        threshold: combo.confidence_threshold,
-                        sticky,
-                    });
-                }
-            }
-        }
+        self.enforce_budgets(&role, &mut targets)?;
+        let mut smart_run = self.order_by_strategy(plan.combo.as_ref(), &mut targets);
         let needed = required_caps(&body);
         reorder_by_caps(&mut targets, &needed, |t| {
-            let provider = self
-                .config
-                .accounts(&t.provider)
-                .first()
-                .map_or_else(|| t.provider.clone(), |c| c.provider.clone());
-            self.config.pricing.caps(&provider, &t.model)
+            self.config.pricing.caps(&self.price_provider(t), &t.model)
         });
+        let tokens = overflow::estimate_tokens(&body);
+        if overflow::prefer_fitting(&mut targets, tokens, |t| {
+            self.config
+                .pricing
+                .context_length(&self.price_provider(t), &t.model)
+        }) {
+            tracing::info!(target: "router", tokens, "prompt too large for some models; trying ones that fit first");
+        }
+        // Providers whose breaker is open go last (they would be refused);
+        // half-open ones keep their place so the strategy's order holds.
+        targets.sort_by_cached_key(|t| self.provider_health(&t.provider) <= 0.0);
+        self.prepare_body(&mut body, &role);
+
+        let caching = options.cache
+            && self.usage.is_some()
+            && cache::eligible(&body, &self.config.settings.response_cache);
+        if caching {
+            if let Some(answer) = self.cached_answer(&body, &targets, &role, on_delta) {
+                return Ok(answer);
+            }
+        }
+        let affinity_key = self
+            .config
+            .settings
+            .cache_affinity
+            .then(|| affinity::key(&body))
+            .flatten();
+        let mut captured: Vec<String> = Vec::new();
+        let mut tee = |delta: &str| {
+            if caching {
+                captured.push(delta.to_string());
+            }
+            on_delta(delta);
+        };
 
         let mut first_request_error: Option<LlmError> = None;
         let mut last_error: Option<LlmError> = None;
         let count = targets.len();
         for (index, target) in targets.iter().enumerate() {
             let last_model = index + 1 == count;
-            let accounts = self.config.accounts(&target.provider);
+            let mut accounts = self.config.accounts(&target.provider);
             if accounts.is_empty() {
                 last_error = Some(LlmError::Config(format!(
                     "no active connection for provider `{}`",
                     target.provider
                 )));
                 continue;
+            }
+            if let Some(key) = &affinity_key {
+                // Only among accounts of equal priority: the user's order wins.
+                for group in accounts.chunk_by_mut(|a, b| a.priority == b.priority) {
+                    affinity::rank(
+                        group,
+                        key,
+                        |a| a.id.clone(),
+                        |a| {
+                            let usable = self.state.available(&a.id, &target.model);
+                            self.state.breakers.state(&a.provider).score()
+                                * f64::from(u8::from(usable))
+                        },
+                    );
+                }
             }
             for account in accounts {
                 if !self.state.available(&account.id, &target.model) {
@@ -623,26 +761,47 @@ impl Gateway {
                     )));
                     continue;
                 }
+                if self.state.breakers.permit(&account.provider) == breaker::Permit::Refused {
+                    last_error = Some(LlmError::Unavailable(format!(
+                        "{} is failing repeatedly; paused (circuit open)",
+                        account.provider
+                    )));
+                    continue;
+                }
                 let attempt = Attempt {
                     account,
                     target,
                     role: &role,
                     combo: combo_name.as_deref(),
                 };
-                match self.attempt(&attempt, &body, options, on_delta).await {
-                    Outcome::Done(completion) => {
+                let outcome = self.attempt(&attempt, &body, options, &mut tee).await;
+                self.report_breaker(&account.provider, &outcome);
+                match outcome {
+                    Outcome::Done(answer) => {
                         self.state.succeed(&account.id, &target.model);
-                        self.observe_smart(smart_run.take(), target, &completion);
-                        return Ok(completion);
+                        return Ok(self.finish(
+                            answer,
+                            target,
+                            &body,
+                            combo_name.as_deref(),
+                            smart_run.take(),
+                            caching.then_some(&captured),
+                        ));
                     }
-                    Outcome::Empty(completion) => {
+                    Outcome::Empty(answer) => {
                         let final_reason = matches!(
-                            completion.finish_reason.as_deref(),
+                            answer.completion.finish_reason.as_deref(),
                             Some("length" | "content_filter")
                         );
                         if last_model || final_reason {
-                            self.observe_smart(smart_run.take(), target, &completion);
-                            return Ok(completion);
+                            return Ok(self.finish(
+                                answer,
+                                target,
+                                &body,
+                                combo_name.as_deref(),
+                                smart_run.take(),
+                                None,
+                            ));
                         }
                         last_error = Some(LlmError::Protocol(format!(
                             "{} returned an empty answer",
@@ -715,6 +874,272 @@ impl Gateway {
         }
     }
 
+    /// The provider name prices are filed under for a target (a connection
+    /// id or name in the target resolves to its provider).
+    fn price_provider(&self, target: &Target) -> String {
+        self.config
+            .accounts(&target.provider)
+            .first()
+            .map_or_else(|| target.provider.clone(), |c| c.provider.clone())
+    }
+
+    /// Breaker score of the provider behind a target address (1 = healthy).
+    fn provider_health(&self, address: &str) -> f64 {
+        self.config
+            .accounts(address)
+            .iter()
+            .map(|a| self.state.breakers.state(&a.provider).score())
+            .fold(0.0, f64::max)
+    }
+
+    fn report_breaker(&self, provider: &str, outcome: &Outcome) {
+        let breakers = &self.state.breakers;
+        match outcome {
+            Outcome::Http { status, .. } if *status >= 500 => {
+                breakers.failure(provider);
+            }
+            Outcome::Http { status: 429, .. } | Outcome::NoKey(_) => breakers.release(provider),
+            // Any answer, even a request-scoped 4xx, shows the provider is up.
+            Outcome::Done(_) | Outcome::Empty(_) | Outcome::Http { .. } => {
+                breakers.success(provider);
+            }
+            Outcome::Transport(_) | Outcome::Fatal(_) => {
+                breakers.failure(provider);
+            }
+        }
+    }
+
+    /// Apply the combo's strategy to `targets`; a smart combo also returns
+    /// its per-request state.
+    fn order_by_strategy(
+        &self,
+        combo: Option<&Combo>,
+        targets: &mut Vec<Target>,
+    ) -> Option<SmartRun> {
+        let combo = combo?;
+        match combo
+            .strategy
+            .unwrap_or(self.config.settings.combo_strategy)
+        {
+            Strategy::Fallback => {}
+            Strategy::RoundRobin => {
+                *targets = rotate(
+                    targets,
+                    self.state.next_use(&combo.name),
+                    combo.sticky_limit,
+                );
+            }
+            Strategy::Weighted => {
+                // Weights follow the combo's model list; resolving may have
+                // dropped models without a provider, so match by model.
+                let weights: Vec<u32> = targets
+                    .iter()
+                    .map(|t| {
+                        combo
+                            .models
+                            .iter()
+                            .position(|m| self.config.parse_target(m).as_ref() == Some(t))
+                            .and_then(|i| combo.weights.get(i).copied())
+                            .unwrap_or(1)
+                    })
+                    .collect();
+                *targets = weighted_order(targets, &weights, || self.state.draw());
+            }
+            Strategy::CostOptimized => sort_known(targets, |t| {
+                self.config
+                    .pricing
+                    .lookup(&self.price_provider(t), &t.model)
+                    .and_then(|p| p.input)
+            }),
+            Strategy::ContextOptimized => sort_known(targets, |t| {
+                self.config
+                    .pricing
+                    .context_length(&self.price_provider(t), &t.model)
+                    .map(std::cmp::Reverse)
+            }),
+            Strategy::Lkgp => {
+                if let Some(good) = self.state.last_good(&combo.name) {
+                    if let Some(at) = targets.iter().position(|t| t.label() == good) {
+                        let first = targets.remove(at);
+                        targets.insert(0, first);
+                    }
+                }
+            }
+            Strategy::Smart => {
+                let session = self.session.clone().unwrap_or_default();
+                let sticky = self.load_sticky(&session, &combo.name);
+                let order: Vec<String> = targets.iter().map(Target::label).collect();
+                targets.rotate_left(smart::start_index(&order, sticky.as_ref()));
+                return Some(SmartRun {
+                    order,
+                    session,
+                    combo: combo.name.clone(),
+                    threshold: combo.confidence_threshold,
+                    sticky,
+                });
+            }
+        }
+        None
+    }
+
+    /// Every configured budget with its current spend (empty without a
+    /// usage store).
+    #[must_use]
+    pub fn budget_status(&self) -> Vec<BudgetStatus> {
+        self.budgets_for(None)
+    }
+
+    /// Budgets that apply to `role` (all with `None`), with their spend.
+    fn budgets_for(&self, role: Option<&str>) -> Vec<BudgetStatus> {
+        let Some(sink) = &self.usage else {
+            return Vec::new();
+        };
+        self.config
+            .settings
+            .budgets
+            .iter()
+            .filter(|b| b.limit_usd > 0.0 && role.is_none_or(|r| b.applies_to(r)))
+            .filter_map(|b| {
+                let spent = sink.spend(b.role.as_deref(), b.period == Period::Monthly)?;
+                Some(BudgetStatus::new(b.clone(), spent))
+            })
+            .collect()
+    }
+
+    /// Warn at 80 %; at 100 % block, or keep only the cheapest priced target.
+    fn enforce_budgets(&self, role: &str, targets: &mut Vec<Target>) -> Result<(), LlmError> {
+        let statuses = self.budgets_for(Some(role));
+        for status in statuses.iter().filter(|s| s.level == Level::Warn) {
+            tracing::warn!(target: "router", budget = %status.budget.label(), spent = status.spent, "budget above 80%");
+        }
+        let Some(over) = statuses.iter().find(|s| s.level == Level::Over) else {
+            return Ok(());
+        };
+        let blocked = || LlmError::Http {
+            status: 402,
+            body: over.message(),
+        };
+        if self.config.settings.budget_action == BudgetAction::Block {
+            return Err(blocked());
+        }
+        let price = |t: &Target| {
+            self.config
+                .pricing
+                .lookup(&self.price_provider(t), &t.model)
+                .and_then(|p| Some(p.input? + p.output?))
+        };
+        let cheapest = targets
+            .iter()
+            .filter_map(|t| price(t).map(|p| (p, t.clone())))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, t)| t)
+            .ok_or_else(blocked)?;
+        tracing::warn!(target: "router", budget = %over.budget.label(), model = %cheapest.label(), "budget reached; using the cheapest model");
+        *targets = vec![cheapest];
+        Ok(())
+    }
+
+    /// Add the role's reasoning setting and restore remembered reasoning
+    /// blocks on earlier tool-call turns.
+    fn prepare_body(&self, body: &mut Value, role: &str) {
+        if body.get("reasoning").is_none() {
+            let setting = self
+                .config
+                .settings
+                .reasoning
+                .get(role)
+                .and_then(|r| r.to_body());
+            if let Some(reasoning) = setting {
+                body["reasoning"] = reasoning;
+            }
+        }
+        self.state.restore_reasoning(body);
+    }
+
+    /// Serve `body` from the response cache, replaying the stored deltas.
+    fn cached_answer(
+        &self,
+        body: &Value,
+        targets: &[Target],
+        role: &str,
+        on_delta: &mut dyn FnMut(&str),
+    ) -> Option<Completion> {
+        let sink = self.usage.as_ref()?;
+        let (target, entry) = targets.iter().find_map(|t| {
+            let raw = sink.cache_get(&cache::key(body, &t.provider, &t.model))?;
+            serde_json::from_str::<Entry>(&raw)
+                .map_err(
+                    |error| tracing::warn!(target: "router", %error, "ignoring a bad cache entry"),
+                )
+                .ok()
+                .map(|entry| (t, entry))
+        })?;
+        for delta in &entry.deltas {
+            on_delta(delta);
+        }
+        sink.record_cache_hit(&CacheHitRow {
+            provider: self.price_provider(target),
+            model: target.model.clone(),
+            role: role.to_string(),
+            saved_tokens: entry.prompt_tokens + entry.completion_tokens,
+            saved_cost: entry.cost,
+        });
+        tracing::info!(target: "router", provider = %target.label(), "served from the response cache");
+        Some(entry.completion())
+    }
+
+    /// Book-keeping after a provider answered: routing memory, reasoning
+    /// blocks, the response cache and smart-combo state.
+    fn finish(
+        &self,
+        answer: Answer,
+        target: &Target,
+        body: &Value,
+        combo: Option<&str>,
+        smart_run: Option<SmartRun>,
+        captured: Option<&Vec<String>>,
+    ) -> Completion {
+        let Answer {
+            completion,
+            details,
+            usage,
+        } = answer;
+        if let Some(combo) = combo {
+            self.state.set_last_good(combo, &target.label());
+        }
+        if !details.is_empty() && !completion.tool_calls.is_empty() {
+            let keys: Vec<String> = completion
+                .tool_calls
+                .iter()
+                .filter_map(|c| serde_json::to_value(c).ok())
+                .filter_map(|c| combo::tool_call_key(&c))
+                .collect();
+            self.state.remember_reasoning(&keys, &Value::Array(details));
+        }
+        if let (Some(deltas), Some(sink)) = (captured, &self.usage) {
+            let provider = self.price_provider(target);
+            let entry = Entry {
+                deltas: deltas.clone(),
+                content: completion.content.clone(),
+                tool_calls: completion.tool_calls.clone(),
+                finish_reason: completion.finish_reason.clone(),
+                prompt_tokens: usage.prompt,
+                completion_tokens: usage.completion,
+                cost: self
+                    .config
+                    .pricing
+                    .cost(&provider, &target.model, &usage)
+                    .usd,
+            };
+            if let Ok(text) = serde_json::to_string(&entry) {
+                let key = cache::key(body, &target.provider, &target.model);
+                sink.cache_put(&key, target, &text, &self.config.settings.response_cache);
+            }
+        }
+        self.observe_smart(smart_run, target, &completion);
+        completion
+    }
+
     fn load_sticky(&self, session: &str, combo: &str) -> Option<Sticky> {
         self.state.sticky(session, combo).or_else(|| {
             let sticky = self.usage.as_ref()?.load_sticky(session, combo)?;
@@ -776,23 +1201,22 @@ impl Gateway {
         let mut base = openai.clone();
         base["model"] = json!(model);
         base["stream"] = json!(true);
+        let max_output = pricing.max_output(&account.provider, model);
         match account.kind {
             ProviderKind::OpenAi => {
                 base["stream_options"] = json!({"include_usage": true});
+                reasoning::apply_openai(&mut base, &account.provider, max_output.unwrap_or(16_384));
                 (base, Format::OpenAi, gemini::NameMap::new())
             }
             ProviderKind::Anthropic => {
-                let ceiling = pricing
-                    .max_output(&account.provider, model)
-                    .unwrap_or(anthropic::DEFAULT_MAX_OUTPUT);
-                (
-                    anthropic::request(&base, model, ceiling),
-                    Format::Anthropic,
-                    gemini::NameMap::new(),
-                )
+                let ceiling = max_output.unwrap_or(anthropic::DEFAULT_MAX_OUTPUT);
+                let mut body = anthropic::request(&base, model, ceiling);
+                reasoning::apply_anthropic(&mut body, &base, ceiling);
+                (body, Format::Anthropic, gemini::NameMap::new())
             }
             ProviderKind::Gemini => {
-                let (body, names) = gemini::request(&base);
+                let (mut body, names) = gemini::request(&base);
+                reasoning::apply_gemini(&mut body, &base, model, max_output.unwrap_or(65_536));
                 (body, Format::Gemini, names)
             }
         }
@@ -952,16 +1376,12 @@ impl Gateway {
             Ok(None) => {}
             Err(error) => return (Outcome::Transport(error), usage),
         }
-        let completion = acc.finish();
-        let empty = completion.content.is_empty() && completion.tool_calls.is_empty();
-        (
-            if empty {
-                Outcome::Empty(completion)
-            } else {
-                Outcome::Done(completion)
-            },
-            usage,
-        )
+        let details = message
+            .get("reasoning_details")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        (conclude(acc.finish(), details, usage), usage)
     }
 
     async fn read_stream(
@@ -979,6 +1399,7 @@ impl Gateway {
         let mut events = response.bytes_stream().eventsource();
         let mut acc = StreamAccumulator::new();
         let mut usage = Usage::default();
+        let mut details = Vec::new();
         let mut committed = false;
         let fail = |error: LlmError, committed: bool| {
             if committed {
@@ -1032,6 +1453,12 @@ impl Gateway {
                 if let Some(found) = piece.get("usage").and_then(Usage::from_openai) {
                     usage = found;
                 }
+                if let Some(found) = piece
+                    .pointer("/choices/0/delta/reasoning_details")
+                    .and_then(Value::as_array)
+                {
+                    reasoning::merge_details(&mut details, found);
+                }
                 match acc.push(&piece) {
                     Ok(Some(text)) => {
                         committed = true;
@@ -1042,16 +1469,7 @@ impl Gateway {
                 }
             }
         }
-        let completion = acc.finish();
-        let empty = completion.content.is_empty() && completion.tool_calls.is_empty();
-        (
-            if empty {
-                Outcome::Empty(completion)
-            } else {
-                Outcome::Done(completion)
-            },
-            usage,
-        )
+        (conclude(acc.finish(), details, usage), usage)
     }
 
     fn record(
@@ -1181,6 +1599,21 @@ impl Gateway {
             );
         };
         let label = format!("{} · {}", account.name, target.model);
+        match self.state.breakers.state(&account.provider) {
+            breaker::BreakerState::Open => {
+                return HealthReport::new(
+                    HealthStatus::Down,
+                    format!("{label}: paused after repeated failures (circuit open)"),
+                )
+            }
+            breaker::BreakerState::HalfOpen => {
+                return HealthReport::new(
+                    HealthStatus::Degraded,
+                    format!("{label}: recovering (circuit half-open)"),
+                )
+            }
+            breaker::BreakerState::Closed => {}
+        }
         let result = self.list_models(&account).await;
         let latency = started.elapsed();
         match result {

@@ -34,7 +34,9 @@ impl Usage {
             prompt: int(usage.get("prompt_tokens")),
             completion: int(usage.get("completion_tokens")),
             cached: int(usage.pointer("/prompt_tokens_details/cached_tokens")),
-            cache_creation: int(usage.get("cache_creation_input_tokens")),
+            cache_creation: int(usage.get("cache_creation_input_tokens")).max(int(
+                usage.pointer("/prompt_tokens_details/cache_write_tokens")
+            )),
             reasoning: int(usage.pointer("/completion_tokens_details/reasoning_tokens")),
         })
     }

@@ -9,6 +9,22 @@
       "risk": "medium",
       "role": "LLM gateway"
     },
+    "omniroute": {
+      "pin": "v3.8.53 (studied; ideas ported, not bundled)",
+      "licence": "MIT",
+      "adapter": "crates/core/src/router",
+      "checked": "2026-11-14",
+      "risk": "low",
+      "role": "LLM gateway: response cache, circuit breaker, cache affinity, combo orderings"
+    },
+    "openrouter": {
+      "pin": "docs as of 2026-11-14 (no code; catalog fetched at runtime on manual refresh)",
+      "licence": "n/a (closed source; docs only)",
+      "adapter": "crates/core/src/router",
+      "checked": "2026-11-14",
+      "risk": "low",
+      "role": "LLM gateway: catalog import, cache-aware cost, reasoning, overflow switch"
+    },
     "tauri": {
       "pin": "2.x",
       "adapter": "apps/desktop/src-tauri",

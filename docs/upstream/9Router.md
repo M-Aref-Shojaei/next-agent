@@ -157,6 +157,21 @@ Everything lives in `crates/core/src/router/` behind `CompletionClient` and `Hea
 | Prompt caching | `savers/mod.rs` | `cache_control` on system, last tool, last assistant block. |
 | Usage, cost | `pricing.rs`, `pricing.json`, `store.rs` (`llm_usage`, `llm_usage_daily`) | Unknown models cost 0 and are flagged. A `pricing.json` in the app data folder overrides entries. |
 
+### OmniRoute and OpenRouter additions
+Built on the same gateway; credits in `NOTICE.md`, design notes in `docs/upstream/OmniRoute.md` and `docs/upstream/OpenRouter.md`.
+
+| Feature | Our file | Notes |
+|---|---|---|
+| Response cache (exact) | `cache.rs`, `store.rs` (`llm_response_cache`, `llm_cache_hits`) | Off by default; temperature 0 only unless allowed; deltas replayed; fails open; `SimilarAnswers` is the seam for a semantic layer. |
+| Circuit breaker | `breaker.rs` | Per provider; opens after 3 failures (transport, 5xx); 60 s doubling to 30 min; one probe in flight; feeds ordering and the status dot. |
+| Prompt-cache affinity | `affinity.rs` | Rendezvous hash of `prompt_cache_key` or the stable prefix; only among accounts of equal priority. |
+| Orderings | `combo.rs` | `weighted`, `cost-optimized`, `lkgp`, `context-optimized`. |
+| Budget caps | `budget.rs` | Daily/monthly per role or overall; warn at 80 %; block (HTTP 402 message) or cheapest priced model. |
+| Catalog import | `catalog.rs` | Manual refresh of `/api/v1/models`; `-1` = unknown price, `0` = free; layered between the user's and the shipped `pricing.json`. |
+| Cache-aware cost | `pricing.rs`, `pricing.json` (`cache_multipliers`) | Cache read/write at a per-provider share of the input price when no explicit price exists. |
+| Reasoning | `reasoning.rs`, `translate/*` | One setting per role; `reasoning_details` remembered per tool call and sent back unchanged. |
+| Overflow switch | `overflow.rs` | Models whose context fits go first; nothing is trimmed. |
+
 ### Smart strategy (our design)
 9Router's `smart` quality signal was not captured, so we designed our own.
 - **Sticky model:** each session (the task id) keeps one model per combo. A request tries it first, then the rest of the combo in order after it, with the normal fall-through rules.

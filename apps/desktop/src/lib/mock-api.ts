@@ -21,6 +21,8 @@ const connections: ProviderConnection[] = [];
 const keyed = new Set<string>();
 const combos: Combo[] = [];
 let gatewaySettings: GatewaySettings = defaultSettings();
+let catalog: { models: number; updatedAt: number | null } = { models: 0, updatedAt: null };
+let cacheEntries = 3;
 const mockDay = (offset: number, cost: number, requests: number): UsageTotals => ({
   key: new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10),
   requests, failures: 0, promptTokens: requests * 1200, completionTokens: requests * 300,
@@ -205,7 +207,7 @@ export const mockApi: Api = {
     return structuredClone(gatewaySettings);
   },
   async gatewaySettingsSet(next) {
-    gatewaySettings = structuredClone(next);
+    gatewaySettings = JSON.parse(JSON.stringify(next)); // UI state is a proxy; structuredClone rejects it.
   },
   async gatewayTargets() {
     return [
@@ -234,7 +236,24 @@ export const mockApi: Api = {
         status: 200, promptTokens: 1200, completionTokens: 300, cachedTokens: 400, cost: 0.0081, costKnown: true, latencyMs: 2300 }],
       switches: [{ ts: new Date().toISOString(), session: "task_mock1", combo: "steady", from: "groq/llama-3.3-70b-versatile",
         to: "anthropic/claude-sonnet-4-5", reason: "quality:truncated", confidence: 0.7 }],
+      cacheHits: 4, cacheSavedTokens: 6_000, cacheSavedCost: 0.03,
+      budgets: gatewaySettings.budgets.map((budget) => ({ budget, spent: budget.limitUsd * 0.85, level: "warn" as const })),
       saverBytesBefore: 120_000, saverBytesAfter: 52_000,
     };
+  },
+  async gatewayCatalogStatus() {
+    return { ...catalog };
+  },
+  async gatewayCatalogRefresh() {
+    catalog = { models: 342, updatedAt: Math.floor(Date.now() / 1000) };
+    return { ...catalog };
+  },
+  async gatewayCacheCount() {
+    return cacheEntries;
+  },
+  async gatewayCacheClear() {
+    const removed = cacheEntries;
+    cacheEntries = 0;
+    return removed;
   },
 };

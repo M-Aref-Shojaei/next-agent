@@ -7,6 +7,9 @@
     formatTs,
     formatTokens,
     savedPercent,
+    budgetLabel,
+    budgetPercent,
+    cacheHitRate,
     switchReason,
     type UsageSummary,
     type UsageTotals,
@@ -75,10 +78,29 @@
         <span class="muted">{formatTokens(usage.totals.cachedTokens)} cached</span></div>
       <div><span class="muted">Output tokens</span><strong>{formatTokens(usage.totals.completionTokens)}</strong></div>
       <div><span class="muted">Cost (estimate)</span><strong>{formatCost(usage.totals.cost)}</strong></div>
+      <div><span class="muted">Prompt cache hit rate</span><strong>{cacheHitRate(usage.totals)}%</strong>
+        <span class="muted">of input tokens</span></div>
+      <div><span class="muted">Response cache</span><strong>{usage.cacheHits} hits</strong>
+        <span class="muted">saved {formatTokens(usage.cacheSavedTokens)} tokens · {formatCost(usage.cacheSavedCost)}</span></div>
       <div><span class="muted">Tool output saved (RTK)</span>
         <strong>{savedPercent(usage.saverBytesBefore, usage.saverBytesAfter)}%</strong>
         <span class="muted">{formatTokens(usage.saverBytesBefore - usage.saverBytesAfter)} bytes</span></div>
     </section>
+
+    {#if usage.budgets.length > 0}
+      <section aria-labelledby="h-budgets">
+        <h2 id="h-budgets">Budgets</h2>
+        {#each usage.budgets as status, i (i)}
+          <div class="budget">
+            <span>{budgetLabel(status.budget)}</span>
+            <meter min="0" max="100" low="80" high="99" optimum="0" value={budgetPercent(status)} aria-label={budgetLabel(status.budget)}></meter>
+            <span class={status.level === "ok" ? "" : "bad"}>{formatCost(status.spent)} of {formatCost(status.budget.limitUsd)}
+              {#if status.level === "warn"} · over 80%{:else if status.level === "over"} · reached{/if}</span>
+          </div>
+        {/each}
+        <p class="muted"><a href="/settings/providers">Change budgets</a></p>
+      </section>
+    {/if}
 
     <section aria-labelledby="h-chart">
       <div class="chart-head">
@@ -189,4 +211,6 @@
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
   th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
   .ok { color: var(--ok); } .bad { color: var(--danger); }
+  .budget { display: grid; grid-template-columns: minmax(160px, auto) 1fr auto; gap: 10px; align-items: center; margin-top: 6px; }
+  meter { width: 100%; }
 </style>

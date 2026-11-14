@@ -14,6 +14,7 @@ import type {
   ProviderConnection,
   ProviderPreset,
   UsageSummary,
+  CatalogStatus,
 } from "./gateway.ts";
 
 export interface Workspace {
@@ -81,6 +82,11 @@ export interface Api {
   gatewaySettingsSet(settings: GatewaySettings): Promise<void>;
   gatewayTargets(): Promise<GatewayTarget[]>;
   usageSummary(days: number): Promise<UsageSummary>;
+  gatewayCatalogStatus(): Promise<CatalogStatus>;
+  /** Manual refresh only: downloads OpenRouter's public model list. */
+  gatewayCatalogRefresh(): Promise<CatalogStatus>;
+  gatewayCacheCount(): Promise<number>;
+  gatewayCacheClear(): Promise<number>;
 }
 
 const tauriApi: Api = {
@@ -119,6 +125,10 @@ const tauriApi: Api = {
   gatewaySettingsSet: (settings) => invoke("gateway_settings_set", { settings }),
   gatewayTargets: () => invoke("gateway_targets"),
   usageSummary: (days) => invoke("usage_summary", { days }),
+  gatewayCatalogStatus: () => invoke("gateway_catalog_status"),
+  gatewayCatalogRefresh: () => invoke("gateway_catalog_refresh"),
+  gatewayCacheCount: () => invoke("gateway_cache_count"),
+  gatewayCacheClear: () => invoke("gateway_cache_clear"),
 };
 
 export function inTauri(): boolean {

@@ -1,11 +1,21 @@
 // Ported from 9Router (MIT, © 2024-2026 decolua and contributors): open-sse/services/combo.js, open-sse/services/accountFallback.js @ 1855aa4
+// Ported from OmniRoute (MIT, © 2026 diegosouzapw): open-sse/services/combo/targetSorters.ts @ v3.8.53 (weighted, cost-optimized, lkgp, context-optimized)
 //! Combos (named model lists with a strategy), capability reordering and
 //! per-account cooldown with exponential backoff.
 //!
-//! Strategies: `fallback` (in order), `round-robin` (rotate the start,
-//! advancing after `sticky_limit` uses) and `smart` (a sticky model per
-//! session, see [`super::smart`]). 9Router's `fusion` is not ported.
+//! Strategies:
+//! - `fallback`: in order;
+//! - `round-robin`: rotate the start, advancing after `sticky_limit` uses;
+//! - `smart`: a sticky model per session (see [`super::smart`]);
+//! - `weighted`: random order drawn by each model's weight (default 1);
+//! - `cost-optimized`: cheapest input price first (unknown prices last);
+//! - `lkgp`: the last model that answered for this combo first;
+//! - `context-optimized`: largest context window first (unknown last).
+//!
+//! Not ported: 9Router's `fusion`; OmniRoute's `p2c`, `least-used` and
+//! `strict-random` (load balancing across many keys).
 
+use super::breaker::Breakers;
 use super::smart::{Sticky, DEFAULT_THRESHOLD};
 use crate::store::ComboRow;
 use serde::{Deserialize, Serialize};
@@ -22,6 +32,10 @@ pub enum Strategy {
     Fallback,
     RoundRobin,
     Smart,
+    Weighted,
+    CostOptimized,
+    Lkgp,
+    ContextOptimized,
 }
 
 impl Strategy {
@@ -31,6 +45,10 @@ impl Strategy {
             "fallback" => Some(Self::Fallback),
             "round-robin" => Some(Self::RoundRobin),
             "smart" => Some(Self::Smart),
+            "weighted" => Some(Self::Weighted),
+            "cost-optimized" => Some(Self::CostOptimized),
+            "lkgp" => Some(Self::Lkgp),
+            "context-optimized" => Some(Self::ContextOptimized),
             _ => None,
         }
     }
@@ -41,6 +59,10 @@ impl Strategy {
             Self::Fallback => "fallback",
             Self::RoundRobin => "round-robin",
             Self::Smart => "smart",
+            Self::Weighted => "weighted",
+            Self::CostOptimized => "cost-optimized",
+            Self::Lkgp => "lkgp",
+            Self::ContextOptimized => "context-optimized",
         }
     }
 }
@@ -57,6 +79,8 @@ pub struct Combo {
     pub sticky_limit: u32,
     /// Smart: switch when confidence drops below this (0..=1).
     pub confidence_threshold: f64,
+    /// Weighted: one weight per model (missing = 1).
+    pub weights: Vec<u32>,
 }
 
 impl Combo {
@@ -79,6 +103,11 @@ impl Combo {
                 .confidence_threshold
                 .filter(|t| (0.0..=1.0).contains(t))
                 .unwrap_or(DEFAULT_THRESHOLD),
+            weights: row
+                .weights
+                .as_deref()
+                .and_then(|w| serde_json::from_str(w).ok())
+                .unwrap_or_default(),
         })
     }
 }
@@ -98,16 +127,68 @@ pub fn rotate<T: Clone>(models: &[T], uses: u64, sticky_limit: u32) -> Vec<T> {
         .collect()
 }
 
+/// Weighted random order without replacement. `draw` returns values in
+/// `[0, 1)`; zero weights go last in their original order.
+#[must_use]
+pub fn weighted_order<T: Clone>(
+    items: &[T],
+    weights: &[u32],
+    mut draw: impl FnMut() -> f64,
+) -> Vec<T> {
+    let mut pool: Vec<(T, u32)> = items
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.clone(), weights.get(i).copied().unwrap_or(1)))
+        .collect();
+    let mut out = Vec::with_capacity(pool.len());
+    loop {
+        let total: u64 = pool.iter().map(|(_, w)| u64::from(*w)).sum();
+        if total == 0 {
+            break;
+        }
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss
+        )]
+        let mut pick = (draw().clamp(0.0, 0.999_999) * total as f64) as u64;
+        let index = pool
+            .iter()
+            .position(|(_, w)| {
+                if pick < u64::from(*w) {
+                    true
+                } else {
+                    pick -= u64::from(*w);
+                    false
+                }
+            })
+            .unwrap_or(0);
+        out.push(pool.remove(index).0);
+    }
+    out.extend(pool.into_iter().map(|(t, _)| t));
+    out
+}
+
+/// Stable sort by a key where `None` (unknown) goes last. The key is
+/// computed once per item (keys may be pricing lookups).
+pub fn sort_known<T, K: PartialOrd>(items: &mut Vec<T>, key: impl Fn(&T) -> Option<K>) {
+    let mut keyed: Vec<(Option<K>, T)> = items.drain(..).map(|t| (key(&t), t)).collect();
+    keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+        (Some(x), Some(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    items.extend(keyed.into_iter().map(|(_, t)| t));
+}
+
 /// Input kinds in the last user turn that need special model support.
 #[must_use]
 pub fn required_caps(openai: &Value) -> Vec<&'static str> {
-    let Some(last_user) = openai
+    let last_user = openai
         .get("messages")
         .and_then(Value::as_array)
-        .and_then(|m| m.iter().rev().find(|m| m["role"] == "user"))
-    else {
-        return Vec::new();
-    };
+        .and_then(|m| m.iter().rev().find(|m| m["role"] == "user"));
     let mut caps = Vec::new();
     let mut need = |cap: &'static str| {
         if !caps.contains(&cap) {
@@ -115,7 +196,7 @@ pub fn required_caps(openai: &Value) -> Vec<&'static str> {
         }
     };
     for part in last_user
-        .get("content")
+        .and_then(|m| m.get("content"))
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -139,6 +220,13 @@ pub fn required_caps(openai: &Value) -> Vec<&'static str> {
             Some("video_url" | "input_video") => need("video"),
             _ => {}
         }
+    }
+    if openai
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|t| !t.is_empty())
+    {
+        need("tools");
     }
     caps
 }
@@ -215,6 +303,39 @@ pub struct GatewayState {
     accounts: Mutex<HashMap<String, AccountState>>,
     uses: Mutex<HashMap<String, u64>>,
     sticky: Mutex<HashMap<(String, String), Sticky>>,
+    pub breakers: Breakers,
+    /// Combo → label of the model that last answered (`lkgp`).
+    last_good: Mutex<HashMap<String, String>>,
+    /// Tool-call id → `reasoning_details` to send back with it.
+    reasoning: Mutex<ReasoningMemory>,
+    rng: Mutex<u64>,
+}
+
+/// How many tool calls' reasoning blocks are remembered.
+const REASONING_MEMORY: usize = 512;
+
+/// Tool call (id, name, arguments) → `reasoning_details`; oldest evicted
+/// first. The name and arguments guard against made-up ids (`call_0`) that
+/// repeat across conversations.
+#[derive(Debug, Default)]
+struct ReasoningMemory {
+    entries: HashMap<String, Value>,
+    order: std::collections::VecDeque<String>,
+}
+
+/// Memory key of one tool call: OpenAI-shaped `{id, function: {name, arguments}}`.
+#[must_use]
+pub fn tool_call_key(call: &Value) -> Option<String> {
+    let id = call.get("id").and_then(Value::as_str)?;
+    let name = call
+        .pointer("/function/name")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let args = call
+        .pointer("/function/arguments")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    Some(format!("{id}\u{0}{name}\u{0}{args}"))
 }
 
 impl GatewayState {
@@ -224,6 +345,12 @@ impl GatewayState {
             policy,
             ..Self::default()
         }
+    }
+
+    #[must_use]
+    pub fn with_breaker_policy(mut self, policy: super::breaker::BreakerPolicy) -> Self {
+        self.breakers = Breakers::new(policy);
+        self
     }
 
     /// The app-wide state (cooldowns outlive single requests and tasks).
@@ -310,6 +437,107 @@ impl GatewayState {
         before
     }
 
+    /// A value in `[0, 1)` (xorshift seeded from the clock; tests can seed).
+    pub fn draw(&self) -> f64 {
+        let mut state = self.rng.lock().unwrap_or_else(PoisonError::into_inner);
+        if *state == 0 {
+            *state = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0x9E37_79B9_7F4A_7C15, |d| {
+                    u64::try_from(d.as_nanos() & u128::from(u64::MAX)).unwrap_or(1)
+                })
+                | 1;
+        }
+        let mut x = *state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *state = x;
+        #[allow(clippy::cast_precision_loss)]
+        let value = (x >> 11) as f64 / (1u64 << 53) as f64;
+        value
+    }
+
+    /// Seed the random draws (tests).
+    pub fn seed(&self, seed: u64) {
+        *self.rng.lock().unwrap_or_else(PoisonError::into_inner) = seed | 1;
+    }
+
+    #[must_use]
+    pub fn last_good(&self, combo: &str) -> Option<String> {
+        let map = self
+            .last_good
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        map.get(combo).cloned()
+    }
+
+    pub fn set_last_good(&self, combo: &str, label: &str) {
+        let mut map = self
+            .last_good
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        map.insert(combo.to_string(), label.to_string());
+    }
+
+    /// Keep `details` for the answer's tool calls (keys from
+    /// [`tool_call_key`]; the oldest are dropped beyond the limit).
+    pub fn remember_reasoning(&self, call_keys: &[String], details: &Value) {
+        let mut memory = self
+            .reasoning
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for key in call_keys {
+            if memory
+                .entries
+                .insert(key.clone(), details.clone())
+                .is_none()
+            {
+                memory.order.push_back(key.clone());
+            }
+        }
+        while memory.order.len() > REASONING_MEMORY {
+            if let Some(old) = memory.order.pop_front() {
+                memory.entries.remove(&old);
+            }
+        }
+    }
+
+    /// Put remembered `reasoning_details` back on assistant messages that
+    /// carry tool calls but lost them (the agent keeps only text and calls).
+    pub fn restore_reasoning(&self, body: &mut Value) {
+        let memory = self
+            .reasoning
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if memory.entries.is_empty() {
+            return;
+        }
+        for message in body
+            .get_mut("messages")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if message.get("reasoning_details").is_some() {
+                continue;
+            }
+            let found = message
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .and_then(|calls| {
+                    calls
+                        .iter()
+                        .filter_map(tool_call_key)
+                        .find_map(|key| memory.entries.get(&key))
+                })
+                .cloned();
+            if let Some(details) = found {
+                message["reasoning_details"] = details;
+            }
+        }
+    }
+
     /// Cached sticky choice of `session` for `combo`.
     #[must_use]
     pub fn sticky(&self, session: &str, combo: &str) -> Option<Sticky> {
@@ -340,6 +568,7 @@ mod tests {
             strategy: Some("round-robin".into()),
             sticky_limit: Some(0),
             confidence_threshold: None,
+            weights: None,
         })
         .expect("combo");
         assert_eq!(combo.models, ["a/x", "b/y"]);
@@ -422,5 +651,86 @@ mod tests {
         assert_eq!(state.cooldowns(), Vec::new());
         assert_eq!(state.next_use("k"), 0);
         assert_eq!(state.next_use("k"), 1);
+    }
+
+    #[test]
+    fn weighted_order_follows_the_draws_and_weights() {
+        let models = ["a", "b", "c"];
+        // Total 4 (a=1, b=3, c=0): 0.1·4 = 0 → a; then b; c (weight 0) last.
+        let mut draws = [0.1, 0.5].into_iter();
+        assert_eq!(
+            weighted_order(&models, &[1, 3, 0], || draws.next().unwrap_or(0.0)),
+            ["a", "b", "c"]
+        );
+        let mut draws = [0.5, 0.0].into_iter();
+        assert_eq!(
+            weighted_order(&models, &[1, 3, 0], || draws.next().unwrap_or(0.0)),
+            ["b", "a", "c"]
+        );
+        // Missing weights count as 1; heavier models lead more often.
+        let state = GatewayState::default();
+        state.seed(42);
+        let firsts = (0..400)
+            .filter(|_| weighted_order(&models, &[1, 9], || state.draw())[0] == "b")
+            .count();
+        assert!(firsts > 250, "b (weight 9 of 11) led {firsts}/400");
+    }
+
+    #[test]
+    fn unknown_values_sort_last() {
+        let mut prices = vec![
+            ("x", None),
+            ("cheap", Some(0.1)),
+            ("dear", Some(5.0)),
+            ("y", None),
+        ];
+        sort_known(&mut prices, |p| p.1);
+        assert_eq!(
+            prices.iter().map(|p| p.0).collect::<Vec<_>>(),
+            ["cheap", "dear", "x", "y"]
+        );
+        let mut context = vec![
+            ("small", Some(8_000u64)),
+            ("none", None),
+            ("big", Some(1_000_000)),
+        ];
+        sort_known(&mut context, |c| c.1.map(std::cmp::Reverse));
+        assert_eq!(
+            context.iter().map(|c| c.0).collect::<Vec<_>>(),
+            ["big", "small", "none"]
+        );
+    }
+
+    #[test]
+    fn reasoning_details_come_back_by_tool_call_id() {
+        let state = GatewayState::default();
+        let details = json!([{"type": "reasoning.text", "text": "t", "signature": "s"}]);
+        let call = |id: &str, args: &str| json!({"id": id, "function": {"name": "read", "arguments": args}});
+        let key = tool_call_key(&call("call_0", "{\"path\":\"a\"}")).expect("key");
+        state.remember_reasoning(&[key], &details);
+        let mut body = json!({"messages": [
+            {"role": "assistant", "tool_calls": [call("call_0", "{\"path\":\"a\"}")]},
+            {"role": "assistant", "tool_calls": [call("call_0", "{\"path\":\"b\"}")]},
+            {"role": "assistant", "tool_calls": [call("other", "{}")]},
+        ]});
+        state.restore_reasoning(&mut body);
+        assert_eq!(body["messages"][0]["reasoning_details"], details);
+        assert!(
+            body["messages"][1].get("reasoning_details").is_none(),
+            "same id, other call"
+        );
+        assert!(body["messages"][2].get("reasoning_details").is_none());
+        // Bounded: the oldest entries go first.
+        for i in 0..=REASONING_MEMORY {
+            state.remember_reasoning(&[format!("k{i}")], &details);
+        }
+        let memory = state.reasoning.lock().expect("lock");
+        assert_eq!(memory.entries.len(), REASONING_MEMORY);
+        assert!(
+            !memory.entries.contains_key("k0")
+                && memory.entries.contains_key(&format!("k{REASONING_MEMORY}"))
+        );
+        state.set_last_good("k", "a/x");
+        assert_eq!(state.last_good("k").as_deref(), Some("a/x"));
     }
 }

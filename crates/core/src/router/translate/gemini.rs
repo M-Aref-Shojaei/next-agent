@@ -162,9 +162,16 @@ pub fn request(openai: &Value) -> (Value, NameMap) {
                         .pointer("/function/arguments")
                         .and_then(Value::as_str)
                         .unwrap_or("{}");
-                    parts.push(
-                        json!({"functionCall": {"name": name, "args": parse_arguments(args)}}),
-                    );
+                    let mut part =
+                        json!({"functionCall": {"name": name, "args": parse_arguments(args)}});
+                    if let Some(signature) = call
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .and_then(|id| thought_signature(message, id))
+                    {
+                        part["thoughtSignature"] = json!(signature);
+                    }
+                    parts.push(part);
                 }
                 push_merged(&mut contents, "model", parts);
             }
@@ -313,6 +320,24 @@ fn usage(meta: &Value) -> Usage {
     }
 }
 
+/// `reasoning_details` format tag for Gemini thought signatures.
+pub const REASONING_FORMAT: &str = "google-gemini-v1";
+
+/// The thought signature Gemini attached to tool call `id`, kept in the
+/// assistant message's `reasoning_details` (it must be sent back unchanged).
+fn thought_signature<'a>(message: &'a Value, id: &str) -> Option<&'a str> {
+    message
+        .get("reasoning_details")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|d| {
+            d.get("format").and_then(Value::as_str) == Some(REASONING_FORMAT)
+                && d.get("id").and_then(Value::as_str) == Some(id)
+        })?
+        .get("data")
+        .and_then(Value::as_str)
+}
+
 /// Stream decoder; also used (one event) for whole responses.
 #[derive(Debug, Default)]
 pub struct GeminiDecoder {
@@ -382,13 +407,17 @@ impl StreamDecoder for GeminiDecoder {
                     .map_or_else(|| format!("call_{}", self.calls), str::to_string);
                 let id = self.unique_id(&wanted);
                 let args = call.get("args").cloned().unwrap_or_else(|| json!({}));
-                out.push(chunk(
-                    json!({"tool_calls": [{
-                        "index": self.calls, "id": id, "type": "function",
-                        "function": {"name": name, "arguments": args.to_string()},
-                    }]}),
-                    None,
-                ));
+                let mut delta = json!({"tool_calls": [{
+                    "index": self.calls, "id": id, "type": "function",
+                    "function": {"name": name, "arguments": args.to_string()},
+                }]});
+                if let Some(signature) = part.get("thoughtSignature").and_then(Value::as_str) {
+                    delta["reasoning_details"] = json!([{
+                        "type": "reasoning.encrypted", "format": REASONING_FORMAT,
+                        "id": id, "data": signature, "index": self.calls,
+                    }]);
+                }
+                out.push(chunk(delta, None));
                 self.calls += 1;
             }
         }
@@ -415,9 +444,16 @@ pub fn response(body: &Value, names: &NameMap) -> Value {
     let mut decoder = GeminiDecoder::new(names.clone());
     let mut acc = crate::llm::StreamAccumulator::new();
     let mut usage_value = Usage::default().to_openai();
+    let mut details = Vec::new();
     for piece in decoder.decode("", body).unwrap_or_default() {
         if let Some(u) = piece.get("usage") {
             usage_value = u.clone();
+        }
+        if let Some(found) = piece
+            .pointer("/choices/0/delta/reasoning_details")
+            .and_then(Value::as_array)
+        {
+            crate::router::reasoning::merge_details(&mut details, found);
         }
         let _ = acc.push(&piece);
     }
@@ -425,6 +461,9 @@ pub fn response(body: &Value, names: &NameMap) -> Value {
     let mut message = json!({"role": "assistant", "content": if done.content.is_empty() { Value::Null } else { json!(done.content) }});
     if !done.tool_calls.is_empty() {
         message["tool_calls"] = serde_json::to_value(&done.tool_calls).unwrap_or_default();
+    }
+    if !details.is_empty() {
+        message["reasoning_details"] = Value::Array(details);
     }
     json!({
         "object": "chat.completion",
@@ -542,5 +581,24 @@ mod tests {
         assert_eq!(finish_reason("MAX_TOKENS", false), "length");
         assert_eq!(finish_reason("SAFETY", true), "content_filter");
         assert_eq!(finish_reason("STOP", false), "stop");
+    }
+    #[test]
+    fn thought_signatures_round_trip_by_tool_call_id() {
+        let mut decoder = GeminiDecoder::new(NameMap::new());
+        let pieces = decoder
+            .decode("", &json!({"candidates": [{"content": {"parts": [
+                {"functionCall": {"id": "c1", "name": "read", "args": {}}, "thoughtSignature": "TS"}
+            ]}}]}))
+            .expect("decode");
+        let details = pieces[0]["choices"][0]["delta"]["reasoning_details"].clone();
+        assert_eq!(details[0]["id"], "c1");
+        assert_eq!(details[0]["data"], "TS");
+        let (body, _) = request(&json!({"messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": null, "reasoning_details": details,
+             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "ok"}
+        ]}));
+        assert_eq!(body["contents"][1]["parts"][0]["thoughtSignature"], "TS");
     }
 }
