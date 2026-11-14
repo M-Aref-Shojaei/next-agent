@@ -10,8 +10,10 @@
     onchange: BoardProps["onChange"];
     onready: (api: ExcalidrawImperativeAPI) => void;
     onerror?: (error: unknown) => void;
+    /** Runs synchronously before the canvas is unmounted: last chance to read the scene. */
+    onteardown?: () => void;
   }
-  let { scene, onchange, onready, onerror }: Props = $props();
+  let { scene, onchange, onready, onerror, onteardown }: Props = $props();
 
   let host: HTMLDivElement;
 
@@ -32,6 +34,7 @@
     return () => {
       cancelled = true;
       query.removeEventListener("change", onTheme);
+      onteardown?.();
       island?.destroy();
     };
   });

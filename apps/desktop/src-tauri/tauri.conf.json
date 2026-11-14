@@ -14,7 +14,7 @@
       { "title": "Next Agent", "width": 1280, "height": 800, "minWidth": 900, "minHeight": 560 }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
     }
   },
   "bundle": {

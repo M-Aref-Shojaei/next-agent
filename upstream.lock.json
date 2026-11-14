@@ -116,6 +116,14 @@
       "checked": "2026-11-14",
       "risk": "low"
     },
+    "react": {
+      "pin": "react 19.3.1 and react-dom 19.3.1 (exact, MIT)",
+      "licence": "MIT",
+      "adapter": "apps/desktop/src/lib/boards/excalidraw.ts",
+      "checked": "2026-11-14",
+      "risk": "low",
+      "role": "Runtime for the Excalidraw island; loaded lazily, only on the Boards route"
+    },
     "mermaid-to-excalidraw": {
       "pin": "@excalidraw/mermaid-to-excalidraw 3.6.0 (exact)",
       "licence": "MIT",

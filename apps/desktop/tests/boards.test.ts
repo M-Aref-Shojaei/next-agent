@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { createAutosaver } from "../src/lib/boards/autosave.ts";
+import { judgeSave } from "../src/lib/boards/guard.ts";
 import { mountIsland, type IslandRenderer } from "../src/lib/boards/island.ts";
 import { WIREFRAME_LIBRARY } from "../src/lib/boards/library.ts";
 import { placeAt, reId, validateSkeletons, type Skeleton } from "../src/lib/boards/skeleton.ts";
@@ -68,9 +69,9 @@ test("autosave debounces and writes only the latest value", async () => {
       save: async (v) => void saved.push(v),
       onStatus: (s) => statuses.push(s),
     });
-    saver.schedule(1);
+    saver.schedule(() => 1);
     mock.timers.tick(300);
-    saver.schedule(2);
+    saver.schedule(() => 2);
     mock.timers.tick(300);
     assert.deepEqual(saved, []);
     mock.timers.tick(300);
@@ -95,15 +96,15 @@ test("autosave flush saves immediately; cancel drops; errors are reported", asyn
     },
     onStatus: (s) => (lastStatus = s),
   });
-  saver.schedule(1);
+  saver.schedule(() => 1);
   await saver.flush();
   assert.deepEqual(saved, [1]);
-  saver.schedule(2);
+  saver.schedule(() => 2);
   saver.cancel();
   await saver.flush();
   assert.deepEqual(saved, [1]);
   fail = true;
-  saver.schedule(3);
+  saver.schedule(() => 3);
   await saver.flush();
   assert.equal(lastStatus, "error");
 });
@@ -168,4 +169,65 @@ test("placeAt centres a group; reId prefixes ids and references", () => {
   const ids = reId(group, "p1-");
   assert.equal(ids[2]!.start?.id, "p1-a");
   assert.deepEqual(validateSkeletons(ids), []);
+});
+
+test("flush captures the scene before the canvas is torn down (leave-within-debounce data loss)", async () => {
+  // Model of the bug: the canvas reads back empty once unmounted. The getter
+  // must run when flush() is called, not after the unmount that follows it.
+  const canvas = { mounted: true, elements: ["a", "b"] };
+  const read = () => (canvas.mounted ? canvas.elements.length : 0);
+  const written: number[] = [];
+  const saver = createAutosaver<number>({
+    delayMs: 800,
+    save: async (n) => {
+      await Promise.resolve(); // any await lets teardown run
+      written.push(n);
+    },
+  });
+  saver.schedule(read);
+  const flushed = saver.flush(); // component teardown: flush first…
+  canvas.mounted = false; // …then unmount
+  await flushed;
+  assert.deepEqual(written, [2]);
+});
+
+test("a flush while a save is in flight still captures the pending snapshot immediately", async () => {
+  let alive = true;
+  const written: (string | null)[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const saver = createAutosaver<string | null>({
+    delayMs: 0,
+    save: async (v) => {
+      if (written.length === 0) await gate;
+      written.push(v);
+    },
+  });
+  saver.schedule(() => "first");
+  const first = saver.flush(); // starts the in-flight save, blocked on the gate
+  saver.schedule(() => (alive ? "second" : null));
+  const second = saver.flush();
+  alive = false;
+  release();
+  await Promise.all([first, second]);
+  assert.deepEqual(written, ["first", "second"]);
+});
+
+test("save guard refuses an empty scene over content", () => {
+  const base = { diskHasContent: true, allowEmpty: false };
+  assert.equal(judgeSave(3, base), "save");
+  assert.equal(judgeSave(0, base), "empty-held");
+  assert.equal(judgeSave(0, { ...base, allowEmpty: true }), "save");
+  assert.equal(judgeSave(0, { ...base, diskHasContent: false }), "save");
+});
+
+test("a throwing snapshot getter is reported, not left pending", async () => {
+  let last = "";
+  const saver = createAutosaver<number>({ delayMs: 10_000, save: async () => {}, onStatus: (s) => (last = s) });
+  saver.schedule(() => {
+    throw new Error("disposed");
+  });
+  await saver.flush();
+  assert.equal(last, "error");
+  assert.equal(saver.pending, false);
 });

@@ -1,20 +1,26 @@
 //! Design boards: Excalidraw scenes stored in the vault as `boards/<name>.excalidraw`.
 //!
 //! Everything here works on a vault path so it is testable without a window.
-//! Writes are atomic (temp file + rename) and guarded by a revision token so a
-//! save never silently overwrites a file that changed on disk. Deleting moves a
-//! board to `<vault>/.trash/boards/`, never removes it.
+//! Writes are atomic (fsynced unique temp file + rename) and guarded by a
+//! revision token so a save never silently overwrites a file that changed on
+//! disk or resurrects one that was deleted. Creating, renaming and exporting
+//! never replace an existing file. Deleting moves a board to
+//! `<vault>/.trash/boards/`, never removes it. Symlinked `boards/`, `assets/`
+//! or `.trash/` directories and non-regular board files are refused, so a link
+//! planted in the vault cannot redirect reads or writes outside it.
 
 use base64::Engine;
 use serde::Serialize;
 use serde_json::Value;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
-const BOARDS_DIR: &str = "boards";
-const TRASH_DIR: &str = ".trash/boards";
-const ASSETS_DIR: &str = "assets";
+const BOARDS_DIR: &[&str] = &["boards"];
+const TRASH_DIR: &[&str] = &[".trash", "boards"];
+const ASSETS_DIR: &[&str] = &["assets"];
 const EXT: &str = "excalidraw";
 const MAX_NAME: usize = 100;
 const MAX_BOARD_BYTES: usize = 64 * 1024 * 1024;
@@ -46,10 +52,30 @@ pub struct BoardSketch {
     pub files: Value,
 }
 
-/// Validate a board or asset base name: no separators, no dots at the start.
+/// Names Windows reserves as devices, with or without an extension.
+fn is_reserved(stem: &str) -> bool {
+    let up = stem.trim_end().to_uppercase();
+    if matches!(
+        up.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    ["COM", "LPT"].iter().any(|p| {
+        up.strip_prefix(p).is_some_and(|d| {
+            matches!(
+                d,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
+    })
+}
+
+/// Validate a board or asset base name: no separators, no leading/trailing
+/// dots, no Windows reserved device names (also when followed by a dot part).
 ///
 /// # Errors
-/// Returns a message for empty, too long, hidden or path-like names.
+/// Returns a message for empty, too long, hidden, reserved or path-like names.
 pub fn validate_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() {
@@ -66,15 +92,52 @@ pub fn validate_name(name: &str) -> Result<String, String> {
     }) {
         return Err("board name contains characters that are not allowed".into());
     }
+    if is_reserved(name.split('.').next().unwrap_or(name)) {
+        return Err("board name is reserved by the operating system".into());
+    }
     Ok(name.to_string())
 }
 
-fn boards_dir(vault: &Path) -> PathBuf {
-    vault.join(BOARDS_DIR)
+/// Resolve `vault/<parts…>`, refusing any component that is a symlink or not a
+/// directory. With `create`, missing components are created. `Ok(None)` means
+/// it does not exist (only when not creating).
+fn real_dir(vault: &Path, parts: &[&str], create: bool) -> Result<Option<PathBuf>, String> {
+    let mut dir = vault.to_path_buf();
+    for part in parts {
+        dir.push(part);
+        match fs::symlink_metadata(&dir) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err(format!(
+                    "\"{part}\" in the vault is a symlink; refusing to use it"
+                ));
+            }
+            Ok(m) if !m.is_dir() => return Err(format!("\"{part}\" in the vault is not a folder")),
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                if !create {
+                    return Ok(None);
+                }
+                fs::create_dir(&dir).map_err(|e| e.to_string())?;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(Some(dir))
 }
 
-fn board_path(vault: &Path, name: &str) -> Result<PathBuf, String> {
-    Ok(boards_dir(vault).join(format!("{}.{EXT}", validate_name(name)?)))
+fn board_path(vault: &Path, name: &str, create_dir: bool) -> Result<PathBuf, String> {
+    let dir = real_dir(vault, BOARDS_DIR, create_dir)?.unwrap_or_else(|| vault.join("boards"));
+    Ok(dir.join(format!("{}.{EXT}", validate_name(name)?)))
+}
+
+/// Metadata of a regular file (not following symlinks), or `None` if absent.
+fn regular_meta(path: &Path) -> Result<Option<fs::Metadata>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.is_file() => Ok(Some(m)),
+        Ok(_) => Err("not a regular file; refusing to use it".into()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 fn revision_of(meta: &fs::Metadata) -> String {
@@ -98,17 +161,82 @@ fn validate_scene(content: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Write `bytes` to `path` via a temp file in the same directory, then rename.
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let dir = path.parent().ok_or("path has no parent")?;
-    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Write `bytes` to a fresh uniquely named temp file next to `path`, fsynced.
+fn write_tmp(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::other("path has no parent"))?;
     let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-    let tmp = dir.join(format!(".{file}.{}.tmp", std::process::id()));
-    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{file}.{}.{n}.tmp", std::process::id()));
+    let result = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .and_then(|mut f| {
+            f.write_all(bytes)?;
+            f.sync_all()
+        });
+    match result {
+        Ok(()) => Ok(tmp),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// Best effort: persist the rename itself.
+fn sync_dir(path: &Path) {
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        if let Ok(d) = fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// Replace `path` atomically (fsynced temp file + rename).
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = write_tmp(path, bytes).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         e.to_string()
-    })
+    })?;
+    sync_dir(path);
+    Ok(())
+}
+
+/// Move `src` to `dst` without ever replacing `dst`. A hard link is atomic and
+/// fails with `AlreadyExists`; where links are unsupported, fall back to a
+/// check followed by a rename.
+fn no_replace_rename(src: &Path, dst: &Path) -> io::Result<()> {
+    match fs::hard_link(src, dst) {
+        Ok(()) => fs::remove_file(src),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
+        Err(_) => {
+            if fs::symlink_metadata(dst).is_ok() {
+                return Err(io::ErrorKind::AlreadyExists.into());
+            }
+            fs::rename(src, dst)
+        }
+    }
+}
+
+/// Create `path` with `bytes`, failing with `AlreadyExists` instead of replacing.
+fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let tmp = write_tmp(path, bytes)?;
+    let result = no_replace_rename(&tmp, path);
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    } else {
+        sync_dir(path);
+    }
+    result
 }
 
 /// The scene a new board starts with.
@@ -120,12 +248,11 @@ pub fn empty_scene() -> String {
 /// List boards, newest first.
 ///
 /// # Errors
-/// Returns a message on I/O failure.
+/// Returns a message on I/O failure or if `boards/` is a symlink.
 pub fn list(vault: &Path) -> Result<Vec<BoardMeta>, String> {
-    let dir = boards_dir(vault);
-    if !dir.is_dir() {
+    let Some(dir) = real_dir(vault, BOARDS_DIR, false)? else {
         return Ok(Vec::new());
-    }
+    };
     let mut boards = Vec::new();
     for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -139,6 +266,7 @@ pub fn list(vault: &Path) -> Result<Vec<BoardMeta>, String> {
         if stem.starts_with('.') {
             continue;
         }
+        // `DirEntry::metadata` does not follow symlinks.
         let meta = entry.metadata().map_err(|e| e.to_string())?;
         if !meta.is_file() {
             continue;
@@ -167,23 +295,31 @@ pub fn list(vault: &Path) -> Result<Vec<BoardMeta>, String> {
 /// # Errors
 /// Returns a message if the name is invalid, taken, or the scene is invalid.
 pub fn create(vault: &Path, name: &str, scene: Option<&str>) -> Result<BoardDoc, String> {
-    let path = board_path(vault, name)?;
-    if path.exists() {
-        return Err(format!("a board named \"{}\" already exists", name.trim()));
-    }
+    let path = board_path(vault, name, true)?;
     let content = scene.map_or_else(empty_scene, str::to_string);
     validate_scene(&content)?;
-    atomic_write(&path, content.as_bytes())?;
+    write_new(&path, content.as_bytes()).map_err(|e| {
+        if e.kind() == io::ErrorKind::AlreadyExists {
+            format!("a board named \"{}\" already exists", name.trim())
+        } else {
+            e.to_string()
+        }
+    })?;
     open(vault, name)
 }
 
 /// Read a board.
 ///
 /// # Errors
-/// Returns a message if the board does not exist or cannot be read.
+/// Returns a message if the board does not exist, is not a regular file, is
+/// too large, or cannot be read.
 pub fn open(vault: &Path, name: &str) -> Result<BoardDoc, String> {
-    let path = board_path(vault, name)?;
-    let meta = fs::metadata(&path).map_err(|_| format!("board \"{}\" not found", name.trim()))?;
+    let path = board_path(vault, name, false)?;
+    let meta =
+        regular_meta(&path)?.ok_or_else(|| format!("board \"{}\" not found", name.trim()))?;
+    if meta.len() > MAX_BOARD_BYTES as u64 {
+        return Err("board is too large".into());
+    }
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     Ok(BoardDoc {
         name: validate_name(name)?,
@@ -193,8 +329,8 @@ pub fn open(vault: &Path, name: &str) -> Result<BoardDoc, String> {
 }
 
 /// Save a board atomically. When `base_revision` is given and the file on disk
-/// has a different revision, the save is refused with a `conflict:` error and
-/// nothing is written. Returns the new revision.
+/// has a different revision, or is gone, the save is refused with a
+/// `conflict:` error and nothing is written. Returns the new revision.
 ///
 /// # Errors
 /// Returns a message on invalid input, conflict, or I/O failure.
@@ -205,34 +341,57 @@ pub fn save(
     base_revision: Option<&str>,
 ) -> Result<String, String> {
     validate_scene(content)?;
-    let path = board_path(vault, name)?;
-    if let (Some(base), Ok(meta)) = (base_revision, fs::metadata(&path)) {
-        if revision_of(&meta) != base {
-            return Err(format!(
-                "conflict: board \"{}\" changed on disk since it was opened",
-                name.trim()
-            ));
+    let path = board_path(vault, name, true)?;
+    let current = regular_meta(&path)?;
+    if let Some(base) = base_revision {
+        match &current {
+            None => {
+                return Err(format!(
+                    "conflict: deleted: board \"{}\" no longer exists on disk",
+                    name.trim()
+                ));
+            }
+            Some(meta) if revision_of(meta) != base => {
+                return Err(format!(
+                    "conflict: board \"{}\" changed on disk since it was opened",
+                    name.trim()
+                ));
+            }
+            Some(_) => {}
         }
     }
     atomic_write(&path, content.as_bytes())?;
-    let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
+    let meta = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
     Ok(revision_of(&meta))
 }
 
-/// Rename a board. Fails if the target exists.
+/// Rename a board. Fails if the target exists. A change of letter case only is
+/// allowed even on case-insensitive filesystems.
 ///
 /// # Errors
 /// Returns a message if the source is missing or the target exists.
 pub fn rename(vault: &Path, from: &str, to: &str) -> Result<BoardMeta, String> {
-    let src = board_path(vault, from)?;
-    let dst = board_path(vault, to)?;
-    if !src.is_file() {
+    let src = board_path(vault, from, false)?;
+    let dst = board_path(vault, to, false)?;
+    if regular_meta(&src)?.is_none() {
         return Err(format!("board \"{}\" not found", from.trim()));
     }
-    if dst.exists() {
-        return Err(format!("a board named \"{}\" already exists", to.trim()));
+    let exists = |e: &io::Error| e.kind() == io::ErrorKind::AlreadyExists;
+    let taken = || format!("a board named \"{}\" already exists", to.trim());
+    if from.trim().to_lowercase() == to.trim().to_lowercase() {
+        // Same file on a case-insensitive filesystem: a plain rename is the
+        // only way; on a case-sensitive one a distinct file must not be replaced.
+        if from.trim() != to.trim() {
+            let same_file = fs::canonicalize(&src).ok() == fs::canonicalize(&dst).ok();
+            if regular_meta(&dst)?.is_some() && !same_file {
+                return Err(taken());
+            }
+            fs::rename(&src, &dst).map_err(|e| e.to_string())?;
+        }
+    } else {
+        no_replace_rename(&src, &dst)
+            .map_err(|e| if exists(&e) { taken() } else { e.to_string() })?;
     }
-    fs::rename(&src, &dst).map_err(|e| e.to_string())?;
     list(vault)?
         .into_iter()
         .find(|b| b.name == to.trim())
@@ -245,25 +404,32 @@ pub fn rename(vault: &Path, from: &str, to: &str) -> Result<BoardMeta, String> {
 /// # Errors
 /// Returns a message if the board is missing or cannot be moved.
 pub fn delete(vault: &Path, name: &str) -> Result<String, String> {
-    let src = board_path(vault, name)?;
-    if !src.is_file() {
+    let src = board_path(vault, name, false)?;
+    if regular_meta(&src)?.is_none() {
         return Err(format!("board \"{}\" not found", name.trim()));
     }
-    let trash = vault.join(TRASH_DIR);
-    fs::create_dir_all(&trash).map_err(|e| e.to_string())?;
+    let trash = real_dir(vault, TRASH_DIR, true)?.ok_or("cannot create trash folder")?;
     let stamp = std::time::SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
     let base = validate_name(name)?;
-    let mut target = trash.join(format!("{base}-{stamp}.{EXT}"));
-    let mut n = 1;
-    while target.exists() {
-        target = trash.join(format!("{base}-{stamp}-{n}.{EXT}"));
-        n += 1;
+    let mut n = 0;
+    loop {
+        let suffix = if n == 0 {
+            String::new()
+        } else {
+            format!("-{n}")
+        };
+        let target = trash.join(format!("{base}-{stamp}{suffix}.{EXT}"));
+        match no_replace_rename(&src, &target) {
+            Ok(()) => {
+                let relative = target.strip_prefix(vault).unwrap_or(&target);
+                return Ok(relative.display().to_string());
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e.to_string()),
+        }
     }
-    fs::rename(&src, &target).map_err(|e| e.to_string())?;
-    let relative = target.strip_prefix(vault).unwrap_or(&target);
-    Ok(relative.display().to_string())
 }
 
 /// Live (non-deleted) elements and embedded files of a board, for the Design Studio.
@@ -307,16 +473,24 @@ pub fn export_asset(vault: &Path, name: &str, ext: &str, data: &str) -> Result<S
     if ext == "png" && !bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
         return Err("data is not a PNG".into());
     }
-    let dir = vault.join(ASSETS_DIR);
-    let mut target = dir.join(format!("{base}.{ext}"));
-    let mut n = 1;
-    while target.exists() {
-        target = dir.join(format!("{base}-{n}.{ext}"));
-        n += 1;
+    let dir = real_dir(vault, ASSETS_DIR, true)?.ok_or("cannot create assets folder")?;
+    let mut n = 0;
+    loop {
+        let suffix = if n == 0 {
+            String::new()
+        } else {
+            format!("-{n}")
+        };
+        let target = dir.join(format!("{base}{suffix}.{ext}"));
+        match write_new(&target, &bytes) {
+            Ok(()) => {
+                let relative = target.strip_prefix(vault).unwrap_or(&target);
+                return Ok(relative.display().to_string());
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e.to_string()),
+        }
     }
-    atomic_write(&target, &bytes)?;
-    let relative = target.strip_prefix(vault).unwrap_or(&target);
-    Ok(relative.display().to_string())
 }
 
 #[cfg(test)]
@@ -453,5 +627,153 @@ mod tests {
         assert!(export_asset(v.path(), "x", "png", "bm90LXBuZw==").is_err());
         assert!(export_asset(v.path(), "x", "exe", "").is_err());
         assert!(export_asset(v.path(), "../x", "svg", "").is_err());
+    }
+
+    #[test]
+    fn reserved_windows_names_are_rejected() {
+        for bad in [
+            "CON",
+            "con",
+            "Prn",
+            "AUX",
+            "nul",
+            "COM1",
+            "com9",
+            "LPT1",
+            "lpt9",
+            "CON.txt",
+            "aux.tar.gz",
+            "NUL.x",
+            "con .y",
+            "COM¹",
+        ] {
+            assert!(validate_name(bad).is_err(), "{bad:?} should be rejected");
+        }
+        for ok in [
+            "COM10",
+            "CONSOLE",
+            "console.log",
+            "LPT0",
+            "my.con",
+            "Flow CON",
+        ] {
+            assert!(validate_name(ok).is_ok(), "{ok:?} should be accepted");
+        }
+        let v = vault();
+        assert!(create(v.path(), "NUL", None).is_err());
+        assert!(export_asset(v.path(), "COM1", "svg", "<svg/>").is_err());
+        assert!(export_asset(v.path(), "aux.v2", "svg", "<svg/>").is_err());
+    }
+
+    #[test]
+    fn save_with_a_base_revision_never_resurrects_a_deleted_board() {
+        let v = vault();
+        let doc = create(v.path(), "a", None).expect("create");
+        delete(v.path(), "a").expect("delete");
+        let err = save(v.path(), "a", &empty_scene(), Some(&doc.revision)).expect_err("deleted");
+        assert!(err.starts_with("conflict: deleted"), "{err}");
+        assert!(!v.path().join("boards/a.excalidraw").exists());
+        // An explicit overwrite (no base revision) still creates it.
+        assert!(save(v.path(), "a", &empty_scene(), None).is_ok());
+    }
+
+    #[test]
+    fn create_and_export_never_clobber() {
+        let v = vault();
+        let path = v.path().join("boards/x.excalidraw");
+        fs::create_dir_all(v.path().join("boards")).expect("dir");
+        write_new(&path, b"one").expect("first");
+        let err = write_new(&path, b"two").expect_err("exists");
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&path).expect("read"), b"one");
+        let leftovers = fs::read_dir(v.path().join("boards"))
+            .expect("dir")
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(leftovers, 0);
+        // Rename onto an existing board is refused and keeps both files.
+        create(v.path(), "a", None).expect("a");
+        create(
+            v.path(),
+            "b",
+            Some(&empty_scene().replace("[]", "[{\"id\":\"b\"}]")),
+        )
+        .expect("b");
+        assert!(rename(v.path(), "a", "b").is_err());
+        assert!(open(v.path(), "b")
+            .expect("b")
+            .content
+            .contains("\"id\":\"b\""));
+    }
+
+    #[test]
+    fn temp_names_are_unique() {
+        let v = vault();
+        let p = v.path().join("f.txt");
+        let a = write_tmp(&p, b"1").expect("a");
+        let b = write_tmp(&p, b"2").expect("b");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn case_only_rename_works() {
+        let v = vault();
+        create(v.path(), "flow", None).expect("create");
+        let meta = rename(v.path(), "flow", "Flow").expect("case rename");
+        assert_eq!(meta.name, "Flow");
+        assert_eq!(list(v.path()).expect("list").len(), 1);
+        assert!(open(v.path(), "Flow").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_are_refused() {
+        use std::os::unix::fs::symlink;
+        let v = vault();
+        let outside = tempfile::tempdir().expect("outside");
+        fs::write(outside.path().join("secret.excalidraw"), empty_scene()).expect("write");
+
+        // A symlinked boards/ folder.
+        symlink(outside.path(), v.path().join("boards")).expect("link");
+        assert!(list(v.path()).is_err());
+        assert!(create(v.path(), "x", None).is_err());
+        assert!(open(v.path(), "secret").is_err());
+        assert!(!outside.path().join("x.excalidraw").exists());
+        fs::remove_file(v.path().join("boards")).expect("unlink");
+
+        // A symlinked board file.
+        fs::create_dir(v.path().join("boards")).expect("dir");
+        symlink(
+            outside.path().join("secret.excalidraw"),
+            v.path().join("boards/s.excalidraw"),
+        )
+        .expect("link");
+        assert!(open(v.path(), "s").is_err());
+        assert!(save(v.path(), "s", &empty_scene(), None).is_err());
+        assert!(delete(v.path(), "s").is_err());
+        assert_eq!(list(v.path()).expect("list").len(), 0);
+
+        // Symlinked assets/ and .trash/.
+        symlink(outside.path(), v.path().join("assets")).expect("link");
+        assert!(export_asset(v.path(), "f", "svg", "<svg/>").is_err());
+        create(v.path(), "t", None).expect("t");
+        fs::create_dir(v.path().join(".trash")).expect("dir");
+        symlink(outside.path(), v.path().join(".trash/boards")).expect("link");
+        assert!(delete(v.path(), "t").is_err());
+        assert!(v.path().join("boards/t.excalidraw").is_file());
+        assert_eq!(fs::read_dir(outside.path()).expect("dir").count(), 1);
+    }
+
+    #[test]
+    fn oversized_boards_are_not_opened() {
+        let v = vault();
+        create(v.path(), "big", None).expect("create");
+        let f = fs::OpenOptions::new()
+            .write(true)
+            .open(v.path().join("boards/big.excalidraw"))
+            .expect("open");
+        f.set_len(MAX_BOARD_BYTES as u64 + 1).expect("sparse");
+        assert!(open(v.path(), "big").is_err());
     }
 }
