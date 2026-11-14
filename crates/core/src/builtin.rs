@@ -229,6 +229,15 @@ impl BuiltinExecutor {
         self
     }
 
+    /// Put `profile` above the task's own profile in the chain, so it can
+    /// only tighten: tools it denies are not offered and every call carries
+    /// its floor. Subagents inherit it. Used for channel tasks.
+    #[must_use]
+    pub fn with_ancestor_profile(mut self, profile: AgentProfile) -> Self {
+        self.ancestors.push(profile);
+        self
+    }
+
     /// Profiles available to the `subagent` tool (default: the built-ins).
     /// Use [`profiles::load_profiles`] to include the workspace's files.
     #[must_use]

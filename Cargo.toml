@@ -6,6 +6,7 @@ members = [
   "crates/process-manager",
   "crates/graph",
   "crates/macos-panel",
+  "crates/channels",
   "apps/desktop/src-tauri",
 ]
 

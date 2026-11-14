@@ -112,6 +112,7 @@ pub struct ChannelApprover {
     control: Arc<TaskControl>,
     events: Emitter,
     poll: Duration,
+    timeout: Option<Duration>,
 }
 
 impl ChannelApprover {
@@ -121,7 +122,17 @@ impl ChannelApprover {
             control,
             events,
             poll: Duration::from_millis(25),
+            timeout: None,
         }
+    }
+
+    /// Deny an approval nobody answered within `timeout` (resolved `by`
+    /// `timeout`). Used for channel tasks: no answer from the desktop or the
+    /// overlay means no.
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -142,14 +153,21 @@ impl Approver for ChannelApprover {
                 .map(|choice| choice.as_str().to_string())
                 .collect(),
         });
+        let deadline = self.timeout.map(|t| std::time::Instant::now() + t);
         let (choice, by) = loop {
             match receiver.recv_timeout(self.poll) {
                 Ok(choice) => break (choice, "user"),
-                Err(RecvTimeoutError::Timeout) if !self.control.is_cancelled() => {}
-                Err(RecvTimeoutError::Timeout) => {
+                Err(RecvTimeoutError::Timeout) if self.control.is_cancelled() => {
                     self.control.unregister(&approval_id);
                     break (Approval::Deny, "cancel");
                 }
+                Err(RecvTimeoutError::Timeout)
+                    if deadline.is_some_and(|d| std::time::Instant::now() >= d) =>
+                {
+                    self.control.unregister(&approval_id);
+                    break (Approval::Deny, "timeout");
+                }
+                Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break (Approval::Deny, "system"),
             }
         };
@@ -181,6 +199,9 @@ pub struct TaskOptions {
     /// Capture the work tree before each mutating step (per-step undo, see
     /// [`crate::snapshot`]).
     pub snapshots: Option<Box<dyn StepSnapshots + Send>>,
+    /// Deny approvals nobody answers within this time (channel tasks).
+    /// `None` waits until answered or cancelled.
+    pub approval_timeout: Option<Duration>,
 }
 
 /// A running task. Dropping the handle does not cancel the task.
@@ -294,7 +315,10 @@ fn run_launch(
     let mut broker = SqliteBroker::new(&store, mode, context)
         .for_task(task_id.clone())
         .with_boxed_executor(tools)
-        .with_approver(ChannelApprover::new(Arc::clone(control), events.clone()));
+        .with_approver(
+            ChannelApprover::new(Arc::clone(control), events.clone())
+                .with_timeout(options.approval_timeout),
+        );
     if let Some(snapshots) = options.snapshots {
         broker = broker.with_snapshots(snapshots);
     }
@@ -375,6 +399,26 @@ mod tests {
         assert_eq!(approver.approve("c9", &request, "r"), Approval::Deny);
         assert_eq!(collector.events()[1].data()["by"], "cancel");
         assert_eq!(control.pending_approvals(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn unanswered_approval_times_out_as_deny() {
+        let control = TaskControl::new();
+        let collector = Collector::new();
+        let events = Emitter::new(TaskId::from_seed("ap3")).with_sink(collector.clone());
+        let mut approver = ChannelApprover::new(Arc::clone(&control), events)
+            .with_timeout(Some(Duration::from_millis(60)));
+        let request = ToolRequest::Write {
+            path: "/w/a".into(),
+            contents: "x".into(),
+        };
+        assert_eq!(approver.approve("c4", &request, "r"), Approval::Deny);
+        let resolved = collector.events()[1].data();
+        assert_eq!(resolved["choice"], "deny");
+        assert_eq!(resolved["by"], "timeout");
+        assert_eq!(control.pending_approvals(), Vec::<String>::new());
+        // A late answer finds nothing waiting.
+        assert!(control.respond("apr_c4", Approval::Allow).is_err());
     }
 
     #[test]
