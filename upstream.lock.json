@@ -68,12 +68,12 @@
       "role": "notes engine crate"
     },
     "excalidraw": {
-      "pin": "@excalidraw/excalidraw (pin exact version when adding)",
+      "pin": "@excalidraw/excalidraw 0.18.1 (exact; react/react-dom 19.3.1)",
       "licence": "MIT",
-      "adapter": "apps/desktop",
+      "adapter": "apps/desktop/src/lib/boards/excalidraw.ts",
       "checked": "2026-11-14",
       "risk": "low",
-      "role": "apps/desktop design board"
+      "role": "Design board (boards/*.excalidraw)"
     },
     "open-design": {
       "pin": "main (pin exact commit when porting)",
@@ -98,6 +98,14 @@
       "role": "Design Studio: HTML to framework",
       "checked": "2026-11-14",
       "risk": "low"
+    },
+    "mermaid-to-excalidraw": {
+      "pin": "@excalidraw/mermaid-to-excalidraw 3.6.0 (exact)",
+      "licence": "MIT",
+      "adapter": "apps/desktop/src/lib/boards/excalidraw.ts",
+      "checked": "2026-11-14",
+      "risk": "low",
+      "role": "Mermaid import onto the Design board"
     }
   }
 }

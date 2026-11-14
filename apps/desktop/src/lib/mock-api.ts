@@ -1,5 +1,5 @@
 // In-memory stand-in for the Rust commands, used outside Tauri.
-import type { Api, Workspace } from "./api.ts";
+import type { Api, BoardDoc, Workspace } from "./api.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 
 const workspaces: Workspace[] = [];
@@ -7,6 +7,25 @@ const settings = new Map<string, string>([["router.url", "http://127.0.0.1:20128
 let vault: string | null = null;
 const waiting = new Map<string, (choice: ApprovalChoice) => void>();
 let counter = 0;
+
+const EMPTY_SCENE = JSON.stringify({ type: "excalidraw", version: 2, source: "next-agent", elements: [], appState: {}, files: {} });
+const boards = new Map<string, { content: string; rev: number; modifiedMs: number }>();
+const trash: string[] = [];
+const assets = new Map<string, string>();
+
+function boardName(raw: string): string {
+  const name = raw.trim();
+  if (!name || /[/\\:*?"<>|]/.test(name) || name.startsWith(".") || name.endsWith(".")) throw `invalid board name: ${raw}`;
+  return name;
+}
+function boardDoc(name: string): BoardDoc {
+  const b = boards.get(name);
+  if (!b) throw `board "${name}" not found`;
+  return { name, content: b.content, revision: String(b.rev) };
+}
+function requireVault() {
+  if (vault === null) throw "no vault configured: set a vault folder in Settings first";
+}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -124,5 +143,66 @@ export const mockApi: Api = {
   },
   async onRouterHealth() {
     return () => {};
+  },
+  async boardList() {
+    requireVault();
+    return [...boards.entries()]
+      .map(([name, b]) => ({ name, modifiedMs: b.modifiedMs, size: b.content.length }))
+      .sort((a, b) => b.modifiedMs - a.modifiedMs || a.name.localeCompare(b.name));
+  },
+  async boardCreate(name, scene) {
+    requireVault();
+    const n = boardName(name);
+    if (boards.has(n)) throw `a board named "${n}" already exists`;
+    boards.set(n, { content: scene ?? EMPTY_SCENE, rev: 1, modifiedMs: Date.now() });
+    return boardDoc(n);
+  },
+  async boardOpen(name) {
+    requireVault();
+    return boardDoc(boardName(name));
+  },
+  async boardSave(name, content, baseRevision) {
+    requireVault();
+    const n = boardName(name);
+    const b = boards.get(n);
+    if (b && baseRevision !== undefined && baseRevision !== String(b.rev)) {
+      throw `conflict: board "${n}" changed on disk since it was opened`;
+    }
+    const rev = (b?.rev ?? 0) + 1;
+    boards.set(n, { content, rev, modifiedMs: Date.now() });
+    return String(rev);
+  },
+  async boardRename(from, to) {
+    requireVault();
+    const f = boardName(from);
+    const t = boardName(to);
+    const b = boards.get(f);
+    if (!b) throw `board "${f}" not found`;
+    if (boards.has(t)) throw `a board named "${t}" already exists`;
+    boards.delete(f);
+    boards.set(t, b);
+    return { name: t, modifiedMs: b.modifiedMs, size: b.content.length };
+  },
+  async boardDelete(name) {
+    requireVault();
+    const n = boardName(name);
+    const b = boards.get(n);
+    if (!b) throw `board "${n}" not found`;
+    boards.delete(n);
+    const path = `.trash/boards/${n}-${Date.now()}.excalidraw`;
+    trash.push(path);
+    return path;
+  },
+  async boardSketch(name) {
+    requireVault();
+    const scene = JSON.parse(boardDoc(boardName(name)).content) as { elements?: { isDeleted?: boolean }[]; files?: unknown };
+    return { name, elements: (scene.elements ?? []).filter((e) => !e.isDeleted), files: scene.files ?? null };
+  },
+  async boardExport(name, ext, data) {
+    requireVault();
+    let path = `assets/${boardName(name)}.${ext}`;
+    for (let i = 1; assets.has(path); i += 1) path = `assets/${boardName(name)}-${i}.${ext}`;
+    assets.set(path, data);
+    return path;
   },
 };

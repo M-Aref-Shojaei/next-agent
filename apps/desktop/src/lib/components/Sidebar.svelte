@@ -39,7 +39,8 @@
       <li class="muted">No tasks yet</li>
     {/each}
   </ul>
-  <a class="settings" href="/settings">Settings</a>
+  <a class="settings" href="/boards">Boards</a>
+  <a href="/settings">Settings</a>
 </nav>
 
 <style>
@@ -52,4 +53,5 @@
   .s { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
   .s.running { background: var(--info); } .s.completed { background: var(--ok); } .s.failed { background: var(--danger); }
   .settings { margin-top: auto; color: var(--accent); }
+  nav > a { color: var(--accent); }
 </style>

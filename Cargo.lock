@@ -2350,6 +2350,7 @@ dependencies = [
 name = "next-agent-desktop"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "next-agent-core",
  "next-agent-permission-engine",
  "next-agent-process-manager",

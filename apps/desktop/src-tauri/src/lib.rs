@@ -1,5 +1,6 @@
 //! Tauri 2 shell for Next Agent.
 
+pub mod boards;
 pub mod commands;
 pub mod review;
 pub mod service;
@@ -47,6 +48,14 @@ pub fn run() {
             commands::approval_respond,
             commands::review_action,
             commands::router_health,
+            commands::board_list,
+            commands::board_create,
+            commands::board_open,
+            commands::board_save,
+            commands::board_rename,
+            commands::board_delete,
+            commands::board_sketch,
+            commands::board_export,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Agent");

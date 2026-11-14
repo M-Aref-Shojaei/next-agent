@@ -36,6 +36,22 @@ export interface ReviewOutcome {
   files: string[];
 }
 
+export interface BoardMeta {
+  name: string;
+  modifiedMs: number;
+  size: number;
+}
+export interface BoardDoc {
+  name: string;
+  content: string;
+  revision: string;
+}
+export interface BoardSketchData {
+  name: string;
+  elements: unknown[];
+  files: unknown;
+}
+
 export interface Api {
   workspaceOpen(path: string): Promise<Workspace>;
   workspaceList(): Promise<Workspace[]>;
@@ -58,6 +74,17 @@ export interface Api {
   routerHealth(): Promise<RouterHealthReport | null>;
   /** Subscribe to router status changes; returns an unsubscribe function. */
   onRouterHealth(callback: (report: RouterHealthReport) => void): Promise<() => void>;
+  // Design boards: vault `boards/*.excalidraw`. Save errors starting with "conflict:" mean the file changed on disk.
+  boardList(): Promise<BoardMeta[]>;
+  boardCreate(name: string, scene?: string): Promise<BoardDoc>;
+  boardOpen(name: string): Promise<BoardDoc>;
+  boardSave(name: string, content: string, baseRevision?: string): Promise<string>;
+  boardRename(from: string, to: string): Promise<BoardMeta>;
+  /** Moves the board to the vault trash; returns the trash path. */
+  boardDelete(name: string): Promise<string>;
+  boardSketch(name: string): Promise<BoardSketchData>;
+  /** `data` is base64 for png, text for svg. Returns the vault-relative path. */
+  boardExport(name: string, ext: "png" | "svg", data: string): Promise<string>;
 }
 
 const tauriApi: Api = {
@@ -80,6 +107,15 @@ const tauriApi: Api = {
     invoke("approval_respond", { taskId, approvalId, choice }),
   reviewAction: (taskId, action) => invoke("review_action", { taskId, action }),
   routerHealth: () => invoke("router_health"),
+  boardList: () => invoke("board_list"),
+  boardCreate: (name, scene) => invoke("board_create", { name, scene: scene ?? null }),
+  boardOpen: (name) => invoke("board_open", { name }),
+  boardSave: (name, content, baseRevision) =>
+    invoke("board_save", { name, content, baseRevision: baseRevision ?? null }),
+  boardRename: (from, to) => invoke("board_rename", { from, to }),
+  boardDelete: (name) => invoke("board_delete", { name }),
+  boardSketch: (name) => invoke("board_sketch", { name }),
+  boardExport: (name, ext, data) => invoke("board_export", { name, ext, data }),
   onRouterHealth: (callback) =>
     listen<RouterHealthReport | null>("router-health", (event) => {
       if (event.payload) callback(event.payload);
