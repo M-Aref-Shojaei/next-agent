@@ -126,3 +126,15 @@ test("parses the golden journal written by Rust", () => {
     { page, status: "done", mode: "auto" },
   ]);
 });
+
+import { snippetParts } from "../src/index.ts";
+
+test("search snippets split on the engine's match markers", () => {
+  assert.deepEqual(snippetParts("…the spice must flow"), [
+    { text: "…the ", match: false },
+    { text: "spice", match: true },
+    { text: " must ", match: false },
+    { text: "flow", match: true },
+  ]);
+  assert.deepEqual(snippetParts("<b>no markup</b>"), [{ text: "<b>no markup</b>", match: false }]);
+});

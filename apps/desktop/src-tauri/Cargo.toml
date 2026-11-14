@@ -23,6 +23,7 @@ serde_json = "1"
 next-agent-core = { path = "../../../crates/core" }
 next-agent-permission-engine = { path = "../../../crates/permission-engine" }
 next-agent-process-manager = { path = "../../../crates/process-manager" }
+next-agent-graph = { path = "../../../crates/graph" }
 tokio = { version = "1", features = ["sync", "macros"] }
 
 [dev-dependencies]

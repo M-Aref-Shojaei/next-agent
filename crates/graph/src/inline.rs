@@ -56,6 +56,7 @@ const LINK_LIST_PROPERTIES: &[&str] = &["alias", "aliases", "tags"];
 
 /// One `key:: value` property.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Property {
     /// Normalised key: lowercase, spaces and `_` replaced by `-`.
     pub key: String,
@@ -90,6 +91,7 @@ pub enum Ref {
 
 /// Everything derived from a block's content.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BlockInfo {
     pub marker: Option<String>,
     /// `A`, `B` or `C` from `[#A]`.

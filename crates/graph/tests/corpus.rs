@@ -383,7 +383,7 @@ fn watcher_reindexes_changed_files_after_debounce() {
         Arc::clone(&index),
         Duration::from_millis(150),
         Some(Box::new(move |files| {
-            seen_cb.lock().expect("lock").extend(files.iter().cloned())
+            seen_cb.lock().expect("lock").extend(files.iter().cloned());
         })),
     )
     .expect("watch");

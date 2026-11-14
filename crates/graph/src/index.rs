@@ -97,6 +97,7 @@ type Result<T> = std::result::Result<T, IndexError>;
 
 /// What a rebuild or sync did.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexStats {
     pub indexed: usize,
     pub removed: usize,
@@ -107,6 +108,7 @@ pub struct IndexStats {
 
 /// A full-text search result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchHit {
     pub page: String,
     pub block_id: i64,
@@ -120,6 +122,7 @@ pub struct SearchHit {
 
 /// A block that references (or mentions) a page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Backlink {
     pub page: String,
     pub journal_day: Option<i64>,
@@ -131,6 +134,7 @@ pub struct Backlink {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JournalEntry {
     pub name: String,
     pub file: String,
@@ -139,6 +143,7 @@ pub struct JournalEntry {
 
 /// A page row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PageRow {
     pub id: i64,
     pub name: String,

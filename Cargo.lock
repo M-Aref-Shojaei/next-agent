@@ -2393,6 +2393,7 @@ name = "next-agent-desktop"
 version = "0.1.0"
 dependencies = [
  "next-agent-core",
+ "next-agent-graph",
  "next-agent-permission-engine",
  "next-agent-process-manager",
  "serde",

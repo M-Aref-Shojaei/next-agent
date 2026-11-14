@@ -8,6 +8,7 @@ use crate::parse::Block;
 /// One block for the outliner. Only `content` and `children` are read back
 /// on save; the other fields are derived from `content` for display.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BlockNode {
     pub content: String,
     #[serde(default)]
@@ -67,6 +68,7 @@ impl BlockNode {
 
 /// A page as the UI sees it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PageView {
     pub name: String,
     /// Graph-relative file, `None` for a page that is only referenced.

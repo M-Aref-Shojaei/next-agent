@@ -197,3 +197,5 @@ export function parseJournalLinks(
   }
   return out;
 }
+
+export * from "./graph.ts";
