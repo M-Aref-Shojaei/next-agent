@@ -110,9 +110,11 @@
   </style>
 </svelte:head>
 
+<div class="frame" class:notched={notchWidth > 0}>
 <div
   class="island"
   class:expanded
+  class:notched={notchWidth > 0}
   class:opaque={info ? !info.transparent : false}
   bind:this={island}
   role="region"
@@ -161,6 +163,7 @@
     </div>
   {/if}
 </div>
+</div>
 
 <style>
   .island {
@@ -172,8 +175,24 @@
     transition: border-radius 0.34s cubic-bezier(0.45, 0, 0.2, 1);
     font-size: 13px;
   }
-  /* macOS has no transparent webview without a private flag: opaque island. */
+  /* Fallback if the webview cannot be transparent. */
   .island.opaque { background: #0b0c0f; color: #e6e8ec; border-radius: 0; border: 0; box-shadow: none; }
+
+  /* Notch screens: a pure-black island that merges with the notch, flush with
+     the top edge, rounded below, with concave "shoulders" curving into the
+     menu bar on both sides (design adapted from Coucou, MIT; no assets). */
+  .frame { --shoulder: 10px; position: relative; width: 100%; height: 100%; }
+  .frame.notched { padding: 0 var(--shoulder); box-sizing: border-box; }
+  .frame.notched::before, .frame.notched::after {
+    content: ""; position: absolute; top: 0; width: var(--shoulder); height: var(--shoulder);
+  }
+  .frame.notched::before { left: 0; background: radial-gradient(circle at 0 100%, transparent calc(var(--shoulder) - 0.5px), #000 var(--shoulder)); }
+  .frame.notched::after { right: 0; background: radial-gradient(circle at 100% 100%, transparent calc(var(--shoulder) - 0.5px), #000 var(--shoulder)); }
+  .island.notched {
+    background: #000; color: #e6e8ec; border: 0; box-shadow: none;
+    border-radius: 0 0 12px 12px;
+  }
+  .island.notched.expanded { border-radius: 0 0 22px 22px; }
   .island.expanded { height: auto; max-height: 100vh; animation: spring-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
   .island:not(.expanded) { animation: ease-out 0.34s cubic-bezier(0.45, 0, 0.2, 1); }
   @keyframes spring-in { from { transform: scaleY(0.6) scaleX(0.9); opacity: 0.6; } to { transform: none; opacity: 1; } }

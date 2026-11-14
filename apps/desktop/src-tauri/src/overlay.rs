@@ -125,7 +125,7 @@ fn pxi(logical: f64, scale: f64) -> i32 {
 #[must_use]
 pub fn collapsed_size(notch: Option<(f64, f64)>) -> (f64, f64) {
     match notch {
-        Some((w, h)) => ((w + 120.0).max(COLLAPSED.0), h.max(COLLAPSED.1)),
+        Some((w, h)) => ((w + 140.0).max(COLLAPSED.0), h.max(COLLAPSED.1)),
         None => COLLAPSED,
     }
 }
@@ -374,8 +374,34 @@ fn apply(app: &AppHandle, state: &OverlayState, service: &AppService) -> Result<
         .set_position(PhysicalPosition::new(placed.x, placed.y))
         .map_err(|e| e.to_string())?;
     window.set_size(size).map_err(|e| e.to_string())?;
-    window.set_always_on_top(true).map_err(|e| e.to_string())
+    // macOS: Tauri's always-on-top means the floating level (5), below the
+    // menu bar; the native panel level (27) is set by `pin_native` instead.
+    if !cfg!(target_os = "macos") {
+        window.set_always_on_top(true).map_err(|e| e.to_string())?;
+    }
+    if settings.position == OverlayPosition::TopCenter {
+        pin_native(&window, logical);
+    }
+    Ok(())
 }
+
+/// macOS: re-pin the frame natively so it sits over the menu bar and notch
+/// (see `next_agent_macos_panel::pin_top_center`). No-op elsewhere.
+#[cfg(target_os = "macos")]
+fn pin_native(window: &WebviewWindow, logical: (f64, f64)) {
+    let Ok(ns) = window.ns_window() else { return };
+    let ns = ns as usize;
+    let _ = window.run_on_main_thread(move || {
+        let _ = next_agent_macos_panel::pin_top_center(
+            ns as *mut std::ffi::c_void,
+            logical.0,
+            logical.1,
+        );
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn pin_native(_window: &WebviewWindow, _logical: (f64, f64)) {}
 
 /// macOS: panel-like behaviour and notch detection. Returns the notch.
 #[cfg(target_os = "macos")]
@@ -412,7 +438,7 @@ fn create_window(
         .title("Next Agent overlay")
         .decorations(false)
         .transparent(true)
-        .always_on_top(true)
+        .always_on_top(!cfg!(target_os = "macos"))
         .skip_taskbar(true)
         .shadow(false)
         .focused(false)
@@ -432,6 +458,9 @@ fn create_window(
         apply(app, state, service)?;
     }
     window.show().map_err(|e| e.to_string())?;
+    // Ordering the window in lets AppKit push it below the menu bar; put it
+    // back over the notch.
+    apply(app, state, service)?;
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     spawn_poller(app.clone(), Arc::clone(state), generation);
     Ok(())
@@ -494,7 +523,8 @@ pub fn overlay_info(app: AppHandle, service: Svc, overlay: Ov) -> OverlayInfo {
     OverlayInfo {
         settings: load_settings(&service),
         monitors: geoms(&app).into_iter().filter_map(|m| m.name).collect(),
-        transparent: !cfg!(target_os = "macos"),
+        // macOS too: the `macos-private-api` feature allows a clear webview.
+        transparent: true,
         notch: overlay.inner.lock().ok().and_then(|i| i.notch),
     }
 }
@@ -625,7 +655,7 @@ mod tests {
     #[test]
     fn collapsed_size_grows_around_a_notch() {
         assert_eq!(collapsed_size(None), COLLAPSED);
-        assert_eq!(collapsed_size(Some((184.0, 32.0))), (304.0, 32.0));
+        assert_eq!(collapsed_size(Some((184.0, 32.0))), (324.0, 32.0));
     }
 
     #[test]

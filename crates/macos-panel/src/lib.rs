@@ -82,6 +82,41 @@ mod mac {
         true
     }
 
+    /// Put the window's top edge on the very top of its screen, horizontally
+    /// centred, `width`×`height` points. `setFrame:display:` skips the
+    /// "keep below the menu bar" constraint `AppKit` applies when a normal
+    /// window is ordered in, which is what lets the island wrap the notch
+    /// (Coucou overrides `constrainFrameRect` for the same reason).
+    /// Must run on the main thread. Returns `false` if it could not apply.
+    #[must_use]
+    pub fn pin_top_center(ns_window: *mut c_void, width: f64, height: f64) -> bool {
+        if MainThreadMarker::new().is_none() {
+            return false;
+        }
+        let Some(w) = window(ns_window) else {
+            return false;
+        };
+        // Tauri's `set_always_on_top` resets the level to floating (5), which
+        // is below the menu bar; AppKit then shifts the frame under it.
+        // Re-raise before placing.
+        w.setLevel(PANEL_LEVEL);
+        let Some(screen) = w.screen() else {
+            return false;
+        };
+        let frame = screen.frame();
+        let width = width.min(frame.size.width);
+        let rect = objc2_foundation::NSRect::new(
+            objc2_foundation::NSPoint::new(
+                frame.origin.x + (frame.size.width - width) / 2.0,
+                // Cocoa's y axis points up: the top edge is origin.y + height.
+                frame.origin.y + frame.size.height - height,
+            ),
+            objc2_foundation::NSSize::new(width, height),
+        );
+        w.setFrame_display(rect, true);
+        true
+    }
+
     /// Notch of the screen the window is on (`None`: no notch or unknown).
     /// Must run on the main thread.
     #[must_use]
@@ -100,7 +135,7 @@ mod mac {
 }
 
 #[cfg(target_os = "macos")]
-pub use mac::{configure_panel, notch_of};
+pub use mac::{configure_panel, notch_of, pin_top_center};
 
 #[cfg(test)]
 mod tests {
