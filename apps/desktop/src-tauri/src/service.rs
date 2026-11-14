@@ -75,6 +75,8 @@ pub struct TaskRequest {
     pub workspace_id: String,
     pub prompt: String,
     pub mode: String,
+    /// Agent profile to run as (`None` = the mode's default: build / plan).
+    pub profile: Option<String>,
 }
 
 fn lock<'a, T>(mutex: &'a Mutex<T>, what: &str) -> Result<MutexGuard<'a, T>, String> {
@@ -450,6 +452,7 @@ mod tests {
             workspace_id: workspace_id.into(),
             prompt: "Add a demo note".into(),
             mode: mode.into(),
+            profile: None,
         };
         let id = svc.task_start(&request, sink).expect("start");
         svc.task_wait(&id);
@@ -535,6 +538,48 @@ mod tests {
     }
 
     #[test]
+    fn undo_last_step_restores_the_task_worktree() {
+        let (dir, svc) = service();
+        let (_root, ws_id) = repo_workspace(dir.path(), &svc);
+        let (sink, log) = collector();
+        let task = run(&svc, &ws_id, "auto", sink);
+        let wt_root = log
+            .lock()
+            .expect("lock")
+            .iter()
+            .find_map(|m| match m {
+                StreamMessage::Worktree { root, .. } => Some(PathBuf::from(root)),
+                _ => None,
+            })
+            .expect("worktree");
+        let note = wt_root.join("NEXT_AGENT_DEMO.md");
+        assert!(note.exists(), "the demo agent wrote its note");
+        assert!(svc.task_undoable(&task).expect("count") >= 1);
+
+        // Undo until the write is reverted (the demo runs list, write, ls).
+        while note.exists() {
+            svc.task_undo_step(&task).expect("undo");
+        }
+        assert!(svc.task_undo_step(&task).is_err() || !note.exists());
+    }
+
+    #[test]
+    fn profiles_list_the_primary_built_ins() {
+        let (dir, svc) = service();
+        let (_root, ws_id) = repo_workspace(dir.path(), &svc);
+        let list = svc.agent_profiles(&ws_id).expect("profiles");
+        let names: Vec<&str> = list.profiles.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.contains(&"build") && names.contains(&"plan"),
+            "{names:?}"
+        );
+        assert!(
+            !names.contains(&"explore"),
+            "subagent-only profiles are hidden"
+        );
+    }
+
+    #[test]
     fn discard_drops_the_worktree_and_leaves_main_tree_alone() {
         let (dir, svc) = service();
         let (root, ws_id) = repo_workspace(dir.path(), &svc);
@@ -601,12 +646,14 @@ mod tests {
             workspace_id: "ws_missing".into(),
             prompt: "x".into(),
             mode: "auto".into(),
+            profile: None,
         };
         assert!(svc.task_start(&bad_ws, sink.clone()).is_err());
         let bad_mode = TaskRequest {
             workspace_id: "ws_missing".into(),
             prompt: "x".into(),
             mode: "yolo".into(),
+            profile: None,
         };
         assert!(svc.task_start(&bad_mode, sink).is_err());
     }

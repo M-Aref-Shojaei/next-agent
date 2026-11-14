@@ -8,18 +8,75 @@
 use crate::review::{diff_dto, ReviewOutcome};
 use crate::service::{mode_name, parse_mode, AppService, Sink, TaskRequest};
 use crate::wire::{envelope, StreamMessage};
+use next_agent_core::builtin::RoleResolver;
+use next_agent_core::profiles::{load_profiles, AgentProfile};
 use next_agent_core::router::ReqwestFetcher;
 use next_agent_core::vault::{FileStat, TaskDoc, TaskMeta, VaultWriter};
 use next_agent_core::{
-    context_for, spawn_task, AgentEvent, AgentExecutor, AgentStep, Approval, BuiltinExecutor,
-    EventKind, GitCli, LocalTools, MergeOptions, MockExecutor, RunContext, Store, TaskId,
-    TaskLaunch, TaskSpec, TaskWorktree, ToolExecutor, ToolRequest, ToolResult, WorktreeProvider,
+    context_for, spawn_task_with, AgentEvent, AgentExecutor, AgentStep, Approval, BuiltinExecutor,
+    EventKind, GitCli, GitSnapshots, LocalTools, MergeOptions, MockExecutor, RunContext, Store,
+    TaskId, TaskLaunch, TaskOptions, TaskSpec, TaskWorktree, ToolExecutor, ToolRequest, ToolResult,
+    WorktreeProvider,
 };
 use next_agent_permission_engine::Mode;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// Smallest known context window across the chat role's targets (0 = unknown,
+/// so compaction runs only on a provider overflow).
+fn context_window(gateway: &next_agent_core::router::Gateway) -> u64 {
+    let config = gateway.config();
+    let Ok(plan) = config.resolve("", "chat") else {
+        return 0;
+    };
+    plan.targets
+        .iter()
+        .filter_map(|t| {
+            let provider = config
+                .accounts(&t.provider)
+                .first()
+                .map_or_else(|| t.provider.clone(), |c| c.provider.clone());
+            config.pricing.context_length(&provider, &t.model)
+        })
+        .min()
+        .unwrap_or(0)
+}
+
+/// An agent profile the UI can offer.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct ProfileDto {
+    pub name: String,
+    pub description: String,
+    pub builtin: bool,
+}
+
+impl From<&AgentProfile> for ProfileDto {
+    fn from(p: &AgentProfile) -> Self {
+        Self {
+            name: p.name.clone(),
+            description: p.description.clone(),
+            builtin: p.builtin,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct ProfileList {
+    pub profiles: Vec<ProfileDto>,
+    pub warnings: Vec<String>,
+}
+
+/// Result of "Undo last step".
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct UndoDto {
+    pub seq: i64,
+    pub call_id: String,
+    pub tool: String,
+    pub restored: Vec<String>,
+    pub remaining: usize,
+}
 
 /// Everything kept about a finished task for review and re-documenting.
 #[derive(Debug, Clone)]
@@ -72,6 +129,10 @@ struct Plan {
     workspace_name: String,
     /// Sandbox root: the worktree in auto mode, else the workspace.
     root: PathBuf,
+    /// The workspace itself (agent profiles live in its `.next-agent/agents`).
+    workspace_root: PathBuf,
+    /// Agent profile picked in the UI (`None` = default for the mode).
+    profile: Option<String>,
     worktree: Option<TaskWorktree>,
     notices: Vec<String>,
 }
@@ -97,7 +158,7 @@ impl AppService {
                 root: wt.root.display().to_string(),
             });
         }
-        let (executor, agent_notice) = self.choose_executor(&plan.root, &task_id);
+        let (executor, agent_notice) = self.choose_executor(&plan, &task_id);
         for text in plan.notices.iter().chain(agent_notice.iter()) {
             sink(StreamMessage::Notice {
                 task_id: task_id.clone(),
@@ -112,14 +173,25 @@ impl AppService {
             calls: Arc::clone(&calls),
         };
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        let handle = spawn_task(TaskLaunch {
-            db_path: self.db_path().to_path_buf(),
-            spec: plan.spec.clone(),
-            mode: plan.mode,
-            context: context_for(plan.root.clone(), plan.workspace_id.clone(), home),
-            executor,
-            tools: Box::new(tools),
-        });
+        // Per-step undo: capture the sandbox before each mutating step.
+        let data_dir = self
+            .db_path()
+            .parent()
+            .map_or_else(PathBuf::new, Path::to_path_buf);
+        let snapshots = GitSnapshots::open(&data_dir, &plan.root, &task_id)
+            .ok()
+            .map(|s| Box::new(s) as Box<dyn next_agent_core::StepSnapshots + Send>);
+        let handle = spawn_task_with(
+            TaskLaunch {
+                db_path: self.db_path().to_path_buf(),
+                spec: plan.spec.clone(),
+                mode: plan.mode,
+                context: context_for(plan.root.clone(), plan.workspace_id.clone(), home),
+                executor,
+                tools: Box::new(tools),
+            },
+            TaskOptions { snapshots },
+        );
         self.running()?.insert(task_id.clone(), handle.control());
 
         let service = Arc::clone(self);
@@ -273,7 +345,7 @@ impl AppService {
         }
         let root = worktree
             .as_ref()
-            .map_or(workspace_root, |wt| wt.root.clone());
+            .map_or_else(|| workspace_root.clone(), |wt| wt.root.clone());
 
         let name = mode_name(mode);
         let title: String = request.prompt.chars().take(60).collect();
@@ -292,6 +364,8 @@ impl AppService {
             workspace_id: workspace.id,
             workspace_name: workspace.name,
             root,
+            workspace_root,
+            profile: request.profile.clone().filter(|p| !p.trim().is_empty()),
             worktree,
             notices,
         })
@@ -302,23 +376,114 @@ impl AppService {
     /// agent (no LLM needed). No external router is required.
     /// Smart combos keep one model per task (`task_id` is the session).
     fn choose_executor(
-        &self,
-        root: &Path,
+        self: &Arc<Self>,
+        plan: &Plan,
         task_id: &str,
     ) -> (Box<dyn AgentExecutor + Send>, Option<String>) {
-        match self.chat_gateway() {
-            Ok(gateway) => (
-                Box::new(BuiltinExecutor::new(
-                    Arc::new(gateway.with_session(task_id)),
-                    root,
-                )),
-                None,
-            ),
-            Err(why) => (
-                Box::new(MockExecutor::new(demo_script(root))),
-                Some(format!("Running the scripted demo agent because {why}.")),
-            ),
+        let root = &plan.root;
+        let gateway = match self.chat_gateway() {
+            Ok(gateway) => gateway,
+            Err(why) => {
+                return (
+                    Box::new(MockExecutor::new(demo_script(root))),
+                    Some(format!("Running the scripted demo agent because {why}.")),
+                )
+            }
+        };
+        let mut notices = Vec::new();
+        let (profiles, errors) = load_profiles(&plan.workspace_root);
+        for error in errors {
+            notices.push(format!(
+                "Agent profile `{}` ignored: {}",
+                error.name, error.message
+            ));
         }
+        let window = context_window(&gateway);
+        let mut executor = BuiltinExecutor::new(Arc::new(gateway.with_session(task_id)), root)
+            .with_profiles(profiles.clone())
+            .with_context_window(window)
+            .with_role_resolver(self.role_resolver(task_id));
+        // Compaction summaries use the `summary` role (falls back to chat).
+        if let Ok(summary) = self.gateway("summary") {
+            executor = executor.with_summary_client(Arc::new(summary.with_session(task_id)), None);
+        }
+        if let Some(name) = &plan.profile {
+            match profiles
+                .iter()
+                .find(|p| &p.name == name && p.mode.primary())
+            {
+                Some(profile) => executor = executor.with_profile(profile.clone()),
+                None => notices.push(format!(
+                    "Agent profile `{name}` not found; using the default."
+                )),
+            }
+        }
+        let notice = (!notices.is_empty()).then(|| notices.join(" "));
+        (Box::new(executor), notice)
+    }
+
+    /// Maps a profile's `model_role` to that role's gateway and target.
+    fn role_resolver(self: &Arc<Self>, task_id: &str) -> RoleResolver {
+        let service = Arc::clone(self);
+        let session = task_id.to_string();
+        Arc::new(move |role: &str| {
+            let gateway = service.gateway(role).ok()?;
+            let model = gateway.config().role_target(role)?;
+            let client: Arc<dyn next_agent_core::llm::CompletionClient> =
+                Arc::new(gateway.with_session(session.clone()));
+            Some((client, model))
+        })
+    }
+
+    /// Agent profiles a task can run as (primary or all), with load warnings.
+    ///
+    /// # Errors
+    /// Unknown workspace.
+    pub fn agent_profiles(&self, workspace_id: &str) -> Result<ProfileList, String> {
+        let workspace = self.workspace(workspace_id)?;
+        let (profiles, errors) = load_profiles(Path::new(&workspace.path));
+        Ok(ProfileList {
+            profiles: profiles
+                .iter()
+                .filter(|p| p.mode.primary())
+                .map(ProfileDto::from)
+                .collect(),
+            warnings: errors
+                .iter()
+                .map(|e| format!("{}: {}", e.name, e.message))
+                .collect(),
+        })
+    }
+
+    /// Undo the last mutating step of a finished task.
+    ///
+    /// # Errors
+    /// The task is still running, has nothing to undo, or git failed.
+    pub fn task_undo_step(&self, task_id: &str) -> Result<UndoDto, String> {
+        if self.running()?.contains_key(task_id) {
+            return Err("stop or wait for the task before undoing its steps".into());
+        }
+        let store = Store::open(self.db_path()).map_err(|e| e.to_string())?;
+        let outcome =
+            next_agent_core::undo_last_step(&store, task_id).map_err(|e| e.to_string())?;
+        Ok(UndoDto {
+            seq: outcome.seq,
+            call_id: outcome.call_id,
+            tool: outcome.tool,
+            restored: outcome.restored,
+            remaining: outcome.remaining,
+        })
+    }
+
+    /// How many steps of a task can still be undone.
+    ///
+    /// # Errors
+    /// Database errors.
+    pub fn task_undoable(&self, task_id: &str) -> Result<usize, String> {
+        let store = Store::open(self.db_path()).map_err(|e| e.to_string())?;
+        next_agent_core::undoable_steps(&store, task_id)
+            .map(|steps| steps.len())
+            .map_err(|e| e.to_string())
     }
 
     /// Checkpoint + diff the worktree, write the vault record, remember the task.

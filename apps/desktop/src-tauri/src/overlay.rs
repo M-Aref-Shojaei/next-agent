@@ -766,6 +766,7 @@ mod tests {
             workspace_id: opened.id,
             prompt: "Add a demo note".into(),
             mode: "manual".into(),
+            profile: None,
         };
         let id = svc.task_start(&request, sink).expect("start");
         svc.task_wait(&id);

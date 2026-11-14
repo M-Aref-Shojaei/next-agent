@@ -1066,6 +1066,7 @@ mod tests {
             workspace_id: opened.id,
             prompt: "Say you are done".into(),
             mode: "manual".into(),
+            profile: None,
         };
         let task = svc.task_start(&request, sink).expect("start");
         svc.task_wait(&task);

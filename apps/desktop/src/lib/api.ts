@@ -60,6 +60,22 @@ export interface OverlayInfo {
   /** Notch size in points (macOS), if any. */
   notch: [number, number] | null;
 }
+export interface AgentProfileInfo {
+  name: string;
+  description: string;
+  builtin: boolean;
+}
+export interface ProfileList {
+  profiles: AgentProfileInfo[];
+  warnings: string[];
+}
+export interface UndoOutcome {
+  seq: number;
+  call_id: string;
+  tool: string;
+  restored: string[];
+  remaining: number;
+}
 export interface OverlayRect {
   x: number;
   y: number;
@@ -102,8 +118,14 @@ export interface Api {
     prompt: string,
     mode: string,
     onMessage: (message: StreamMessage) => void,
+    profile?: string,
   ): Promise<string>;
   taskCancel(taskId: string): Promise<void>;
+  /** Agent profiles a task can run as (built-ins + `.next-agent/agents/*.md`). */
+  agentProfiles(workspaceId: string): Promise<ProfileList>;
+  /** Revert the last mutating step of a finished task. */
+  taskUndoStep(taskId: string): Promise<UndoOutcome>;
+  taskUndoable(taskId: string): Promise<number>;
   approvalRespond(taskId: string, approvalId: string, choice: ApprovalChoice): Promise<void>;
   reviewAction(taskId: string, action: DiffAction): Promise<ReviewOutcome>;
   routerHealth(): Promise<RouterHealthReport | null>;
@@ -164,11 +186,14 @@ const tauriApi: Api = {
   rulesList: (workspaceId) => invoke("rules_list", { workspaceId }),
   ruleDelete: (id) => invoke("rule_delete", { id }),
   auditVerify: () => invoke("audit_verify"),
-  taskStart: (workspaceId, prompt, mode, onMessage) => {
+  taskStart: (workspaceId, prompt, mode, onMessage, profile) => {
     const onEvent = new Channel<StreamMessage>();
     onEvent.onmessage = onMessage;
-    return invoke("task_start", { workspaceId, prompt, mode, onEvent });
+    return invoke("task_start", { workspaceId, prompt, mode, onEvent, profile: profile ?? null });
   },
+  agentProfiles: (workspaceId) => invoke("agent_profiles", { workspaceId }),
+  taskUndoStep: (taskId) => invoke("task_undo_step", { taskId }),
+  taskUndoable: (taskId) => invoke("task_undoable", { taskId }),
   taskCancel: (taskId) => invoke("task_cancel", { taskId }),
   approvalRespond: (taskId, approvalId, choice) =>
     invoke("approval_respond", { taskId, approvalId, choice }),

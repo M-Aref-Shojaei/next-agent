@@ -1,5 +1,10 @@
 <script lang="ts">
   import { app } from "$lib/app.svelte.ts";
+  // Reload profiles whenever the workspace changes.
+  $effect(() => {
+    void app.activeWorkspaceId;
+    void app.loadProfiles();
+  });
   import RightPanel from "$lib/components/RightPanel.svelte";
   import Timeline from "$lib/components/Timeline.svelte";
 
@@ -33,9 +38,20 @@
         bind:value={prompt}
         {onkeydown}
       ></textarea>
+      {#if app.profiles.length}
+        <label class="sr-only" for="profile">Agent profile</label>
+        <select id="profile" bind:value={app.profile} title="Agent profile">
+          <option value="">Default agent</option>
+          {#each app.profiles as p (p.name)}
+            <option value={p.name} title={p.description}>{p.name}</option>
+          {/each}
+        </select>
+      {/if}
       <button class="primary" type="submit" disabled={!app.activeWorkspace || !prompt.trim()}>Send</button>
       {#if app.activeTask?.status === "running"}
         <button type="button" onclick={() => app.cancel(app.activeTask!.id)}>Cancel</button>
+      {:else if app.activeTask && (app.activeTask.snapshots ?? 0) > 0}
+        <button type="button" onclick={() => app.undoStep(app.activeTask!.id)} title="Revert the last file change this task made">Undo last step</button>
       {/if}
     </form>
   </section>

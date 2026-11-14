@@ -156,6 +156,21 @@ export const mockApi: Api = {
     return taskId;
   },
   async taskCancel() {},
+  async agentProfiles() {
+    return {
+      profiles: [
+        { name: "build", description: "Default agent with all tools", builtin: true },
+        { name: "plan", description: "Read-only planning", builtin: true },
+      ],
+      warnings: [],
+    };
+  },
+  async taskUndoStep() {
+    throw "mock API: nothing to undo";
+  },
+  async taskUndoable() {
+    return 0;
+  },
   async approvalRespond(_taskId, approvalId, choice) {
     const resolve = waiting.get(approvalId);
     if (!resolve) throw `no pending approval ${approvalId}`;

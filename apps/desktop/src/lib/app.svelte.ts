@@ -95,6 +95,47 @@ class AppStore {
     this.mode = mode;
   }
 
+  /** Agent profile for new tasks ("" = the mode's default). */
+  profile = $state<string>("");
+  profiles = $state<{ name: string; description: string }[]>([]);
+
+  async loadProfiles(): Promise<void> {
+    const ws = this.activeWorkspace;
+    if (!ws) {
+      this.profiles = [];
+      return;
+    }
+    try {
+      const list = await api.agentProfiles(ws.id);
+      this.profiles = list.profiles;
+      if (list.warnings.length) this.error = `Agent profiles: ${list.warnings.join("; ")}`;
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
+  async undoStep(taskId: string): Promise<void> {
+    try {
+      const outcome = await api.taskUndoStep(taskId);
+      const files = outcome.restored.length ? outcome.restored.join(", ") : "no file changes";
+      this.tasks = this.tasks.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              snapshots: outcome.remaining,
+              items: [
+                ...t.items,
+                { kind: "notice", id: `undo:${outcome.seq}`, tone: "info", text: `Undid ${outcome.tool} (${outcome.call_id}): ${files}` },
+              ],
+            }
+          : t,
+      );
+      this.error = null;
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
   async startTask(prompt: string): Promise<void> {
     const ws = this.activeWorkspace;
     if (!ws || !prompt.trim()) return;
@@ -105,7 +146,7 @@ class AppStore {
       else this.apply(taskId, message);
     };
     try {
-      const id = await api.taskStart(ws.id, prompt, this.mode, deliver);
+      const id = await api.taskStart(ws.id, prompt, this.mode, deliver, this.profile || undefined);
       this.tasks = [{ ...newTask(id, prompt.slice(0, 60)), status: "running" }, ...this.tasks];
       this.activeTaskId = id;
       taskId = id;

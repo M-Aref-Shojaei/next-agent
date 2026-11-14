@@ -67,6 +67,7 @@ pub fn task_start(
     prompt: String,
     mode: String,
     on_event: Channel<StreamMessage>,
+    profile: Option<String>,
 ) -> Result<String, String> {
     let direct: Sink = Arc::new(move |message| {
         let _ = on_event.send(message);
@@ -82,6 +83,7 @@ pub fn task_start(
         workspace_id,
         prompt,
         mode: mode.clone(),
+        profile,
     };
     let id = Arc::clone(&service).task_start(&request, sink)?;
     let _ = app.emit(
@@ -189,4 +191,22 @@ pub fn board_export(
     data: String,
 ) -> Result<String, String> {
     boards::export_asset(&vault_dir(&service)?, &name, &ext, &data)
+}
+
+#[tauri::command]
+pub fn agent_profiles(
+    service: Svc,
+    workspace_id: String,
+) -> Result<crate::tasks::ProfileList, String> {
+    service.agent_profiles(&workspace_id)
+}
+
+#[tauri::command]
+pub fn task_undo_step(service: Svc, task_id: String) -> Result<crate::tasks::UndoDto, String> {
+    service.task_undo_step(&task_id)
+}
+
+#[tauri::command]
+pub fn task_undoable(service: Svc, task_id: String) -> Result<usize, String> {
+    service.task_undoable(&task_id)
 }

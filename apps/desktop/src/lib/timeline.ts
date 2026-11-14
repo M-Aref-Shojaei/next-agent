@@ -53,6 +53,8 @@ export interface TaskState {
   lastSeq: number;
   /** Tool output that arrived before its `tool_requested` event. */
   stashedOutput: Record<string, string>;
+  /** Mutating steps captured for undo (`step_snapshot` events). */
+  snapshots?: number;
   /** Auto mode: the isolated worktree branch. */
   branch?: string;
   /** Changes waiting for Merge / Discard / Keep. */
@@ -319,6 +321,13 @@ export function applyMessage(task: TaskState, message: StreamMessage): TaskState
           ...next.items,
           { kind: "notice", id, tone: "error", text: `Failed: ${field(data, "error")}` },
         ],
+      };
+    case "step_snapshot":
+      return { ...next, snapshots: (next.snapshots ?? 0) + 1 };
+    case "context_compacted":
+      return {
+        ...next,
+        items: [...next.items, { kind: "notice", id, tone: "info", text: "Context compacted to stay within the model's window" }],
       };
     case "task_cancelled":
       return {
