@@ -2,7 +2,7 @@
 //! Per-channel configuration. Stored as JSON in SQLite (`channels.config`);
 //! the bot token is never part of it (it lives in the OS keychain).
 //!
-//! Stricter than OpenClaw: [`ChannelMode`] has no `auto` or bypass variant,
+//! Stricter than `OpenClaw`: [`ChannelMode`] has no `auto` or bypass variant,
 //! so a channel task cannot be configured to run without approvals.
 
 use crate::profile;
@@ -165,7 +165,10 @@ impl Default for ChannelConfig {
             dm_scope: DmScope::PerChannelPeer,
             identity_links: BTreeMap::new(),
             approval_timeout_secs: DEFAULT_APPROVAL_TIMEOUT_SECS,
-            tools: profile::DEFAULT_TOOLS.iter().map(|t| (*t).to_string()).collect(),
+            tools: profile::DEFAULT_TOOLS
+                .iter()
+                .map(|t| (*t).to_string())
+                .collect(),
         }
     }
 }
@@ -189,9 +192,7 @@ impl ChannelConfig {
             return Err("pick the workspace channel tasks run in".into());
         }
         if self.dm_policy == DmPolicy::Open && !allow_wildcard {
-            return Err(
-                "the open DM policy needs an explicit `*` entry on the allow-list".into(),
-            );
+            return Err("the open DM policy needs an explicit `*` entry on the allow-list".into());
         }
         self.approval_timeout_secs = self
             .approval_timeout_secs

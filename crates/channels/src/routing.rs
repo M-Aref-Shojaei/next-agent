@@ -116,7 +116,10 @@ mod tests {
     fn dm_scopes() {
         assert_eq!(key(&dm("42"), DmScope::Main), "agent:main:main");
         assert_eq!(key(&dm("42"), DmScope::PerPeer), "agent:main:direct:42");
-        assert_eq!(key(&dm("42"), DmScope::PerChannelPeer), "agent:main:telegram:direct:42");
+        assert_eq!(
+            key(&dm("42"), DmScope::PerChannelPeer),
+            "agent:main:telegram:direct:42"
+        );
         assert_eq!(
             key(&dm("42"), DmScope::PerAccountChannelPeer),
             "agent:main:telegram:ch_1:direct:42"
@@ -137,7 +140,10 @@ mod tests {
     #[test]
     fn identity_links_merge_one_person() {
         let mut links = BTreeMap::new();
-        links.insert("alice".to_string(), vec!["telegram:42".to_string(), "discord:99".to_string()]);
+        links.insert(
+            "alice".to_string(),
+            vec!["telegram:42".to_string(), "discord:99".to_string()],
+        );
         let tg = session_key(&dm("42"), DmScope::PerPeer, &links);
         let mut discord = dm("99");
         discord.channel = "discord";
@@ -146,9 +152,15 @@ mod tests {
         // Scoped links do not match another channel's id.
         let mut wrong = dm("99");
         wrong.channel = "telegram";
-        assert_eq!(session_key(&wrong, DmScope::PerPeer, &links), "agent:main:direct:99");
+        assert_eq!(
+            session_key(&wrong, DmScope::PerPeer, &links),
+            "agent:main:direct:99"
+        );
         // `main` ignores links.
-        assert_eq!(session_key(&dm("42"), DmScope::Main, &links), "agent:main:main");
+        assert_eq!(
+            session_key(&dm("42"), DmScope::Main, &links),
+            "agent:main:main"
+        );
     }
 
     #[test]
@@ -165,12 +177,18 @@ mod tests {
             thread_id: Some("7"),
             ..group.clone()
         };
-        assert_eq!(key(&topic, DmScope::default()), "agent:main:telegram:group:-100:thread:7");
+        assert_eq!(
+            key(&topic, DmScope::default()),
+            "agent:main:telegram:group:-100:thread:7"
+        );
     }
 
     #[test]
     fn routing_is_pure() {
         let input = dm("42");
-        assert_eq!(key(&input, DmScope::default()), key(&input, DmScope::default()));
+        assert_eq!(
+            key(&input, DmScope::default()),
+            key(&input, DmScope::default())
+        );
     }
 }

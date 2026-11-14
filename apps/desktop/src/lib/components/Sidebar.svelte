@@ -31,7 +31,7 @@
     {#each app.tasks as task (task.id)}
       <li>
         <button aria-current={task.id === app.activeTaskId} onclick={() => app.selectTask(task.id)}>
-          <span class="s {task.status}" aria-hidden="true"></span>{task.title}
+          <span class="s {task.status}" aria-hidden="true"></span>{#if task.origin}<span class="chan" title={task.origin}>chat</span>{/if}{task.title}
           <span class="sr-only">({task.status})</span>
         </button>
       </li>
@@ -42,6 +42,7 @@
   <a class="settings" href="/boards">Boards</a>
   <a class="nav" href="/settings/providers">Providers</a>
   <a class="nav" href="/usage">Usage</a>
+  <a class="nav" href="/settings/channels">Channels</a>
   <a class="nav" href="/settings">Settings</a>
 </nav>
 
@@ -55,6 +56,7 @@
   .s { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
   .s.running { background: var(--info); } .s.completed { background: var(--ok); } .s.failed { background: var(--danger); }
   .settings { margin-top: auto; color: var(--accent); }
+  .chan { font-size: 10px; border: 1px solid var(--border); border-radius: 4px; padding: 0 3px; margin-right: 4px; color: var(--muted); }
   .nav { color: var(--accent); }
   nav > a { color: var(--accent); }
 </style>

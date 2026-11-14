@@ -59,7 +59,12 @@ impl TelegramApi {
             .timeout(poll + Duration::from_secs(15))
             .connect_timeout(Duration::from_secs(10))
             .build()
-            .map_err(|e| ChannelError::Fatal(format!("could not build the HTTP client: {}", e.without_url())))?;
+            .map_err(|e| {
+                ChannelError::Fatal(format!(
+                    "could not build the HTTP client: {}",
+                    e.without_url()
+                ))
+            })?;
         Ok(Self {
             http,
             base: base.trim_end_matches('/').to_string(),
@@ -76,13 +81,12 @@ impl TelegramApi {
     /// Call `method` with a JSON body; returns `result`.
     async fn call(&self, method: &str, body: &Value) -> Result<Value, ChannelError> {
         let url = format!("{}/bot{}/{method}", self.base, self.token);
-        let response = self
-            .http
-            .post(url)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| ChannelError::transient(format!("Telegram unreachable: {}", self.scrub(&e.without_url().to_string()))))?;
+        let response = self.http.post(url).json(body).send().await.map_err(|e| {
+            ChannelError::transient(format!(
+                "Telegram unreachable: {}",
+                self.scrub(&e.without_url().to_string())
+            ))
+        })?;
         let status = response.status().as_u16();
         let payload: Value = response.json().await.unwrap_or(Value::Null);
         if payload["ok"].as_bool() == Some(true) {
@@ -90,7 +94,11 @@ impl TelegramApi {
         }
         let code = payload["error_code"].as_u64().unwrap_or(u64::from(status));
         let description = self.scrub(payload["description"].as_str().unwrap_or("no description"));
-        Err(classify(code, &description, payload["parameters"]["retry_after"].as_u64()))
+        Err(classify(
+            code,
+            &description,
+            payload["parameters"]["retry_after"].as_u64(),
+        ))
     }
 
     /// Belt and braces: never let the token reach a message.
@@ -141,7 +149,8 @@ impl TelegramApi {
             "link_preview_options": { "is_disabled": true },
         });
         if let Some(id) = reply_to.and_then(|id| id.parse::<i64>().ok()) {
-            body["reply_parameters"] = json!({ "message_id": id, "allow_sending_without_reply": true });
+            body["reply_parameters"] =
+                json!({ "message_id": id, "allow_sending_without_reply": true });
         }
         if let Some(id) = thread_id.and_then(|id| id.parse::<i64>().ok()) {
             body["message_thread_id"] = json!(id);
@@ -149,15 +158,19 @@ impl TelegramApi {
         let result = self.call("sendMessage", &body).await?;
         Ok(result["message_id"]
             .as_i64()
-            .map(|id| id.to_string())
-            .unwrap_or_default())
+            .map_or_else(String::new, |id| id.to_string()))
     }
 
     /// `editMessageText`. "message is not modified" counts as success.
     ///
     /// # Errors
     /// See [`classify`].
-    pub async fn edit_message_text(&self, chat_id: &str, message_id: &str, text: &str) -> Result<(), ChannelError> {
+    pub async fn edit_message_text(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+        text: &str,
+    ) -> Result<(), ChannelError> {
         let body = json!({
             "chat_id": chat_value(chat_id),
             "message_id": message_id.parse::<i64>().unwrap_or_default(),
@@ -175,15 +188,20 @@ impl TelegramApi {
     /// # Errors
     /// See [`classify`].
     pub async fn send_typing(&self, chat_id: &str) -> Result<(), ChannelError> {
-        self.call("sendChatAction", &json!({ "chat_id": chat_value(chat_id), "action": "typing" }))
-            .await
-            .map(|_| ())
+        self.call(
+            "sendChatAction",
+            &json!({ "chat_id": chat_value(chat_id), "action": "typing" }),
+        )
+        .await
+        .map(|_| ())
     }
 }
 
 /// Numeric chat ids go out as numbers, `@channel` names as strings.
 fn chat_value(chat_id: &str) -> Value {
-    chat_id.parse::<i64>().map_or_else(|_| json!(chat_id), |id| json!(id))
+    chat_id
+        .parse::<i64>()
+        .map_or_else(|_| json!(chat_id), |id| json!(id))
 }
 
 /// Map a Bot API error to transient or fatal.
@@ -211,27 +229,55 @@ mod tests {
     #[test]
     fn token_shape() {
         assert!(valid_token("123456:ABCdefGHIjklMNOpqrSTUvwxYZ_-12345"));
-        for bad in ["", "abc", "123:", ":abcdefghijklmnopqrstuvwxyz", "12a:abcdefghijklmnopqrstu", "123:abc/../../x-yyyyyyyyyyyyyy", "123:short"] {
+        for bad in [
+            "",
+            "abc",
+            "123:",
+            ":abcdefghijklmnopqrstuvwxyz",
+            "12a:abcdefghijklmnopqrstu",
+            "123:abc/../../x-yyyyyyyyyyyyyy",
+            "123:short",
+        ] {
             assert!(!valid_token(bad), "{bad}");
         }
     }
 
     #[test]
     fn debug_hides_the_token() {
-        let api = TelegramApi::new(DEFAULT_BASE_URL, "123456:ABCdefGHIjklMNOpqrSTUvwxYZ", Duration::from_secs(1)).expect("api");
+        let api = TelegramApi::new(
+            DEFAULT_BASE_URL,
+            "123456:ABCdefGHIjklMNOpqrSTUvwxYZ",
+            Duration::from_secs(1),
+        )
+        .expect("api");
         assert!(!format!("{api:?}").contains("ABCdef"));
     }
 
     #[test]
     fn errors_are_classified() {
-        assert!(matches!(classify(401, "Unauthorized", None), ChannelError::Fatal(_)));
-        assert!(matches!(classify(404, "Not Found", None), ChannelError::Fatal(_)));
-        assert!(matches!(classify(409, "Conflict", None), ChannelError::Transient { .. }));
+        assert!(matches!(
+            classify(401, "Unauthorized", None),
+            ChannelError::Fatal(_)
+        ));
+        assert!(matches!(
+            classify(404, "Not Found", None),
+            ChannelError::Fatal(_)
+        ));
+        assert!(matches!(
+            classify(409, "Conflict", None),
+            ChannelError::Transient { .. }
+        ));
         assert_eq!(
             classify(429, "Too Many Requests", Some(7)),
-            ChannelError::Transient { message: "Telegram rate limit (Too Many Requests)".into(), retry_after: Some(7) }
+            ChannelError::Transient {
+                message: "Telegram rate limit (Too Many Requests)".into(),
+                retry_after: Some(7)
+            }
         );
-        assert!(matches!(classify(502, "Bad Gateway", None), ChannelError::Transient { .. }));
+        assert!(matches!(
+            classify(502, "Bad Gateway", None),
+            ChannelError::Transient { .. }
+        ));
     }
 
     #[test]

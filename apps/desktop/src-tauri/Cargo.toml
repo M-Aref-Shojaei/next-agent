@@ -25,6 +25,7 @@ next-agent-core = { path = "../../../crates/core" }
 next-agent-permission-engine = { path = "../../../crates/permission-engine" }
 next-agent-process-manager = { path = "../../../crates/process-manager" }
 next-agent-graph = { path = "../../../crates/graph" }
+next-agent-channels = { path = "../../../crates/channels" }
 tokio = { version = "1", features = ["sync", "macros"] }
 # Island geometry ported from Coucou (all platforms) and the macOS NSPanel.
 next-agent-macos-panel = { path = "../../../crates/macos-panel" }

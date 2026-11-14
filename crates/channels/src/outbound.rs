@@ -81,7 +81,11 @@ pub struct Preview<'a> {
 
 impl<'a> Preview<'a> {
     #[must_use]
-    pub fn new(channel: &'a dyn Channel, state: &'a dyn ChannelState, message: &'a Inbound) -> Self {
+    pub fn new(
+        channel: &'a dyn Channel,
+        state: &'a dyn ChannelState,
+        message: &'a Inbound,
+    ) -> Self {
         Self {
             channel,
             state,
@@ -129,7 +133,11 @@ impl<'a> Preview<'a> {
             return;
         }
         let ok = match &self.sent {
-            Some(target) => self.channel.edit(target.clone(), view.clone()).await.is_ok(),
+            Some(target) => self
+                .channel
+                .edit(target.clone(), view.clone())
+                .await
+                .is_ok(),
             None => match self
                 .channel
                 .send(self.channel.reply_target(self.message, view.clone()))
@@ -160,7 +168,10 @@ impl<'a> Preview<'a> {
         let channel_id = self.channel.config().id.clone();
         let limit = self.channel.capabilities().text_chunk_limit;
         let chunks = chunk_text(text, limit);
-        let first = chunks.first().cloned().unwrap_or_else(|| "(no answer)".into());
+        let first = chunks
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "(no answer)".into());
         let first_key = reply_key(&channel_id, self.message, 0);
         if self.state.claimed(&first_key).ok().flatten().is_none() {
             self.channel.edit(target.clone(), first).await?;

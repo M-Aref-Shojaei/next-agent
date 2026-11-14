@@ -61,12 +61,13 @@
       "role": "memory, skills, cron; prompt-cache rules and delegate design (subagent.rs, builtin.rs)"
     },
     "openclaw": {
-      "pin": "2026.11.3 (pin exact commit when porting)",
+      "pin": "main @ 1ac07b333581ff06e7d323015dc5912247415d4b (studied; ported, not bundled)",
+      "ported": "pairing/pairing-store-model.ts, pairing/pairing-messages.ts, routing/session-key.ts, channels/mention-gating.ts, channels/direct-dm-access.ts, channels/allowlist-match.ts, channels/channel-config.ts, channels/plugins/types.adapters.ts, channels/draft-stream-loop.ts, channels/plugins/outbound.types.ts, auto-reply/chunk.ts, security/external-content.ts, security/dangerous-tools.ts, security/dm-policy-shared.ts -> crates/channels",
       "licence": "MIT",
-      "adapter": "services/channel-gateway",
+      "adapter": "crates/channels",
       "checked": "2026-11-14",
       "risk": "medium",
-      "role": "wave 2"
+      "role": "channel gateway (Telegram first)"
     },
     "coucou": {
       "pin": "main @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8 (code ported; no assets)",

@@ -1,4 +1,4 @@
-//! Per-session ordered queues (OpenClaw's behaviour, see
+//! Per-session ordered queues (`OpenClaw`'s behaviour, see
 //! `docs/upstream/OpenClaw.md`; no upstream code). Jobs with the same
 //! session key run one at a time, in arrival order; different sessions run concurrently. `/stop`
 //! cancels the running job and drops the ones waiting behind it.
@@ -57,7 +57,9 @@ pub struct SessionQueues<J: Send + 'static> {
 
 impl<J: Send + 'static> SessionQueues<J> {
     #[must_use]
-    pub fn new(handler: impl Fn(J, StopToken) -> BoxFuture<'static, ()> + Send + Sync + 'static) -> Self {
+    pub fn new(
+        handler: impl Fn(J, StopToken) -> BoxFuture<'static, ()> + Send + Sync + 'static,
+    ) -> Self {
         Self {
             lanes: Mutex::new(HashMap::new()),
             handler: Arc::new(handler),
@@ -107,7 +109,9 @@ impl<J: Send + 'static> SessionQueues<J> {
                     continue;
                 }
                 let (stop, token) = watch::channel(false);
-                *worker_current.lock().unwrap_or_else(PoisonError::into_inner) = Some(stop);
+                *worker_current
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = Some(stop);
                 handler(job, StopToken(token)).await;
                 worker_current
                     .lock()
@@ -163,7 +167,10 @@ mod tests {
         let q = queues(tx, 50);
         q.push("s", "a".into());
         q.push("s", "b".into());
-        assert_eq!(take(&mut rx, 4).await, ["start a", "end a", "start b", "end b"]);
+        assert_eq!(
+            take(&mut rx, 4).await,
+            ["start a", "end a", "start b", "end b"]
+        );
     }
 
     #[tokio::test(start_paused = true)]

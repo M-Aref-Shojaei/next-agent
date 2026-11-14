@@ -20,6 +20,7 @@ use crate::state::{Activity, AllowEntry, ChannelState};
 use crate::types::{ChatKind, Inbound};
 use crate::untrusted;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
@@ -56,11 +57,15 @@ pub struct ChannelJob {
 /// Progress a runner reports while the task runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskProgress {
-    Started { task_id: String },
+    Started {
+        task_id: String,
+    },
     /// Streamed answer text.
     Delta(String),
     /// An approval card is up on the desktop.
-    WaitingForApproval { approval_id: String },
+    WaitingForApproval {
+        approval_id: String,
+    },
 }
 
 /// How a task ended.
@@ -154,7 +159,11 @@ fn clip(text: &str, limit: usize) -> String {
 /// A chat command, after access checks. `/cmd@bot` counts as `/cmd`.
 fn command(text: &str) -> Option<&'static str> {
     let first = text.split_whitespace().next()?;
-    let name = first.strip_prefix('/')?.split('@').next()?.to_ascii_lowercase();
+    let name = first
+        .strip_prefix('/')?
+        .split('@')
+        .next()?
+        .to_ascii_lowercase();
     Some(match name.as_str() {
         "stop" => "stop",
         "new" | "reset" => "new",
@@ -170,7 +179,12 @@ impl Hub {
     /// inbound messages with [`Hub::pump`] or [`Hub::handle`].
     #[must_use]
     pub fn new(state: Arc<dyn ChannelState>, runner: Arc<dyn TaskRunner>) -> Arc<Self> {
-        Self::build(state, runner, Arc::new(now_secs), outbound::PREVIEW_THROTTLE)
+        Self::build(
+            state,
+            runner,
+            Arc::new(now_secs),
+            outbound::PREVIEW_THROTTLE,
+        )
     }
 
     /// [`Hub::new`] with an injected clock and preview throttle (tests).
@@ -238,7 +252,15 @@ impl Hub {
         self.channels.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn log(&self, channel_id: &str, direction: &str, kind: &str, peer: &str, text: &str, task_id: Option<String>) {
+    fn log(
+        &self,
+        channel_id: &str,
+        direction: &str,
+        kind: &str,
+        peer: &str,
+        text: &str,
+        task_id: Option<String>,
+    ) {
         let _ = self.state.log(&Activity {
             ts: String::new(),
             channel_id: channel_id.to_string(),
@@ -283,49 +305,8 @@ impl Hub {
         }
         let config = channel.config().clone();
         let peer = format!("{} ({})", message.sender_label, message.sender_id);
-        let allow = self.allow_ids(channel_id);
-
-        let access = match message.kind() {
-            ChatKind::Direct => match policy::dm_access(config.dm_policy, &allow, &message.sender_id) {
-                DmAccess::Allow => Ok(()),
-                DmAccess::Deny(reason) => Err(reason),
-                DmAccess::NeedsPairing => {
-                    let outcome = self.request_pairing(channel.as_ref(), &message);
-                    let _ = outbound::send_reply(
-                        channel.as_ref(),
-                        self.state.as_ref(),
-                        &message,
-                        &pairing::pairing_reply(&outcome, &message.sender_id),
-                    )
-                    .await;
-                    self.log(channel_id, "in", "pairing", &peer, &message.text, None);
-                    if matches!(outcome, PairingOutcome::Issued(_)) {
-                        self.emit(HubEvent::PairingRequested {
-                            channel_id: channel_id.to_string(),
-                        });
-                    }
-                    return Handled::Pairing(outcome);
-                }
-            },
-            ChatKind::Group => {
-                let facts = GroupFacts {
-                    group_id: message.chat_id.clone(),
-                    sender_id: message.sender_id.clone(),
-                    mentioned: message.mentioned,
-                    reply_to_bot: message.reply_to_bot,
-                };
-                match policy::group_access(&config, &allow, &facts) {
-                    GroupAccess::Allow => Ok(()),
-                    GroupAccess::Skip(reason) => Err(reason),
-                }
-            }
-        };
-        if let Err(reason) = access {
-            // Unmentioned group chatter is not worth a log line.
-            if reason != "not mentioned" {
-                self.log(channel_id, "in", "denied", &peer, reason, None);
-            }
-            return Handled::Dropped(reason);
+        if let Err(handled) = self.check_access(channel.as_ref(), &message, &peer).await {
+            return handled;
         }
 
         let route = RouteInput {
@@ -341,22 +322,8 @@ impl Hub {
         let session = routing::session_key(&route, config.dm_scope, &config.identity_links);
 
         if let Some(name) = command(&message.text) {
-            let reply = match name {
-                "stop" => {
-                    if self.queues.stop(&session) {
-                        "Stopped."
-                    } else {
-                        "Nothing is running."
-                    }
-                }
-                "new" => {
-                    self.queues.stop(&session);
-                    self.lock_history().remove(&session);
-                    "Started a new conversation."
-                }
-                _ => HELP,
-            };
-            let _ = outbound::send_reply(channel.as_ref(), self.state.as_ref(), &message, reply).await;
+            self.run_command(channel.as_ref(), &message, name, &session)
+                .await;
             self.log(channel_id, "in", "command", &peer, &message.text, None);
             return Handled::Command(name);
         }
@@ -378,7 +345,7 @@ impl Hub {
         self.log(channel_id, "in", "message", &peer, &message.text, None);
         let mut origin = format!("{} · {}", config.name, channel.pairing_label(&message));
         if message.kind() == ChatKind::Group {
-            origin.push_str(&format!(" in group {}", message.chat_id));
+            let _ = write!(origin, " in group {}", message.chat_id);
         }
         let job = ChannelJob {
             channel_id: channel_id.to_string(),
@@ -406,7 +373,83 @@ impl Hub {
         Handled::Queued(session)
     }
 
-    fn lock_history(&self) -> std::sync::MutexGuard<'_, HashMap<String, VecDeque<(String, String)>>> {
+    /// DM policy and pairing, or group gating. `Err` carries the outcome
+    /// when the message stops here.
+    async fn check_access(
+        &self,
+        channel: &dyn Channel,
+        message: &Inbound,
+        peer: &str,
+    ) -> Result<(), Handled> {
+        let config = channel.config();
+        let channel_id = config.id.as_str();
+        let allow = self.allow_ids(channel_id);
+        let verdict = match message.kind() {
+            ChatKind::Direct => {
+                match policy::dm_access(config.dm_policy, &allow, &message.sender_id) {
+                    DmAccess::Allow => Ok(()),
+                    DmAccess::Deny(reason) => Err(reason),
+                    DmAccess::NeedsPairing => {
+                        let outcome = self.request_pairing(channel, message);
+                        let reply = pairing::pairing_reply(&outcome, &message.sender_id);
+                        let _ = outbound::send_reply(channel, self.state.as_ref(), message, &reply)
+                            .await;
+                        self.log(channel_id, "in", "pairing", peer, &message.text, None);
+                        if matches!(outcome, PairingOutcome::Issued(_)) {
+                            self.emit(HubEvent::PairingRequested {
+                                channel_id: channel_id.to_string(),
+                            });
+                        }
+                        return Err(Handled::Pairing(outcome));
+                    }
+                }
+            }
+            ChatKind::Group => {
+                let facts = GroupFacts {
+                    group_id: message.chat_id.clone(),
+                    sender_id: message.sender_id.clone(),
+                    mentioned: message.mentioned,
+                    reply_to_bot: message.reply_to_bot,
+                };
+                match policy::group_access(config, &allow, &facts) {
+                    GroupAccess::Allow => Ok(()),
+                    GroupAccess::Skip(reason) => Err(reason),
+                }
+            }
+        };
+        verdict.map_err(|reason| {
+            // Unmentioned group chatter is not worth a log line.
+            if reason != "not mentioned" {
+                self.log(channel_id, "in", "denied", peer, reason, None);
+            }
+            Handled::Dropped(reason)
+        })
+    }
+
+    /// `/stop`, `/new`, `/help`.
+    async fn run_command(
+        &self,
+        channel: &dyn Channel,
+        message: &Inbound,
+        name: &str,
+        session: &str,
+    ) {
+        let reply = match name {
+            "stop" if self.queues.stop(session) => "Stopped.",
+            "stop" => "Nothing is running.",
+            "new" => {
+                self.queues.stop(session);
+                self.lock_history().remove(session);
+                "Started a new conversation."
+            }
+            _ => HELP,
+        };
+        let _ = outbound::send_reply(channel, self.state.as_ref(), message, reply).await;
+    }
+
+    fn lock_history(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, VecDeque<(String, String)>>> {
         self.history.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -422,7 +465,12 @@ impl Hub {
             created_at: 0,
             last_seen_at: 0,
         };
-        let outcome = pairing::request(&mut pending, template, (self.clock)(), &mut pairing::random_code);
+        let outcome = pairing::request(
+            &mut pending,
+            template,
+            (self.clock)(),
+            &mut pairing::random_code,
+        );
         let _ = self.state.set_pairings(channel_id, &pending);
         outcome
     }
@@ -446,10 +494,16 @@ impl Hub {
     ///
     /// # Errors
     /// Unknown or expired code, or storage failures.
-    pub async fn resolve_pairing(&self, channel_id: &str, code: &str, approve: bool) -> Result<PairingRequest, String> {
+    pub async fn resolve_pairing(
+        &self,
+        channel_id: &str,
+        code: &str,
+        approve: bool,
+    ) -> Result<PairingRequest, String> {
         let mut pending = self.state.pairings(channel_id)?;
-        let request = pairing::take(&mut pending, code, (self.clock)())
-            .ok_or_else(|| "no pending pairing request with that code (it may have expired)".to_string())?;
+        let request = pairing::take(&mut pending, code, (self.clock)()).ok_or_else(|| {
+            "no pending pairing request with that code (it may have expired)".to_string()
+        })?;
         self.state.set_pairings(channel_id, &pending)?;
         if approve {
             self.state.allow_add(
@@ -471,8 +525,19 @@ impl Hub {
                     .await;
             }
         }
-        let verdict = if approve { "pairing approved" } else { "pairing denied" };
-        self.log(channel_id, "system", "pairing", &format!("{} ({})", request.label, request.sender_id), verdict, None);
+        let verdict = if approve {
+            "pairing approved"
+        } else {
+            "pairing denied"
+        };
+        self.log(
+            channel_id,
+            "system",
+            "pairing",
+            &format!("{} ({})", request.label, request.sender_id),
+            verdict,
+            None,
+        );
         Ok(request)
     }
 
@@ -500,7 +565,10 @@ impl Hub {
         }
         let limit = channel.capabilities().text_chunk_limit;
         let mut sent = 0;
-        for (part, chunk) in crate::chunk::chunk_text(&delivery.text, limit).into_iter().enumerate() {
+        for (part, chunk) in crate::chunk::chunk_text(&delivery.text, limit)
+            .into_iter()
+            .enumerate()
+        {
             let key = delivery
                 .idempotency_key
                 .as_ref()
@@ -523,17 +591,27 @@ impl Hub {
             }
             sent += 1;
         }
-        self.log(&delivery.channel_id, "out", "delivery", &delivery.chat_id, &delivery.text, None);
+        self.log(
+            &delivery.channel_id,
+            "out",
+            "delivery",
+            &delivery.chat_id,
+            &delivery.text,
+            None,
+        );
         Ok(sent)
     }
 
     async fn run(&self, work: Work, stop: StopToken) {
-        let Work { channel, message, mut job } = work;
+        let Work {
+            channel,
+            message,
+            mut job,
+        } = work;
         let history: Vec<(String, String)> = self
             .lock_history()
             .get(&job.session_key)
-            .map(|h| h.iter().cloned().collect())
-            .unwrap_or_default();
+            .map_or_else(Vec::new, |h| h.iter().cloned().collect());
         job.prompt = untrusted::task_prompt(&channel.config().name, &message, &history);
         let channel_id = job.channel_id.clone();
         let session = job.session_key.clone();
@@ -552,7 +630,8 @@ impl Hub {
         let (progress_tx, mut progress) = mpsc::unbounded_channel();
         let task = self.runner.run(job, progress_tx, stop);
         tokio::pin!(task);
-        let mut preview = Preview::new(channel.as_ref(), self.state.as_ref(), &message).with_throttle(self.throttle);
+        let mut preview = Preview::new(channel.as_ref(), self.state.as_ref(), &message)
+            .with_throttle(self.throttle);
         let mut announced = HashSet::new();
         let mut task_id = None;
         let outcome = loop {
@@ -582,12 +661,22 @@ impl Hub {
         };
         match preview.finish(&text).await {
             Ok(_) => self.log(&channel_id, "out", "message", &peer, &text, task_id.clone()),
-            Err(error) => self.log(&channel_id, "out", "error", &peer, &send_error(&error), task_id.clone()),
+            Err(error) => self.log(
+                &channel_id,
+                "out",
+                "error",
+                &peer,
+                &send_error(&error),
+                task_id.clone(),
+            ),
         }
         if outcome.status == "completed" {
             let mut history = self.lock_history();
             let turns = history.entry(session).or_default();
-            turns.push_back((clip(&message.text, HISTORY_CHARS), clip(&outcome.answer, HISTORY_CHARS)));
+            turns.push_back((
+                clip(&message.text, HISTORY_CHARS),
+                clip(&outcome.answer, HISTORY_CHARS),
+            ));
             while turns.len() > HISTORY_TURNS {
                 turns.pop_front();
             }

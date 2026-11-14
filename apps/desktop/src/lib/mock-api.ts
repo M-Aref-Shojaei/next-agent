@@ -9,6 +9,7 @@ import {
   type ProviderPreset,
   type UsageTotals,
 } from "./gateway.ts";
+import type { AllowEntry, ChannelActivity, ChannelInfo, PairingRequest } from "./channels.ts";
 
 const presets: ProviderPreset[] = [
   { id: "openai", label: "OpenAI", kind: "openai", baseUrl: "https://api.openai.com/v1", needsKey: true, models: ["gpt-4.1", "gpt-4o-mini"] },
@@ -56,6 +57,19 @@ function requireVault() {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Chat channels: one demo pairing request so the Settings page has content.
+const channels: ChannelInfo[] = [];
+const channelTokens = new Set<string>();
+const pairings = new Map<string, PairingRequest[]>();
+const allowLists = new Map<string, AllowEntry[]>();
+const channelLog = new Map<string, ChannelActivity[]>();
+const nowSecs = () => Math.floor(Date.now() / 1000);
+function findChannel(id: string): ChannelInfo {
+  const c = channels.find((x) => x.config.id === id);
+  if (!c) throw `unknown channel ${id}`;
+  return c;
+}
 
 function envelope(taskId: string, seq: number, kind: string, data: object): StreamMessage {
   return {
@@ -380,6 +394,85 @@ export const mockApi: Api = {
     requireVault();
     const scene = JSON.parse(boardDoc(boardName(name)).content) as { elements?: { isDeleted?: boolean }[]; files?: unknown };
     return { name, elements: (scene.elements ?? []).filter((e) => !e.isDeleted), files: scene.files ?? null };
+  },
+  async channelList() {
+    return channels.map((c) => ({ ...c, config: { ...c.config } }));
+  },
+  async channelSave(config, token) {
+    if (token !== undefined && !/^\d+:[A-Za-z0-9_-]{20,}$/.test(token.trim())) throw "that does not look like a Telegram bot token";
+    if (!config.workspaceId) throw "pick the workspace channel tasks run in";
+    if (config.dmPolicy === "open" && !(allowLists.get(config.id) ?? []).some((a) => a.senderId === "*")) {
+      throw "the open DM policy needs an explicit `*` entry on the allow-list";
+    }
+    const id = config.id || `ch_mock${channels.length + 1}`;
+    if (token) channelTokens.add(id);
+    const hasToken = channelTokens.has(id);
+    const health = !config.enabled
+      ? { state: "stopped" as const, detail: "disabled", restarts: 0, since: nowSecs() }
+      : hasToken
+        ? { state: "connected" as const, detail: "receiving messages", restarts: 0, since: nowSecs() }
+        : { state: "failed" as const, detail: "no bot token saved: paste one from @BotFather", restarts: 0, since: nowSecs() };
+    const info: ChannelInfo = { config: { ...config, id }, hasToken, health };
+    const index = channels.findIndex((c) => c.config.id === id);
+    if (index >= 0) channels[index] = info;
+    else {
+      channels.push(info);
+      pairings.set(id, [{ channelId: id, senderId: "424242", chatId: "424242", label: "@demo_user", code: "K7QX2M9P", createdAt: nowSecs() - 300, lastSeenAt: nowSecs() - 60 }]);
+      channelLog.set(id, [{ ts: new Date().toISOString(), channelId: id, direction: "in", kind: "pairing", peer: "@demo_user (424242)", text: "hello", taskId: null }]);
+    }
+    return info;
+  },
+  async channelDelete(id) {
+    const index = channels.findIndex((c) => c.config.id === id);
+    if (index < 0) return false;
+    channels.splice(index, 1);
+    channelTokens.delete(id);
+    return true;
+  },
+  async channelTest(id, token) {
+    if (!token && !(id && channelTokens.has(id))) throw "paste a bot token first";
+    await sleep(200);
+    return { id: "1234567", username: "next_agent_demo_bot", name: "Next Agent (mock)" };
+  },
+  async channelRestart(id) {
+    findChannel(id);
+  },
+  async channelPairings(id) {
+    return (pairings.get(id) ?? []).filter((p) => p.createdAt + 3600 > nowSecs());
+  },
+  async channelPairingResolve(id, code, approve) {
+    const list = pairings.get(id) ?? [];
+    const request = list.find((p) => p.code === code.toUpperCase());
+    if (!request) throw "no pending pairing request with that code (it may have expired)";
+    pairings.set(id, list.filter((p) => p !== request));
+    if (approve) {
+      const allow = allowLists.get(id) ?? [];
+      allowLists.set(id, [...allow.filter((a) => a.senderId !== request.senderId), { senderId: request.senderId, label: request.label, source: "pairing", addedAt: new Date().toISOString() }]);
+    }
+    return request;
+  },
+  async channelAllowList(id) {
+    return [...(allowLists.get(id) ?? [])];
+  },
+  async channelAllowAdd(id, senderId, label) {
+    if (!/^(\*|[A-Za-z0-9_@.:-]{1,64})$/.test(senderId.trim())) throw "enter a numeric Telegram user id (or * for anyone)";
+    const allow = allowLists.get(id) ?? [];
+    allowLists.set(id, [...allow.filter((a) => a.senderId !== senderId.trim()), { senderId: senderId.trim(), label, source: "manual", addedAt: new Date().toISOString() }]);
+  },
+  async channelAllowRemove(id, senderId) {
+    if (senderId === "*" && findChannel(id).config.dmPolicy === "open") throw "switch the DM policy away from open before removing `*`";
+    const allow = allowLists.get(id) ?? [];
+    allowLists.set(id, allow.filter((a) => a.senderId !== senderId));
+    return allow.length !== (allowLists.get(id) ?? []).length;
+  },
+  async channelActivity(id, limit) {
+    return (channelLog.get(id) ?? []).slice(0, limit ?? 100);
+  },
+  async onChannelHealth() {
+    return () => {};
+  },
+  async onChannelChange() {
+    return () => {};
   },
   async boardExport(name, ext, data) {
     requireVault();

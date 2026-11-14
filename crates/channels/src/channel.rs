@@ -1,7 +1,7 @@
 // Ported from OpenClaw (MIT, © 2026 OpenClaw Foundation): src/channels/plugins/types.adapters.ts (ChannelGatewayAdapter, ChannelOutboundAdapter, ChannelPairingAdapter, ChannelThreadingAdapter) @ 1ac07b333581ff06e7d323015dc5912247415d4b
 //! The adapter contract every channel implements.
 //!
-//! OpenClaw splits this across several plugin adapters (gateway, outbound,
+//! `OpenClaw` splits this across several plugin adapters (gateway, outbound,
 //! pairing, threading, capabilities). We keep one object-safe trait; the
 //! supervisor ([`crate::supervisor`]) owns reconnects and health, the hub
 //! ([`crate::hub`]) owns policy, routing and task runs. Adapters only move

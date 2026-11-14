@@ -2448,6 +2448,7 @@ dependencies = [
  "base64 0.22.1",
  "gtk",
  "gtk-layer-shell",
+ "next-agent-channels",
  "next-agent-core",
  "next-agent-graph",
  "next-agent-macos-panel",

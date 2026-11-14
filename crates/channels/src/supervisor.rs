@@ -1,6 +1,6 @@
 //! Keeps a channel receiving: restarts it with exponential backoff after a
 //! transient failure, stops on a fatal one (bad token), and publishes its
-//! health on a watch channel. OpenClaw's design (see
+//! health on a watch channel. `OpenClaw`'s design (see
 //! `docs/upstream/OpenClaw.md`), our own code.
 
 use crate::channel::{Channel, ChannelError};
@@ -124,11 +124,16 @@ pub fn supervise(
                     let _ = health_tx.send(Health::new(HealthState::Failed, message, restarts));
                     return;
                 }
-                Err(ChannelError::Transient { message, retry_after }) => {
+                Err(ChannelError::Transient {
+                    message,
+                    retry_after,
+                }) => {
                     if started.elapsed() >= backoff.stable {
                         delay = backoff.initial;
                     }
-                    let wait = retry_after.map_or(delay, Duration::from_secs).min(backoff.max.max(delay));
+                    let wait = retry_after
+                        .map_or(delay, Duration::from_secs)
+                        .min(backoff.max.max(delay));
                     restarts += 1;
                     let _ = health_tx.send(Health::new(
                         HealthState::Reconnecting,
@@ -175,22 +180,30 @@ mod tests {
             &self.config
         }
         fn capabilities(&self) -> Capabilities {
-            Capabilities { text_chunk_limit: 100, edit: false, typing: false, threads: false, media: false }
+            Capabilities {
+                text_chunk_limit: 100,
+                edit: false,
+                typing: false,
+                threads: false,
+                media: false,
+            }
         }
         fn probe(&self) -> BoxFuture<'_, Result<BotIdentity, ChannelError>> {
             Box::pin(async { Ok(BotIdentity::default()) })
         }
-        fn start(&self, _inbound: mpsc::Sender<Inbound>, connected: ConnectedHook) -> BoxFuture<'_, Result<(), ChannelError>> {
+        fn start(
+            &self,
+            _inbound: mpsc::Sender<Inbound>,
+            connected: ConnectedHook,
+        ) -> BoxFuture<'_, Result<(), ChannelError>> {
             *self.starts.lock().expect("lock") += 1;
             let next = self.script.lock().expect("lock").pop();
             Box::pin(async move {
-                match next {
-                    Some(error) => Err(error),
-                    None => {
-                        connected();
-                        std::future::pending().await
-                    }
+                if let Some(error) = next {
+                    return Err(error);
                 }
+                connected();
+                std::future::pending().await
             })
         }
         fn send(&self, _m: Outbound) -> BoxFuture<'_, Result<MessageRef, ChannelError>> {
@@ -206,7 +219,11 @@ mod tests {
 
     fn flaky(mut script: Vec<ChannelError>) -> Arc<Flaky> {
         script.reverse();
-        Arc::new(Flaky { config: ChannelConfig::default(), script: Mutex::new(script), starts: Mutex::new(0) })
+        Arc::new(Flaky {
+            config: ChannelConfig::default(),
+            script: Mutex::new(script),
+            starts: Mutex::new(0),
+        })
     }
 
     async fn wait_for(health: &mut watch::Receiver<Health>, state: HealthState) -> Health {
@@ -220,7 +237,10 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn reconnects_after_transient_errors_then_reports_connected() {
-        let channel = flaky(vec![ChannelError::transient("net down"), ChannelError::transient("net down")]);
+        let channel = flaky(vec![
+            ChannelError::transient("net down"),
+            ChannelError::transient("net down"),
+        ]);
         let (tx, _rx) = mpsc::channel(4);
         let mut sup = supervise(channel.clone(), tx, Backoff::default());
         let health = wait_for(&mut sup.health, HealthState::Connected).await;
@@ -245,7 +265,10 @@ mod tests {
         let channel = flaky(vec![
             ChannelError::transient("a"),
             ChannelError::transient("b"),
-            ChannelError::Transient { message: "429".into(), retry_after: Some(30) },
+            ChannelError::Transient {
+                message: "429".into(),
+                retry_after: Some(30),
+            },
         ]);
         let (tx, _rx) = mpsc::channel(4);
         let mut sup = supervise(channel, tx, Backoff::default());
@@ -260,7 +283,14 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(details, ["a; retrying in 1s", "b; retrying in 2s", "429; retrying in 30s"]);
+        assert_eq!(
+            details,
+            [
+                "a; retrying in 1s",
+                "b; retrying in 2s",
+                "429; retrying in 30s"
+            ]
+        );
         sup.stop().await;
     }
 

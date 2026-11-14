@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn short_text_is_one_chunk() {
         assert_eq!(chunk_text("hello", 4096), ["hello"]);
-        assert!(chunk_text("", 4096).is_empty());
+        assert_eq!(chunk_text("", 4096).len(), 0);
     }
 
     #[test]
@@ -168,7 +168,10 @@ mod tests {
 
     #[test]
     fn code_fences_are_closed_and_reopened() {
-        let code = (0..60).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let code = (0..60)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let text = format!("Here:\n```rust\n{code}\n```\nDone.");
         let chunks = chunk_text(&text, 120);
         assert!(chunks.len() > 2);

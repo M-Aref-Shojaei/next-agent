@@ -37,7 +37,9 @@ pub struct Activity {
     pub task_id: Option<String>,
 }
 
-/// Storage the hub needs. Errors are human-readable strings.
+/// Storage the hub needs. Every method fails only with a storage error,
+/// as a human-readable string.
+#[allow(clippy::missing_errors_doc)]
 pub trait ChannelState: Send + Sync {
     fn pairings(&self, channel_id: &str) -> Result<Vec<PairingRequest>, String>;
     /// Replace the pending list of `channel_id`.
@@ -78,7 +80,12 @@ impl MemoryState {
 
 impl ChannelState for MemoryState {
     fn pairings(&self, channel_id: &str) -> Result<Vec<PairingRequest>, String> {
-        Ok(self.lock().pairings.get(channel_id).cloned().unwrap_or_default())
+        Ok(self
+            .lock()
+            .pairings
+            .get(channel_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
     fn set_pairings(&self, channel_id: &str, pending: &[PairingRequest]) -> Result<(), String> {
@@ -89,7 +96,12 @@ impl ChannelState for MemoryState {
     }
 
     fn allow_list(&self, channel_id: &str) -> Result<Vec<AllowEntry>, String> {
-        Ok(self.lock().allow.get(channel_id).cloned().unwrap_or_default())
+        Ok(self
+            .lock()
+            .allow
+            .get(channel_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
     fn allow_add(&self, channel_id: &str, entry: &AllowEntry) -> Result<(), String> {
@@ -243,7 +255,9 @@ impl ChannelState for StoreState {
     }
 
     fn claimed(&self, key: &str) -> Result<Option<String>, String> {
-        self.store()?.channel_claimed(key).map_err(|e| e.to_string())
+        self.store()?
+            .channel_claimed(key)
+            .map_err(|e| e.to_string())
     }
 
     fn log(&self, entry: &Activity) -> Result<(), String> {

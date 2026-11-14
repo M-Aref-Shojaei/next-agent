@@ -1,7 +1,9 @@
 //! The Telegram adapter against a mocked Bot API (wiremock).
 
 use next_agent_channels::telegram::{test_token, TelegramChannel};
-use next_agent_channels::{supervise, Backoff, Channel, ChannelConfig, ChannelError, ChatKind, HealthState, Outbound};
+use next_agent_channels::{
+    supervise, Backoff, Channel, ChannelConfig, ChannelError, ChatKind, HealthState, Outbound,
+};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -14,6 +16,7 @@ fn api(method_name: &str) -> String {
     format!("/bot{TOKEN}/{method_name}")
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn ok(result: Value) -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_json(json!({ "ok": true, "result": result }))
 }
@@ -21,13 +24,19 @@ fn ok(result: Value) -> ResponseTemplate {
 async fn mock_me(server: &MockServer) {
     Mock::given(method("POST"))
         .and(path(api("getMe")))
-        .respond_with(ok(json!({ "id": 999, "is_bot": true, "username": "NextBot", "first_name": "Next" })))
+        .respond_with(ok(
+            json!({ "id": 999, "is_bot": true, "username": "NextBot", "first_name": "Next" }),
+        ))
         .mount(server)
         .await;
 }
 
 fn channel(server: &MockServer) -> TelegramChannel {
-    let config = ChannelConfig { id: "ch_1".into(), workspace_id: "ws".into(), ..ChannelConfig::default() };
+    let config = ChannelConfig {
+        id: "ch_1".into(),
+        workspace_id: "ws".into(),
+        ..ChannelConfig::default()
+    };
     TelegramChannel::new(config, &server.uri(), TOKEN, Duration::from_secs(0)).expect("channel")
 }
 
@@ -51,14 +60,18 @@ async fn rejected_token_is_fatal_and_never_echoed() {
     let error = test_token(&server.uri(), TOKEN).await.expect_err("401");
     assert!(matches!(error, ChannelError::Fatal(_)));
     assert!(!error.message().contains("ABCdef"), "{error}");
-    let bad = test_token(&server.uri(), "not-a-token").await.expect_err("shape");
+    let bad = test_token(&server.uri(), "not-a-token")
+        .await
+        .expect_err("shape");
     assert!(matches!(bad, ChannelError::Fatal(_)));
 }
 
 #[tokio::test]
 async fn unreachable_api_does_not_leak_the_token() {
     // Nothing listens on this port.
-    let error = test_token("http://127.0.0.1:9", TOKEN).await.expect_err("down");
+    let error = test_token("http://127.0.0.1:9", TOKEN)
+        .await
+        .expect_err("down");
     assert!(matches!(error, ChannelError::Transient { .. }));
     assert!(!error.message().contains("ABCdef"), "{error}");
 }
@@ -86,7 +99,10 @@ async fn long_polling_delivers_messages_and_advances_the_offset() {
     let channel = std::sync::Arc::new(channel(&server));
     let (tx, mut rx) = mpsc::channel(8);
     let mut sup = supervise(channel, tx, Backoff::default());
-    let message = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.expect("in time").expect("message");
+    let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("in time")
+        .expect("message");
     assert_eq!(message.text, "hi");
     assert_eq!(message.chat_kind, Some(ChatKind::Direct));
     assert_eq!(message.event_id, "5");
@@ -99,7 +115,8 @@ async fn long_polling_delivers_messages_and_advances_the_offset() {
     // The bot's own update was skipped; polling continues from offset 7.
     tokio::time::sleep(Duration::from_millis(100)).await;
     let polls: Vec<Request> = server.received_requests().await.unwrap_or_default();
-    assert!(polls.iter().any(|r| r.url.path().ends_with("getUpdates") && String::from_utf8_lossy(&r.body).contains("\"offset\":7")));
+    assert!(polls.iter().any(|r| r.url.path().ends_with("getUpdates")
+        && String::from_utf8_lossy(&r.body).contains("\"offset\":7")));
     assert!(rx.try_recv().is_err());
     sup.stop().await;
 }
@@ -109,11 +126,17 @@ async fn invalid_token_while_polling_marks_the_channel_failed() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path(api("getMe")))
-        .respond_with(ResponseTemplate::new(401).set_body_json(json!({ "ok": false, "error_code": 401, "description": "Unauthorized" })))
+        .respond_with(ResponseTemplate::new(401).set_body_json(
+            json!({ "ok": false, "error_code": 401, "description": "Unauthorized" }),
+        ))
         .mount(&server)
         .await;
     let (tx, _rx) = mpsc::channel(8);
-    let mut sup = supervise(std::sync::Arc::new(channel(&server)), tx, Backoff::default());
+    let mut sup = supervise(
+        std::sync::Arc::new(channel(&server)),
+        tx,
+        Backoff::default(),
+    );
     loop {
         let state = sup.health.borrow().state;
         if state == HealthState::Failed {
@@ -134,7 +157,14 @@ async fn conflict_is_retried_not_fatal() {
         .mount(&server)
         .await;
     let (tx, _rx) = mpsc::channel(8);
-    let mut sup = supervise(std::sync::Arc::new(channel(&server)), tx, Backoff { initial: Duration::from_millis(10), ..Backoff::default() });
+    let mut sup = supervise(
+        std::sync::Arc::new(channel(&server)),
+        tx,
+        Backoff {
+            initial: Duration::from_millis(10),
+            ..Backoff::default()
+        },
+    );
     loop {
         let state = sup.health.borrow().state;
         if state == HealthState::Reconnecting {
@@ -158,25 +188,37 @@ async fn send_edit_and_typing_use_the_bot_api() {
         .await;
     Mock::given(method("POST"))
         .and(path(api("editMessageText")))
-        .and(body_partial_json(json!({ "chat_id": -100, "message_id": 77, "text": "hello world" })))
+        .and(body_partial_json(
+            json!({ "chat_id": -100, "message_id": 77, "text": "hello world" }),
+        ))
         .respond_with(ok(json!(true)))
         .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
         .and(path(api("sendChatAction")))
-        .and(body_partial_json(json!({ "chat_id": -100, "action": "typing" })))
+        .and(body_partial_json(
+            json!({ "chat_id": -100, "action": "typing" }),
+        ))
         .respond_with(ok(json!(true)))
         .expect(1)
         .mount(&server)
         .await;
     let channel = channel(&server);
     let sent = channel
-        .send(Outbound { chat_id: "-100".into(), text: "hello".into(), reply_to: Some("5".into()), thread_id: Some("3".into()) })
+        .send(Outbound {
+            chat_id: "-100".into(),
+            text: "hello".into(),
+            reply_to: Some("5".into()),
+            thread_id: Some("3".into()),
+        })
         .await
         .expect("send");
     assert_eq!(sent.message_id, "77");
-    channel.edit(sent, "hello world".into()).await.expect("edit");
+    channel
+        .edit(sent, "hello world".into())
+        .await
+        .expect("edit");
     channel.typing("-100".into()).await.expect("typing");
 }
 
@@ -194,8 +236,27 @@ async fn unchanged_edit_is_not_an_error_and_rate_limits_are_transient() {
         .mount(&server)
         .await;
     let channel = channel(&server);
-    let target = next_agent_channels::MessageRef { chat_id: "1".into(), message_id: "2".into() };
-    channel.edit(target, "same".into()).await.expect("not modified is fine");
-    let error = channel.send(Outbound { chat_id: "1".into(), text: "x".into(), ..Outbound::default() }).await.expect_err("429");
-    assert_eq!(error, ChannelError::Transient { message: "Telegram rate limit (Too Many Requests)".into(), retry_after: Some(3) });
+    let target = next_agent_channels::MessageRef {
+        chat_id: "1".into(),
+        message_id: "2".into(),
+    };
+    channel
+        .edit(target, "same".into())
+        .await
+        .expect("not modified is fine");
+    let error = channel
+        .send(Outbound {
+            chat_id: "1".into(),
+            text: "x".into(),
+            ..Outbound::default()
+        })
+        .await
+        .expect_err("429");
+    assert_eq!(
+        error,
+        ChannelError::Transient {
+            message: "Telegram rate limit (Too Many Requests)".into(),
+            retry_after: Some(3)
+        }
+    );
 }

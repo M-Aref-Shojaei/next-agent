@@ -61,6 +61,8 @@ export interface TaskState {
   review?: ReviewState;
   /** Task record written to the vault. */
   recordPath?: string;
+  /** Chat channel the task came from, e.g. "Telegram · @alice". */
+  origin?: string;
 }
 
 export interface ReviewState {
@@ -97,6 +99,11 @@ export function newTask(id: string, title: string): TaskState {
     lastSeq: -1,
     stashedOutput: {},
   };
+}
+
+/** Task id a stream message belongs to. */
+export function messageTaskId(message: StreamMessage): string {
+  return message.type === "event" ? message.event.task_id : message.task_id;
 }
 
 export function pendingApprovals(task: TaskState): ApprovalItem[] {

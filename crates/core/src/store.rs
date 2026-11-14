@@ -2062,7 +2062,10 @@ impl Store {
         rows: &[ChannelPairingRow],
     ) -> Result<(), StoreError> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM channel_pairings WHERE channel_id = ?1", [channel_id])?;
+        tx.execute(
+            "DELETE FROM channel_pairings WHERE channel_id = ?1",
+            [channel_id],
+        )?;
         for row in rows {
             tx.execute(
                 "INSERT INTO channel_pairings
@@ -2123,7 +2126,11 @@ impl Store {
     ///
     /// # Errors
     /// Returns [`StoreError`] if the write fails.
-    pub fn channel_allow_remove(&self, channel_id: &str, sender_id: &str) -> Result<bool, StoreError> {
+    pub fn channel_allow_remove(
+        &self,
+        channel_id: &str,
+        sender_id: &str,
+    ) -> Result<bool, StoreError> {
         Ok(self.conn.execute(
             "DELETE FROM channel_allow WHERE channel_id = ?1 AND sender_id = ?2",
             [channel_id, sender_id],
@@ -2243,9 +2250,16 @@ mod channel_tests {
             config: "{}".into(),
         };
         store.channel_upsert(&row).expect("upsert");
-        store.channel_upsert(&ChannelRow { name: "Bot 2".into(), ..row.clone() }).expect("update");
+        store
+            .channel_upsert(&ChannelRow {
+                name: "Bot 2".into(),
+                ..row.clone()
+            })
+            .expect("update");
         assert_eq!(store.channel_rows().expect("rows")[0].name, "Bot 2");
-        store.channel_pairings_replace("ch_1", &[pairing("a", "AAAA")]).expect("pair");
+        store
+            .channel_pairings_replace("ch_1", &[pairing("a", "AAAA")])
+            .expect("pair");
         store
             .channel_allow_add(&ChannelAllowRow {
                 channel_id: "ch_1".into(),
@@ -2256,9 +2270,9 @@ mod channel_tests {
             })
             .expect("allow");
         assert!(store.channel_delete("ch_1").expect("delete"));
-        assert!(store.channel_rows().expect("rows").is_empty());
-        assert!(store.channel_pairings("ch_1").expect("p").is_empty());
-        assert!(store.channel_allow_list("ch_1").expect("a").is_empty());
+        assert_eq!(store.channel_rows().expect("rows").len(), 0);
+        assert_eq!(store.channel_pairings("ch_1").expect("p").len(), 0);
+        assert_eq!(store.channel_allow_list("ch_1").expect("a").len(), 0);
     }
 
     #[test]
@@ -2267,7 +2281,9 @@ mod channel_tests {
         store
             .channel_pairings_replace("ch_1", &[pairing("a", "AAAA"), pairing("b", "BBBB")])
             .expect("two");
-        store.channel_pairings_replace("ch_1", &[pairing("b", "BBBB")]).expect("one");
+        store
+            .channel_pairings_replace("ch_1", &[pairing("b", "BBBB")])
+            .expect("one");
         let rows = store.channel_pairings("ch_1").expect("rows");
         assert_eq!(rows, [pairing("b", "BBBB")]);
     }
@@ -2288,7 +2304,7 @@ mod channel_tests {
         let list = store.channel_allow_list("ch_1").expect("list");
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].label, "@b");
-        assert!(!list[0].added_at.is_empty());
+        assert_ne!(list[0].added_at.len(), 0);
         assert!(store.channel_allow_remove("ch_1", "42").expect("rm"));
         assert!(!store.channel_allow_remove("ch_1", "42").expect("rm again"));
     }
@@ -2299,7 +2315,10 @@ mod channel_tests {
         assert!(store.channel_claim("in:ch_1:1", "").expect("first"));
         assert!(!store.channel_claim("in:ch_1:1", "").expect("second"));
         assert!(store.channel_claim("out:ch_1:1:0", "m9").expect("out"));
-        assert_eq!(store.channel_claimed("out:ch_1:1:0").expect("get"), Some("m9".into()));
+        assert_eq!(
+            store.channel_claimed("out:ch_1:1:0").expect("get"),
+            Some("m9".into())
+        );
         assert_eq!(store.channel_claimed("missing").expect("none"), None);
     }
 
@@ -2320,8 +2339,11 @@ mod channel_tests {
                 .expect("add");
         }
         let rows = store.channel_activity("ch_1", 2).expect("rows");
-        assert_eq!(rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), ["m4", "m3"]);
-        assert!(store.channel_activity("other", 10).expect("none").is_empty());
+        assert_eq!(
+            rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            ["m4", "m3"]
+        );
+        assert_eq!(store.channel_activity("other", 10).expect("none").len(), 0);
     }
 }
 // --- end channels ---------------------------------------------------------------

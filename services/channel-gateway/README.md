@@ -1,7 +1,5 @@
 # channel-gateway
 
-OpenClaw-inspired daemon that turns inbound channel events (Telegram, Discord,
-Slack, Gmail) into tasks. Channel tasks can never select `bypassPermissions`;
-approvals are routed back to the desktop/overlay.
-
-Status: stub (M5). See `docs/plan/Roadmap.md`.
+Moved into the app: the channel gateway is the `crates/channels` crate
+(Telegram first), run by the desktop app's `ChannelService`. There is no
+separate daemon. See `docs/architecture/Channels.md`.

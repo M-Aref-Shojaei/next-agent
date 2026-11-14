@@ -2,7 +2,7 @@
 //! chunked at 4,096, a typing indicator, and edits for streaming previews.
 //! Media is not supported yet (the hub answers with a clear message).
 //!
-//! Replaces OpenClaw's grammY-based adapter (`extensions/telegram`) with a
+//! Replaces `OpenClaw`'s grammY-based adapter (`extensions/telegram`) with a
 //! small client of our own; no upstream code.
 
 pub mod api;
@@ -43,7 +43,12 @@ pub struct TelegramChannel {
 impl TelegramChannel {
     /// # Errors
     /// Malformed token (see [`api::valid_token`]).
-    pub fn new(config: ChannelConfig, base_url: &str, token: &str, poll: Duration) -> Result<Self, ChannelError> {
+    pub fn new(
+        config: ChannelConfig,
+        base_url: &str,
+        token: &str,
+        poll: Duration,
+    ) -> Result<Self, ChannelError> {
         Ok(Self {
             config,
             api: TelegramApi::new(base_url, token, poll)?,
@@ -52,7 +57,12 @@ impl TelegramChannel {
     }
 
     async fn identity(&self) -> Result<BotIdentity, ChannelError> {
-        if let Some(me) = self.me.lock().unwrap_or_else(PoisonError::into_inner).clone() {
+        if let Some(me) = self
+            .me
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
             return Ok(me);
         }
         let me = identity_from(&self.api.get_me().await?);
@@ -63,7 +73,9 @@ impl TelegramChannel {
 
 fn identity_from(value: &Value) -> BotIdentity {
     BotIdentity {
-        id: value["id"].as_i64().map(|i| i.to_string()).unwrap_or_default(),
+        id: value["id"]
+            .as_i64()
+            .map_or_else(String::new, |i| i.to_string()),
         username: value["username"].as_str().unwrap_or_default().to_string(),
         name: value["first_name"].as_str().unwrap_or_default().to_string(),
     }
@@ -166,7 +178,11 @@ impl Channel for TelegramChannel {
         })
     }
 
-    fn start(&self, inbound: mpsc::Sender<Inbound>, connected: ConnectedHook) -> BoxFuture<'_, Result<(), ChannelError>> {
+    fn start(
+        &self,
+        inbound: mpsc::Sender<Inbound>,
+        connected: ConnectedHook,
+    ) -> BoxFuture<'_, Result<(), ChannelError>> {
         Box::pin(async move {
             let me = self.identity().await?;
             let mut offset: i64 = 0;
@@ -198,7 +214,12 @@ impl Channel for TelegramChannel {
         Box::pin(async move {
             let id = self
                 .api
-                .send_message(&message.chat_id, &message.text, message.reply_to.as_deref(), message.thread_id.as_deref())
+                .send_message(
+                    &message.chat_id,
+                    &message.text,
+                    message.reply_to.as_deref(),
+                    message.thread_id.as_deref(),
+                )
                 .await?;
             Ok(MessageRef {
                 chat_id: message.chat_id,
@@ -208,7 +229,11 @@ impl Channel for TelegramChannel {
     }
 
     fn edit(&self, target: MessageRef, text: String) -> BoxFuture<'_, Result<(), ChannelError>> {
-        Box::pin(async move { self.api.edit_message_text(&target.chat_id, &target.message_id, &text).await })
+        Box::pin(async move {
+            self.api
+                .edit_message_text(&target.chat_id, &target.message_id, &text)
+                .await
+        })
     }
 
     fn typing(&self, chat_id: String) -> BoxFuture<'_, Result<(), ChannelError>> {
@@ -238,6 +263,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn update(message: Value) -> Value {
         json!({ "update_id": 10, "message": message })
     }
@@ -297,7 +323,10 @@ mod tests {
             "message_id": 9, "photo": [{}],
             "from": { "id": 42, "is_bot": false }, "chat": { "id": 42, "type": "private" }
         }));
-        assert_eq!(parse_update(&photo, &me()).expect("m").media.as_deref(), Some("photo"));
+        assert_eq!(
+            parse_update(&photo, &me()).expect("m").media.as_deref(),
+            Some("photo")
+        );
         let bot = update(json!({
             "message_id": 9, "text": "x",
             "from": { "id": 7, "is_bot": true }, "chat": { "id": 7, "type": "private" }
@@ -317,6 +346,9 @@ mod tests {
             "message_id": 9, "text": "x", "is_topic_message": true, "message_thread_id": 77,
             "from": { "id": 42, "is_bot": false }, "chat": { "id": -100, "type": "supergroup" }
         }));
-        assert_eq!(parse_update(&u, &me()).expect("m").thread_id.as_deref(), Some("77"));
+        assert_eq!(
+            parse_update(&u, &me()).expect("m").thread_id.as_deref(),
+            Some("77")
+        );
     }
 }

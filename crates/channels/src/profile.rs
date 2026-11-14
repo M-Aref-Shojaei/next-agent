@@ -11,6 +11,7 @@
 use next_agent_core::profiles::{self, AgentProfile};
 use next_agent_core::runner::Floor;
 use next_agent_core::{AgentExecutor, AgentStep, Emitter, TaskSpec, ToolRequest, ToolResult};
+use std::fmt::Write as _;
 
 /// Name of the synthetic profile in the chain (shows in denial reasons).
 pub const PROFILE_NAME: &str = "channel";
@@ -41,7 +42,7 @@ pub const SELECTABLE_TOOLS: &[&str] = &[
 /// Never available to channel tasks, whatever the configuration says:
 /// spawning sessions (`subagent`), cron (`schedule_job`, `list_jobs`,
 /// `cancel_job`), sending to other sessions or channels, gateway control.
-/// Names follow ours and OpenClaw's `DEFAULT_GATEWAY_HTTP_TOOL_DENY`
+/// Names follow ours and `OpenClaw`'s `DEFAULT_GATEWAY_HTTP_TOOL_DENY`
 /// control-plane entries, so tools that land later are covered from day one.
 pub const ALWAYS_DENIED: &[&str] = &[
     "subagent",
@@ -78,12 +79,14 @@ pub fn sanitize_tools(tools: &[String]) -> Vec<String> {
 pub fn channel_profile(tools: &[String]) -> AgentProfile {
     let mut text = String::from("---\npermissions:\n  \"*\": deny\n");
     for tool in sanitize_tools(tools) {
-        text.push_str(&format!("  {tool}: allow\n"));
+        let _ = writeln!(text, "  {tool}: allow");
     }
     for tool in ALWAYS_DENIED {
-        text.push_str(&format!("  {tool}: deny\n"));
+        let _ = writeln!(text, "  {tool}: deny");
     }
-    text.push_str("---\nThis task came from a chat channel. Approvals happen only on the desktop.\n");
+    text.push_str(
+        "---\nThis task came from a chat channel. Approvals happen only on the desktop.\n",
+    );
     let mut profile = profiles::parse_profile(PROFILE_NAME, &text)
         .unwrap_or_else(|error| unreachable!("static channel profile parses: {error}"));
     profile.builtin = true;
@@ -163,7 +166,10 @@ mod tests {
                 "{tool}"
             );
         }
-        assert_eq!(profile.permission("brand_new_tool", "brand_new_tool"), Permission::Deny);
+        assert_eq!(
+            profile.permission("brand_new_tool", "brand_new_tool"),
+            Permission::Deny
+        );
     }
 
     #[test]
@@ -171,7 +177,10 @@ mod tests {
         let mut tools: Vec<String> = ALWAYS_DENIED.iter().map(|t| (*t).to_string()).collect();
         tools.push("read_file".into());
         let profile = channel_profile(&tools);
-        assert_eq!(profile.permission("read_file", "read_file"), Permission::Allow);
+        assert_eq!(
+            profile.permission("read_file", "read_file"),
+            Permission::Allow
+        );
         for tool in ALWAYS_DENIED {
             assert_eq!(profile.permission(tool, tool), Permission::Deny, "{tool}");
         }
@@ -217,8 +226,20 @@ mod tests {
     #[test]
     fn builtin_profile_chain_drops_denied_tools_from_the_offer() {
         let profile = channel_profile(&["read_file".into()]);
-        assert!(profiles::chain_offers(std::slice::from_ref(&profile), "read_file", "read_file"));
-        assert!(!profiles::chain_offers(&[profile.clone()], "subagent", "subagent"));
-        assert!(!profiles::chain_offers(&[profile], "run_command", "run_command"));
+        assert!(profiles::chain_offers(
+            std::slice::from_ref(&profile),
+            "read_file",
+            "read_file"
+        ));
+        assert!(!profiles::chain_offers(
+            std::slice::from_ref(&profile),
+            "subagent",
+            "subagent"
+        ));
+        assert!(!profiles::chain_offers(
+            &[profile],
+            "run_command",
+            "run_command"
+        ));
     }
 }

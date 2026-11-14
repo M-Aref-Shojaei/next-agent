@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
 //! Channel gateway: chat channels (Telegram first) as another way to start
-//! tasks, inside the app. Design ported from OpenClaw (MIT, © 2026 OpenClaw
-//! Foundation) at commit `1ac07b3`; see `docs/upstream/OpenClaw.md` and
+//! tasks, inside the app. Design ported from `OpenClaw` (MIT, `© 2026 OpenClaw
+//! Foundation`) at commit `1ac07b3`; see `docs/upstream/OpenClaw.md` and
 //! `docs/architecture/Channels.md`.
 //!
-//! Our rules are stricter than OpenClaw's:
+//! Our rules are stricter than `OpenClaw`'s:
 //! - channel tasks run only in `manual` or `plan` mode, never bypass
 //!   ([`config::ChannelMode`], [`config::guard_mode`]);
 //! - a deny-by-default tool profile that can only tighten ([`profile`]);
@@ -33,7 +33,9 @@ pub mod untrusted;
 
 pub use channel::{BoxFuture, Channel, ChannelError};
 pub use config::{ChannelConfig, ChannelMode, DmPolicy, DmScope, GroupPolicy};
-pub use hub::{ChannelJob, Delivery, Handled, Hub, HubEvent, TaskOutcome, TaskProgress, TaskRunner};
+pub use hub::{
+    ChannelJob, Delivery, Handled, Hub, HubEvent, TaskOutcome, TaskProgress, TaskRunner,
+};
 pub use pairing::PairingRequest;
 pub use profile::{channel_profile, ChannelExecutor};
 pub use queue::StopToken;

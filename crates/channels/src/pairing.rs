@@ -6,7 +6,7 @@
 //! - A code expires after [`PAIRING_TTL_SECS`] (1 hour).
 //! - Messaging again does not issue a new code; the pending one is repeated.
 //! - At most [`PAIRING_MAX_PENDING`] requests wait per channel account.
-//!   Stricter than OpenClaw: when full, new senders are refused instead of
+//!   Stricter than `OpenClaw`: when full, new senders are refused instead of
 //!   evicting the oldest request, so a flood cannot push out a real one.
 
 use serde::{Deserialize, Serialize};
@@ -159,8 +159,14 @@ mod tests {
     fn issues_once_and_repeats_the_pending_code() {
         let mut pending = Vec::new();
         let mut code = counter();
-        assert_eq!(request(&mut pending, template("a"), 100, &mut code), PairingOutcome::Issued("CODE0001".into()));
-        assert_eq!(request(&mut pending, template("a"), 200, &mut code), PairingOutcome::Pending("CODE0001".into()));
+        assert_eq!(
+            request(&mut pending, template("a"), 100, &mut code),
+            PairingOutcome::Issued("CODE0001".into())
+        );
+        assert_eq!(
+            request(&mut pending, template("a"), 200, &mut code),
+            PairingOutcome::Pending("CODE0001".into())
+        );
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].last_seen_at, 200);
         assert_eq!(pending[0].created_at, 100);
@@ -171,13 +177,22 @@ mod tests {
         let mut pending = Vec::new();
         let mut code = counter();
         for sender in ["a", "b", "c"] {
-            assert!(matches!(request(&mut pending, template(sender), 10, &mut code), PairingOutcome::Issued(_)));
+            assert!(matches!(
+                request(&mut pending, template(sender), 10, &mut code),
+                PairingOutcome::Issued(_)
+            ));
         }
-        assert_eq!(request(&mut pending, template("d"), 11, &mut code), PairingOutcome::Full);
+        assert_eq!(
+            request(&mut pending, template("d"), 11, &mut code),
+            PairingOutcome::Full
+        );
         assert_eq!(pending.len(), PAIRING_MAX_PENDING);
         assert!(pending.iter().all(|r| r.sender_id != "d"));
         // Existing senders still get their code back.
-        assert!(matches!(request(&mut pending, template("b"), 12, &mut code), PairingOutcome::Pending(_)));
+        assert!(matches!(
+            request(&mut pending, template("b"), 12, &mut code),
+            PairingOutcome::Pending(_)
+        ));
     }
 
     #[test]
@@ -190,7 +205,12 @@ mod tests {
         assert!(take(&mut pending.clone(), &first, 1_000 + PAIRING_TTL_SECS - 1).is_some());
         // At expiry: gone, and the sender gets a fresh code.
         assert!(take(&mut pending.clone(), &first, 1_000 + PAIRING_TTL_SECS).is_none());
-        let outcome = request(&mut pending, template("a"), 1_000 + PAIRING_TTL_SECS, &mut code);
+        let outcome = request(
+            &mut pending,
+            template("a"),
+            1_000 + PAIRING_TTL_SECS,
+            &mut code,
+        );
         assert_eq!(outcome, PairingOutcome::Issued("CODE0002".into()));
     }
 
@@ -201,7 +221,10 @@ mod tests {
         for (i, sender) in ["a", "b", "c"].iter().enumerate() {
             request(&mut pending, template(sender), i as u64, &mut code);
         }
-        assert_eq!(request(&mut pending, template("d"), 100, &mut code), PairingOutcome::Full);
+        assert_eq!(
+            request(&mut pending, template("d"), 100, &mut code),
+            PairingOutcome::Full
+        );
         let outcome = request(&mut pending, template("d"), PAIRING_TTL_SECS, &mut code);
         assert!(matches!(outcome, PairingOutcome::Issued(_)));
         assert!(pending.iter().all(|r| r.sender_id != "a"));
@@ -212,7 +235,10 @@ mod tests {
         let mut pending = Vec::new();
         let mut code = counter();
         request(&mut pending, template("a"), 0, &mut code);
-        assert_eq!(take(&mut pending, " code0001 ", 1).map(|r| r.sender_id), Some("a".into()));
+        assert_eq!(
+            take(&mut pending, " code0001 ", 1).map(|r| r.sender_id),
+            Some("a".into())
+        );
         assert!(take(&mut pending, "CODE0001", 1).is_none());
     }
 

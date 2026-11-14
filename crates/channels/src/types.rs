@@ -60,6 +60,7 @@ pub struct MessageRef {
 }
 
 /// What an adapter supports.
+#[allow(clippy::struct_excessive_bools)] // independent feature flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
     /// Longest text in one message, in UTF-16 code units.

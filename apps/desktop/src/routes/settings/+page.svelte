@@ -72,6 +72,12 @@
     <p class="muted">Only needed for an external OpenAI-compatible router such as 9Router; the built-in gateway works without it.</p>
   </section>
 
+  <section aria-labelledby="h-channels">
+    <h2 id="h-channels">Channels</h2>
+    <p>Message the agent from Telegram. Bots, pairings, allow-lists and health are on the
+      <a href="/settings/channels">Channels</a> page.</p>
+  </section>
+
   {#if overlay}
     <section aria-labelledby="h-overlay">
       <h2 id="h-overlay">Overlay</h2>

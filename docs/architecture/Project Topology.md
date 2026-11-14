@@ -23,6 +23,7 @@ flowchart LR
     next_agent_process_manager["process-manager<br/><small>crates/process-manager</small>"]
     next_agent_graph["graph<br/><small>crates/graph</small>"]
     next_agent_macos_panel["macos-panel<br/><small>crates/macos-panel</small>"]
+    next_agent_channels["channels<br/><small>crates/channels</small>"]
   end
   subgraph ts["TypeScript packages"]
     direction TB
@@ -46,10 +47,13 @@ flowchart LR
   next_agent_core --> next_agent_permission_engine
   next_agent_core --> next_agent_process_manager
   next_agent_core --> next_agent_graph
+  next_agent_channels --> next_agent_core
+  next_agent_channels --> next_agent_permission_engine
   next_agent_desktop --> next_agent_core
   next_agent_desktop --> next_agent_permission_engine
   next_agent_desktop --> next_agent_process_manager
   next_agent_desktop --> next_agent_graph
+  next_agent_desktop --> next_agent_channels
   next_agent_desktop --> next_agent_macos_panel
   ts_desktop --> ts_contracts
   ts_desktop ==>|"IPC: invoke / Channel"| next_agent_desktop
@@ -70,6 +74,7 @@ flowchart LR
   class next_agent_process_manager rust
   class next_agent_graph rust
   class next_agent_macos_panel rust
+  class next_agent_channels rust
   class next_agent_desktop rust
   class ts_desktop ts
   class ts_contracts ts
@@ -88,12 +93,13 @@ flowchart LR
 
 | Project | Kind | Path | Depends on | Used by | Mirrors |
 |---|---|---|---|---|---|
-| core | Rust crate | `crates/core` | permission-engine, process-manager, graph | desktop backend (Tauri) | contracts, vault |
-| permission-engine | Rust crate | `crates/permission-engine` | — | core, desktop backend (Tauri) | policy |
+| core | Rust crate | `crates/core` | permission-engine, process-manager, graph | channels, desktop backend (Tauri) | contracts, vault |
+| permission-engine | Rust crate | `crates/permission-engine` | — | core, channels, desktop backend (Tauri) | policy |
 | process-manager | Rust crate | `crates/process-manager` | — | core, desktop backend (Tauri) | — |
 | graph | Rust crate | `crates/graph` | — | core, desktop backend (Tauri) | vault |
 | macos-panel | Rust crate | `crates/macos-panel` | — | desktop backend (Tauri) | — |
-| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph, macos-panel | desktop UI | — |
+| channels | Rust crate | `crates/channels` | core, permission-engine | desktop backend (Tauri) | — |
+| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph, channels, macos-panel | desktop UI | — |
 | desktop UI | TS package | `apps/desktop` | contracts, desktop backend (Tauri) | — | — |
 | contracts | TS package | `packages/contracts` | — | desktop UI | core |
 | policy | TS package | `packages/policy` | — | — | permission-engine |

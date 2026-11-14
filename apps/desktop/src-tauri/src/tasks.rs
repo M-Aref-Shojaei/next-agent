@@ -137,6 +137,14 @@ struct Plan {
     notices: Vec<String>,
 }
 
+/// Extras for a task started from a chat channel (`crate::channels`): the
+/// channel tool profile (it only tightens) and the approval timeout (no
+/// answer from the desktop or overlay in time = deny).
+pub struct ChannelLaunch {
+    pub profile: AgentProfile,
+    pub approval_timeout: Duration,
+}
+
 impl AppService {
     /// Start a task on background threads, streaming to `sink`.
     ///
@@ -148,6 +156,23 @@ impl AppService {
         request: &TaskRequest,
         sink: Sink,
     ) -> Result<String, String> {
+        self.task_start_with(request, sink, None)
+    }
+
+    /// [`AppService::task_start`], optionally as a channel task. A channel
+    /// task runs only in manual or plan mode, under the channel profile.
+    ///
+    /// # Errors
+    /// See [`AppService::task_start`]; also a channel task in any other mode.
+    pub fn task_start_with(
+        self: &Arc<Self>,
+        request: &TaskRequest,
+        sink: Sink,
+        channel: Option<&ChannelLaunch>,
+    ) -> Result<String, String> {
+        if channel.is_some() {
+            next_agent_channels::config::guard_mode(parse_mode(&request.mode)?)?;
+        }
         let plan = self.plan(request)?;
         let task_id = plan.spec.id.as_str().to_string();
 
@@ -158,7 +183,15 @@ impl AppService {
                 root: wt.root.display().to_string(),
             });
         }
-        let (executor, agent_notice) = self.choose_executor(&plan, &task_id);
+        let (executor, agent_notice) =
+            self.choose_executor(&plan, &task_id, channel.map(|c| &c.profile));
+        let executor: Box<dyn AgentExecutor + Send> = match channel {
+            Some(c) => Box::new(next_agent_channels::ChannelExecutor::new(
+                executor,
+                c.profile.clone(),
+            )),
+            None => executor,
+        };
         for text in plan.notices.iter().chain(agent_notice.iter()) {
             sink(StreamMessage::Notice {
                 task_id: task_id.clone(),
@@ -190,7 +223,10 @@ impl AppService {
                 executor,
                 tools: Box::new(tools),
             },
-            TaskOptions { snapshots },
+            TaskOptions {
+                snapshots,
+                approval_timeout: channel.map(|c| c.approval_timeout),
+            },
         );
         self.running()?.insert(task_id.clone(), handle.control());
 
@@ -379,6 +415,7 @@ impl AppService {
         self: &Arc<Self>,
         plan: &Plan,
         task_id: &str,
+        ancestor: Option<&AgentProfile>,
     ) -> (Box<dyn AgentExecutor + Send>, Option<String>) {
         let root = &plan.root;
         let gateway = match self.chat_gateway() {
@@ -403,6 +440,9 @@ impl AppService {
             .with_profiles(profiles.clone())
             .with_context_window(window)
             .with_role_resolver(self.role_resolver(task_id));
+        if let Some(profile) = ancestor {
+            executor = executor.with_ancestor_profile(profile.clone());
+        }
         // Compaction summaries use the `summary` role (falls back to chat).
         if let Ok(summary) = self.gateway("summary") {
             executor = executor.with_summary_client(Arc::new(summary.with_session(task_id)), None);

@@ -4,7 +4,7 @@
 //! Group checks run in this order: group policy → sender allow-list →
 //! mention or reply activation. Replying to one of the bot's messages only
 //! *activates* the bot in a group; it never authorises the sender (stricter
-//! than OpenClaw, where a reply can bypass the mention requirement only).
+//! than `OpenClaw`, where a reply can bypass the mention requirement only).
 
 use crate::config::{ChannelConfig, DmPolicy, GroupPolicy};
 
@@ -15,7 +15,10 @@ pub const WILDCARD: &str = "*";
 #[must_use]
 pub fn sender_allowed(allow: &[String], sender: &str) -> bool {
     let sender = sender.trim();
-    !sender.is_empty() && allow.iter().any(|entry| entry == WILDCARD || entry == sender)
+    !sender.is_empty()
+        && allow
+            .iter()
+            .any(|entry| entry == WILDCARD || entry == sender)
 }
 
 /// Outcome for a direct message.
@@ -98,16 +101,40 @@ mod tests {
     fn dm_policies() {
         let paired = list(&["42"]);
         assert_eq!(dm_access(DmPolicy::Pairing, &paired, "42"), DmAccess::Allow);
-        assert_eq!(dm_access(DmPolicy::Pairing, &paired, "7"), DmAccess::NeedsPairing);
-        assert_eq!(dm_access(DmPolicy::Allowlist, &paired, "42"), DmAccess::Allow);
-        assert!(matches!(dm_access(DmPolicy::Allowlist, &paired, "7"), DmAccess::Deny(_)));
-        assert!(matches!(dm_access(DmPolicy::Disabled, &paired, "42"), DmAccess::Deny(_)));
+        assert_eq!(
+            dm_access(DmPolicy::Pairing, &paired, "7"),
+            DmAccess::NeedsPairing
+        );
+        assert_eq!(
+            dm_access(DmPolicy::Allowlist, &paired, "42"),
+            DmAccess::Allow
+        );
+        assert!(matches!(
+            dm_access(DmPolicy::Allowlist, &paired, "7"),
+            DmAccess::Deny(_)
+        ));
+        assert!(matches!(
+            dm_access(DmPolicy::Disabled, &paired, "42"),
+            DmAccess::Deny(_)
+        ));
         // Open requires an explicit `*`; a populated list is not enough.
-        assert!(matches!(dm_access(DmPolicy::Open, &paired, "7"), DmAccess::Deny(_)));
-        assert_eq!(dm_access(DmPolicy::Open, &list(&["*"]), "7"), DmAccess::Allow);
+        assert!(matches!(
+            dm_access(DmPolicy::Open, &paired, "7"),
+            DmAccess::Deny(_)
+        ));
+        assert_eq!(
+            dm_access(DmPolicy::Open, &list(&["*"]), "7"),
+            DmAccess::Allow
+        );
         // `*` does not turn the allowlist policy into open.
-        assert!(matches!(dm_access(DmPolicy::Allowlist, &list(&["*"]), "7"), DmAccess::Deny(_)));
-        assert!(matches!(dm_access(DmPolicy::Allowlist, &paired, " "), DmAccess::Deny(_)));
+        assert!(matches!(
+            dm_access(DmPolicy::Allowlist, &list(&["*"]), "7"),
+            DmAccess::Deny(_)
+        ));
+        assert!(matches!(
+            dm_access(DmPolicy::Allowlist, &paired, " "),
+            DmAccess::Deny(_)
+        ));
     }
 
     fn group_config(policy: GroupPolicy) -> ChannelConfig {
@@ -131,15 +158,30 @@ mod tests {
     fn group_gating_order() {
         let allow = list(&["42"]);
         let cfg = group_config(GroupPolicy::Disabled);
-        assert_eq!(group_access(&cfg, &allow, &facts("42", true, false)), GroupAccess::Skip("groups are disabled"));
+        assert_eq!(
+            group_access(&cfg, &allow, &facts("42", true, false)),
+            GroupAccess::Skip("groups are disabled")
+        );
 
         let cfg = group_config(GroupPolicy::Allowlist);
         let mut other = facts("42", true, false);
         other.group_id = "-200".into();
-        assert_eq!(group_access(&cfg, &allow, &other), GroupAccess::Skip("group is not on the allow-list"));
-        assert_eq!(group_access(&cfg, &allow, &facts("42", true, false)), GroupAccess::Allow);
-        assert_eq!(group_access(&cfg, &allow, &facts("42", false, false)), GroupAccess::Skip("not mentioned"));
-        assert_eq!(group_access(&cfg, &allow, &facts("42", false, true)), GroupAccess::Allow);
+        assert_eq!(
+            group_access(&cfg, &allow, &other),
+            GroupAccess::Skip("group is not on the allow-list")
+        );
+        assert_eq!(
+            group_access(&cfg, &allow, &facts("42", true, false)),
+            GroupAccess::Allow
+        );
+        assert_eq!(
+            group_access(&cfg, &allow, &facts("42", false, false)),
+            GroupAccess::Skip("not mentioned")
+        );
+        assert_eq!(
+            group_access(&cfg, &allow, &facts("42", false, true)),
+            GroupAccess::Allow
+        );
 
         let cfg = group_config(GroupPolicy::Open);
         assert_eq!(group_access(&cfg, &allow, &other), GroupAccess::Allow);
@@ -163,7 +205,13 @@ mod tests {
     fn mention_not_required_when_disabled() {
         let mut cfg = group_config(GroupPolicy::Allowlist);
         cfg.require_mention = false;
-        assert_eq!(group_access(&cfg, &list(&["42"]), &facts("42", false, false)), GroupAccess::Allow);
-        assert_eq!(group_access(&cfg, &list(&["*"]), &facts("9", false, false)), GroupAccess::Allow);
+        assert_eq!(
+            group_access(&cfg, &list(&["42"]), &facts("42", false, false)),
+            GroupAccess::Allow
+        );
+        assert_eq!(
+            group_access(&cfg, &list(&["*"]), &facts("9", false, false)),
+            GroupAccess::Allow
+        );
     }
 }

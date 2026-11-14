@@ -1,6 +1,7 @@
 //! Tauri 2 shell for Next Agent.
 
 pub mod boards;
+pub mod channels;
 pub mod commands;
 pub mod gateway;
 pub mod notes;
@@ -42,6 +43,17 @@ pub fn run() {
             }));
             app.manage(notes);
             overlay::init(app.handle(), &service);
+            // Chat channels (Telegram): tokens from the keychain, tasks
+            // through the normal pipeline, approvals here or in the overlay.
+            let emitter = app.handle().clone();
+            let channels = channels::ChannelService::new(
+                Arc::clone(&service),
+                Arc::new(move |name, payload| {
+                    let _ = emitter.emit(name, payload);
+                }),
+            );
+            app.manage(Arc::clone(&channels));
+            tauri::async_runtime::spawn(async move { channels.start_all().await });
             tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
             Ok(())
         })
@@ -100,6 +112,17 @@ pub fn run() {
             commands::board_delete,
             commands::board_sketch,
             commands::board_export,
+            channels::channel_list,
+            channels::channel_save,
+            channels::channel_delete,
+            channels::channel_test,
+            channels::channel_restart,
+            channels::channel_pairings,
+            channels::channel_pairing_resolve,
+            channels::channel_allow_list,
+            channels::channel_allow_add,
+            channels::channel_allow_remove,
+            channels::channel_activity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Next Agent");
