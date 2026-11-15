@@ -160,7 +160,7 @@ pub fn default_app_styles() -> Vec<AppStyle> {
         s("thunderbird", "Thunderbird", Style::Polished),
         s("slack", "Slack", Style::Natural),
         s("discord", "Discord", Style::Natural),
-        s("whatsapp", "WhatsApp", Style::Natural),
+        // Next Agent: removed WhatsApp/Spotify (owner request): s("whatsapp", "WhatsApp", Style::Natural),
         s("telegram", "Telegram", Style::Natural),
         s("teams", "Microsoft Teams", Style::Natural),
         s("claude", "Claude", Style::Verbatim),

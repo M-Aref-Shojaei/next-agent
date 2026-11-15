@@ -816,7 +816,7 @@ mod tests {
               "html_url": "https://github.com/Louis-CFM/coucou/releases/tag/windows-v0.7.0", "assets": [] },
             { "tag_name": "v0.9.0", "draft": false, "prerelease": false,
               "html_url": "https://github.com/Louis-CFM/coucou/releases/tag/v0.9.0",
-              "body": "## What's new\n\n- **WhatsApp in one click** — Mac",
+              "body": "## What's new\n\n- **Plan usage in one click** — Mac",
               "assets": [{ "name": "Coucou.zip", "size": 34228988,
                 "browser_download_url": "https://github.com/Louis-CFM/coucou/releases/download/v0.9.0/Coucou.zip",
                 "digest": "sha256:24175a765704082c8b2e751f8b5ccb76b1eb3440ff2fd1e9c4cbe780c2193baa" }] },
@@ -896,7 +896,7 @@ mod tests {
     #[test]
     fn the_headline_is_the_first_bold_bullet_of_whats_new() {
         let h = |s: &str| headline(Some(s));
-        assert_eq!(h("Intro\n\n## What's new\n\n- **WhatsApp in one click** *(macOS)* — more\n- second").as_deref(), Some("WhatsApp in one click"));
+        assert_eq!(h("Intro\n\n## What's new\n\n- **Plan usage in one click** *(macOS)* — more\n- second").as_deref(), Some("Plan usage in one click"));
         assert_eq!(h("## What’s new\n* Plain *first* item\n").as_deref(), Some("Plain first item"));
         assert_eq!(h("## What's new\n\n## Install\n- **Not this**"), None);
         assert_eq!(h("- **No section**"), None);

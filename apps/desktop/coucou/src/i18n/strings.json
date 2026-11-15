@@ -632,21 +632,6 @@
    "ko": "Coucou가 음악 앱을 제어하도록 허용",
    "ja": "Coucou にミュージックの操作を許可"
   },
-  "Allow Coucou to control Spotify": {
-   "zh-Hans": "允许 Coucou 控制 Spotify",
-   "hi": "Coucou को Spotify नियंत्रित करने दें",
-   "es": "Permitir que Coucou controle Spotify",
-   "ar": "السماح لـ Coucou بالتحكم في Spotify",
-   "fr": "Autoriser Coucou à contrôler Spotify",
-   "bn": "Coucou-কে Spotify নিয়ন্ত্রণ করতে দিন",
-   "pt-BR": "Permitir que o Coucou controle o Spotify",
-   "ru": "Разрешить Coucou управлять Spotify",
-   "id": "Izinkan Coucou mengontrol Spotify",
-   "de": "Coucou erlauben, Spotify zu steuern",
-   "tr": "Coucou'nun Spotify'ı kontrol etmesine izin ver",
-   "ko": "Coucou가 Spotify를 제어하도록 허용",
-   "ja": "Coucou に Spotify の操作を許可"
-  },
   "Already active": {
    "zh-Hans": "已激活",
    "hi": "पहले से सक्रिय",
@@ -3856,21 +3841,6 @@
    "tr": "Genel",
    "ko": "일반",
    "ja": "一般"
-  },
-  "Get Spotify": {
-   "zh-Hans": "获取 Spotify",
-   "hi": "Spotify पाएँ",
-   "es": "Descargar Spotify",
-   "ar": "احصل على Spotify",
-   "fr": "Obtenir Spotify",
-   "bn": "Spotify নিন",
-   "pt-BR": "Baixar o Spotify",
-   "ru": "Скачать Spotify",
-   "id": "Dapatkan Spotify",
-   "de": "Spotify herunterladen",
-   "tr": "Spotify'ı edin",
-   "ko": "Spotify 받기",
-   "ja": "Spotify を入手"
   },
   "Get it on GitHub": {
    "zh-Hans": "前往 GitHub",
@@ -7307,21 +7277,6 @@
    "ko": "설정 열기…",
    "ja": "設定を開く…"
   },
-  "Open Spotify": {
-   "zh-Hans": "打开 Spotify",
-   "hi": "Spotify खोलें",
-   "es": "Abrir Spotify",
-   "ar": "فتح Spotify",
-   "fr": "Ouvrir Spotify",
-   "bn": "Spotify খুলুন",
-   "pt-BR": "Abrir o Spotify",
-   "ru": "Открыть Spotify",
-   "id": "Buka Spotify",
-   "de": "Spotify öffnen",
-   "tr": "Spotify'ı aç",
-   "ko": "Spotify 열기",
-   "ja": "Spotify を開く"
-  },
   "Open Terminal": {
    "zh-Hans": "打开终端",
    "hi": "टर्मिनल खोलें",
@@ -9871,21 +9826,6 @@
    "tr": "Konuşma hızı",
    "ko": "말하기 속도",
    "ja": "話す速さ"
-  },
-  "Spotify not installed": {
-   "zh-Hans": "未安装 Spotify",
-   "hi": "Spotify इंस्टॉल नहीं है",
-   "es": "Spotify no está instalado",
-   "ar": "Spotify غير مثبت",
-   "fr": "Spotify n'est pas installé",
-   "bn": "Spotify ইনস্টল নেই",
-   "pt-BR": "Spotify não está instalado",
-   "ru": "Spotify не установлен",
-   "id": "Spotify belum terpasang",
-   "de": "Spotify nicht installiert",
-   "tr": "Spotify kurulu değil",
-   "ko": "Spotify가 설치돼 있지 않아요",
-   "ja": "Spotify がインストールされていません"
   },
   "Start": {
    "zh-Hans": "开始",
@@ -13066,21 +13006,6 @@
    "tr": "{0} okunmamış",
    "ko": "읽지 않음 {0}개",
    "ja": "未読 {0}"
-  },
-  "{0} — open Spotify": {
-   "zh-Hans": "{0} — 打开 Spotify",
-   "hi": "{0} — Spotify खोलें",
-   "es": "{0} — abrir Spotify",
-   "ar": "{0} — فتح Spotify",
-   "fr": "{0} — ouvrir Spotify",
-   "bn": "{0} — Spotify খুলুন",
-   "pt-BR": "{0} — abrir o Spotify",
-   "ru": "{0} — открыть Spotify",
-   "id": "{0} — buka Spotify",
-   "de": "{0} — Spotify öffnen",
-   "tr": "{0} — Spotify'ı aç",
-   "ko": "{0} — Spotify 열기",
-   "ja": "{0} — Spotify を開く"
   },
   "{0} → {1}": {
    "zh-Hans": "{0} → {1}",

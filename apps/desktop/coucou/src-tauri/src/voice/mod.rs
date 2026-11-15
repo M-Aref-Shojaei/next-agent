@@ -396,7 +396,7 @@ pub fn run_tool(app: &AppHandle, name: &str, input: &Value) -> (String, bool) {
             (answer, acted)
         }
         "service_info" => (ask_island(app, "info", json!({})).unwrap_or_else(|| "no data".into()), false),
-        "music" => music(app, input),
+        // Next Agent: removed WhatsApp/Spotify (owner request): "music" => music(app, input).
         "open_app" => open_app(input["name"].as_str().unwrap_or("")),
         "prepare_email" => {
             let to = input["recipient"].as_str().unwrap_or("").trim().to_string();
@@ -424,32 +424,7 @@ pub fn run_tool(app: &AppHandle, name: &str, input: &Value) -> (String, bool) {
     }
 }
 
-fn music(app: &AppHandle, input: &Value) -> (String, bool) {
-    let action = input["action"].as_str().unwrap_or("");
-    let (control, value) = match action {
-        "play_pause" => ("playPause", None),
-        "next" => ("next", None),
-        "previous" => ("previous", None),
-        "set_volume" => ("volume", Some(input["volume"].as_f64().unwrap_or(50.0).clamp(0.0, 100.0))),
-        "search" => {
-            let q = input["query"].as_str().unwrap_or("").trim();
-            if q.is_empty() {
-                return ("missing query".into(), false);
-            }
-            let encoded: String = q.chars().map(|c| if c.is_alphanumeric() { c.to_string() } else { "%20".into() }).collect();
-            crate::platform::open_url(&format!("spotify:search:{encoded}"));
-            return (format!("Spotify opened on a search for {q}: the user picks what to play."), true);
-        }
-        _ => return ("unknown action".into(), false),
-    };
-    let app2 = app.clone();
-    let done = tauri::async_runtime::block_on(crate::spotify::spotify_control(app2, control.into(), value));
-    if done {
-        ("done".into(), true)
-    } else {
-        ("Spotify is not running or not playing: tell the user to open it.".into(), false)
-    }
-}
+// Next Agent: removed WhatsApp/Spotify (owner request): fn music (Spotify controls).
 
 /// Opens an app whose name matches: a Start menu shortcut on Windows, a
 /// .desktop entry on Linux. Nothing else is ever run.

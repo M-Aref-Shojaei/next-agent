@@ -1,8 +1,8 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/src-tauri/src/voice/brain.rs @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
 // « OK Coucou »'s brain: Claude with the user's key and Coucou's tools —
-// pills, music, the user's own data, opening an app, preparing an email (the
+// pills, the user's own data, opening an app, preparing an email (the
 // mail app opens with it filled in; the user sends it) and Anthropic's web
-// search. The conversation lives in memory only and is forgotten 90 s after
+// search. (Next Agent: removed WhatsApp/Spotify (owner request): the music tool.) The conversation lives in memory only and is forgotten 90 s after
 // the last turn. Port of ClaudeVoiceBrain.swift.
 
 use std::time::{Duration, Instant};
@@ -43,27 +43,15 @@ fn tools() -> Vec<Value> {
                 "required": ["action"]
             }
         }),
-        json!({
-            "name": "music",
-            "description": "Control Spotify: play or pause, next, previous, set the volume, or search a song, an artist or a playlist in Spotify.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "action": { "type": "string", "enum": ["play_pause", "next", "previous", "set_volume", "search"] },
-                    "query": { "type": "string", "description": "What to search, for search." },
-                    "volume": { "type": "integer", "description": "0-100 for set_volume." }
-                },
-                "required": ["action"]
-            }
-        }),
+        // Next Agent: removed WhatsApp/Spotify (owner request): the "music" tool (Spotify).
         json!({
             "name": "service_info",
-            "description": "Read the user's real data that Coucou already has, as JSON: the active pills, the agent sessions (Claude Code, Codex…) and what they are doing, Claude or Codex plan usage, Spotify now playing, and the services' latest data (Stripe, GitHub, Vercel, Resend, n8n, Notion, Cal.com).",
+            "description": "Read the user's real data that Coucou already has, as JSON: the active pills, the agent sessions (Claude Code, Codex…) and what they are doing, Claude or Codex plan usage, and the services' latest data (Stripe, GitHub, Vercel, Resend, n8n, Notion, Cal.com).",
             "input_schema": { "type": "object", "properties": {} }
         }),
         json!({
             "name": "open_app",
-            "description": "Open an app on this computer by name (Firefox, VS Code, Notion, Spotify…).",
+            "description": "Open an app on this computer by name (Firefox, VS Code, Notion…).",
             "input_schema": { "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] }
         }),
         json!({
@@ -91,7 +79,7 @@ fn system_prompt(pills: &str) -> String {
 quick, warm, a little playful. It is {:04}-{:02}-{:02} {:02}:{:02}.\n\
 Everything you write is read aloud: answer in the language the user spoke, in one or two short sentences, \
 no markdown, no lists, no emojis, no links.\n\
-Act with the tools instead of describing: pills, music, service_info for the user's own data, open_app, \
+Act with the tools instead of describing: pills, service_info for the user's own data, open_app, \
 prepare_email, and web_search for anything current (weather, news, scores, prices, facts you are not sure of). \
 Never invent the user's data.\n\
 Email: gather the recipient's address, the subject and what to say (write the text yourself from what the user \

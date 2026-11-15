@@ -25,8 +25,7 @@ import { FLOW_PAGE_RENDERERS } from "../hub/pages";
 import { claudeModelControl } from "./claude-models";
 import { agentsSection } from "./agents";
 import { phoneSection } from "./phone";
-import { whatsappSection } from "./whatsapp";
-import { WHATSAPP_ID } from "../core/whatsapp";
+// Next Agent: removed WhatsApp/Spotify (owner request): the WhatsApp section.
 import { updateRows, updatesListener } from "./updates";
 import { colorDot } from "./colors";
 import { renderDiff, statusDot } from "./parts";
@@ -885,8 +884,7 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [{ key: "notion-api-key", label: N_("Integration token"), placeholder: "ntn_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
     fields: [{ key: "calcom-api-key", label: N_("API key"), placeholder: "cal_…", secret: true }] },
-  // Nothing to enter: Spotify is read from the OS (src-tauri/src/spotify.rs).
-  { id: "integration_spotify", name: "Spotify", color: "#1DB954", fields: [] },
+  // Next Agent: removed WhatsApp/Spotify (owner request): the Spotify row.
 ];
 
 const MAX_ACTIVE = MAX_DECLARED;
@@ -957,14 +955,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
     }
 
     if (def.hint) rows.append(h("div", { class: "hint", text: t(def.hint) }));
-    if (def.id === "integration_spotify") {
-      // As on the Mac's row: said only when there is no Spotify to launch.
-      const hint = h("div", { class: "hint", style: "padding-top:5px" });
-      rows.append(hint);
-      void Bridge.spotifyInstalled().then((ok) => {
-        hint.textContent = ok === false ? t("Not installed") : "";
-      });
-    }
+    // Next Agent: removed WhatsApp/Spotify (owner request): the Spotify row's "Not installed" hint.
 
     list.append(
       h("div", { style: "display:flex;gap:12px;align-items:flex-start" },
@@ -982,26 +973,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   return h("section", {}, h("h2", {}, h("span", { text: t("Integrations") })), note, list);
 }
 
-/** WhatsApp (experimental), under the other integrations: its pill is turned on from its own switch. */
-function whatsappSections(): HTMLElement[] {
-  if (!availablePills().some((p) => p.id === WHATSAPP_ID)) return [];
-  return [whatsappSection({
-    toggle,
-    maxPills: MAX_ACTIVE,
-    pillActive: () => settings.activeIntegrations.includes(WHATSAPP_ID),
-    setPill: (on) => {
-      const has = settings.activeIntegrations.includes(WHATSAPP_ID);
-      if (on && !has && settings.activeIntegrations.length < MAX_ACTIVE) {
-        settings.activeIntegrations = [...settings.activeIntegrations, WHATSAPP_ID];
-      } else if (!on && has) {
-        settings.activeIntegrations = settings.activeIntegrations.filter((x) => x !== WHATSAPP_ID);
-      } else {
-        return;
-      }
-      declaredChanged();
-    },
-  })];
-}
+// Next Agent: removed WhatsApp/Spotify (owner request): whatsappSections.
 
 // ── General section ───────────────────────────────────────────────────────────
 
@@ -1053,7 +1025,7 @@ function generalSection(): HTMLElement {
     h("option", { value: "time", text: t("The time") }),
     h("option", { value: "datetime", text: t("The date and the time") }),
     h("option", { value: "claude", text: t("Claude usage") }),
-    h("option", { value: "music", text: t("What's playing") }),
+    // Next Agent: removed WhatsApp/Spotify (owner request): "music", "What's playing" (Spotify's track).
     h("option", { value: "empty", text: t("Nothing, just the island") }),
     h("option", { value: "hidden", text: t("Hide the island") }),
   );
@@ -1542,7 +1514,7 @@ async function render() {
     pills: () => [activePillsSection(connected)],
     agents: () => [claudeSection(status), agentsSection(agents), planSection(status)],
     chat: () => [subscriptionsSection(), apiSection(hasKey, claudeRelay), chatProvidersSection(chatKeys, keyChanged), localSection(customKey)],
-    integrations: () => [integrationsSection(present), ...whatsappSections()],
+    integrations: () => [integrationsSection(present)], // Next Agent: removed WhatsApp/Spotify (owner request): ...whatsappSections()
     phone: () => [phoneSection(settings.phoneLink ?? false, toggle, settings)],
     shortcuts: () => [shortcutsSection(shortcutReport)],
   };

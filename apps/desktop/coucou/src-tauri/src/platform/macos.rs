@@ -132,10 +132,7 @@ pub fn open_url(url: &str) {
     let _ = Command::new("/usr/bin/open").arg(url).spawn();
 }
 
-/// Whether an app handles the URL scheme (`whatsapp`…).
-pub fn handles_scheme(scheme: &str) -> bool {
-    panel::sys::handles_scheme(scheme)
-}
+// Next Agent: removed WhatsApp/Spotify (owner request): handles_scheme (WhatsApp's app check).
 
 pub fn reveal_folder(path: &str) {
     let _ = Command::new("/usr/bin/open").arg(path).spawn();

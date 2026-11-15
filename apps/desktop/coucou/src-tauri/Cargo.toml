@@ -51,10 +51,7 @@ sherpa-onnx = { version = "1.13.8", default-features = false, features = ["stati
 # The microphone, and the computer's own sound for the Notetaker (WASAPI
 # loopback on Windows, a PulseAudio/PipeWire monitor on Linux). Apache-2.0.
 cpal = "0.18"
-# WhatsApp's "Install WhatsApp" takes GOWA's binary out of the zip GOWA publishes (whatsapp/archive.rs):
-# the raw DEFLATE decoder only, already in the tree through png (the same 0.8.9), so nothing new is
-# downloaded or compiled. MIT/Zlib/Apache-2.0.
-miniz_oxide = "0.8"
+# Next Agent: removed WhatsApp/Spotify (owner request): miniz_oxide (GOWA's zip, whatsapp/archive.rs).
 # The chat's mail merge cuts a PDF into one page per recipient and reads each page's text
 # (mail/pdf.rs), as the Mac does with PDFKit; Windows has no PDF library of its own. MIT, pure
 # Rust, default features (clock, rayon) off.
@@ -67,13 +64,9 @@ keyring = { version = "3", features = ["windows-native"] }
 webview2-com = "0.39"
 wv2_core = { package = "windows-core", version = "0.62" }
 windows = { version = "0.61", features = [
-  # The Spotify pill: the system media controls Spotify publishes to.
-  "Foundation",
-  "Media",
-  "Media_Control",
-  "Storage_Streams",
+  # Next Agent: removed WhatsApp/Spotify (owner request): Foundation, Media, Media_Control, Storage_Streams (the Spotify pill).
   "Win32_Foundation",
-  # The Spotify pill's volume: Spotify's session in the Windows mixer.
+  # Flow's hush (flow/hush.rs): the sessions in the Windows mixer. (Next Agent: removed WhatsApp/Spotify (owner request): the Spotify pill used it too.)
   "Win32_Media_Audio",
   "Win32_System_Com",
   "Win32_System_Com_StructuredStorage",
@@ -85,7 +78,7 @@ windows = { version = "0.61", features = [
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Ole",
   "Win32_System_Pipes",
-  "Win32_System_Registry",
+  # Next Agent: removed WhatsApp/Spotify (owner request): Win32_System_Registry (handles_scheme).
   "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_UI_Input_KeyboardAndMouse",
@@ -107,7 +100,7 @@ libc = "0.2"
 gtk = "0.18"
 # libdbus, which keyring's Secret Service already links, so nothing new is
 # downloaded: Wayland global shortcuts through the XDG GlobalShortcuts portal
-# (portal.rs), the Spotify pill over MPRIS (spotify.rs) and "Open terminal"
+# (portal.rs) and "Open terminal" (Next Agent: removed WhatsApp/Spotify (owner request): the Spotify pill over MPRIS)
 # through KWin's scripting (platform/linux_focus.rs).
 dbus = "0.9.12"
 # EWMH on X11 for "Open terminal", already in the tree (global-hotkey).

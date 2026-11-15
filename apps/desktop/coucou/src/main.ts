@@ -11,9 +11,7 @@ import { registerPhoneLink } from "./island/phone-link";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { registerShortcutHandlers } from "./island/shortcuts";
 import { registerVoiceHandlers } from "./island/voice";
-import { applySpotify, registerSpotifyHandlers } from "./island/spotify";
-import { registerWhatsAppHandlers } from "./island/whatsapp";
-import { SPOTIFY_ID } from "./core/spotify";
+// Next Agent: removed WhatsApp/Spotify (owner request): their island handlers.
 import { Recap } from "./recap/recap";
 import { Updates } from "./island/update";
 import { WhatsNew } from "./whats-new/controller";
@@ -164,14 +162,10 @@ async function main() {
   registerIntegrationHandlers(island);
   registerShortcutHandlers(island, () => setPaused(false));
   registerVoiceHandlers();
-  registerSpotifyHandlers(island);
-  registerWhatsAppHandlers(island);
+  // Next Agent: removed WhatsApp/Spotify (owner request): registerSpotifyHandlers, registerWhatsAppHandlers.
   // New versions: Rust offers the card, the island opens it when nothing else waits.
   await Updates.register(island);
-  // Rust may have read Spotify before this page listened: ask once.
-  if (State.settings.activeIntegrations.includes(SPOTIFY_ID)) {
-    void Bridge.spotifyRefresh().then((s) => s && applySpotify(island, s));
-  }
+  // Next Agent: removed WhatsApp/Spotify (owner request): the first Spotify refresh.
 
   // Monday recap: app start (greeting over), an agent starting work, waking up.
   const checkRecap = () => void Recap.check(island);

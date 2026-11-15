@@ -45,9 +45,8 @@ test("the catalog holds the Mac's pills with the Claude Code label for Windows a
     ["integration_calcom", "Cal.com", "#C9956A", "service", "Integration"],
     ["integration_stripe", "Stripe", "#0570DE", "service", "Integration"],
     ["integration_music", "Apple Music", "#FA2D48", "service", "Integration"],
-    ["integration_spotify", "Spotify", "#1DB954", "service", "Integration"],
+    // Next Agent: removed WhatsApp/Spotify (owner request): the Spotify and WhatsApp rows.
     ["integration_mail", "Mail", "#2F8CFF", "service", "Integration"],
-    ["integration_whatsapp", "WhatsApp", "#25D366", "service", "Integration"],
   ];
   assert.deepEqual(
     PILL_CATALOG.filter((p) => !["integration_gitlab", "integration_gitea"].includes(p.id))
@@ -114,30 +113,24 @@ test("this build leaves out what only macOS has", () => {
   // Mail is Outlook's, and Outlook is a Windows program.
   assert.ok(windows.includes("integration_mail"));
   assert.ok(!linux.includes("integration_mail"));
-  // Spotify: MPRIS on Linux, the system media controls on Windows.
-  assert.ok(linux.includes("integration_spotify"));
-  assert.ok(windows.includes("integration_spotify"));
+  // Next Agent: removed WhatsApp/Spotify (owner request): neither pill is offered.
+  for (const id of ["integration_spotify", "integration_whatsapp"]) {
+    assert.ok(!linux.includes(id), id);
+    assert.ok(!windows.includes(id), id);
+  }
   assert.deepEqual(linux, windows.filter((id) => id !== "integration_mail"));
 });
 
-test("Spotify: a service on both systems with nothing to set up", () => {
-  const def = pillDefinition("integration_spotify");
-  assert.equal(def.support, "yes");
-  assert.deepEqual(def.connect, { kind: "none" });
-  assert.equal(def.category, "service");
-  assert.ok(!isComingSoon("integration_spotify"));
-  assert.ok(!isHookPill("integration_spotify"));
-  assert.ok(!mainPillChoices("linux").some((p) => p.id === "integration_spotify"));
-  assert.ok(!mainPillChoices("windows").some((p) => p.id === "integration_spotify"));
-});
+// Next Agent: removed WhatsApp/Spotify (owner request): "Spotify: a service on both systems with nothing to set up".
 
-test("Spotify and Claude Desktop can be declared on both systems", () => {
-  const d = { mainPill: "integration_claude", activeIntegrations: ["integration_spotify", "integration_n8n"] };
-  assert.deepEqual(sanitizeDeclared(d, "linux").activeIntegrations, ["integration_spotify", "integration_n8n"]);
-  assert.deepEqual(sanitizeDeclared(d, "windows").activeIntegrations, ["integration_spotify", "integration_n8n"]);
+// Next Agent: removed WhatsApp/Spotify (owner request): Spotify's half of this test is now
+// that a pill saved before the removal is dropped.
+test("Claude Desktop can be declared on both systems; a removed pill is dropped", () => {
+  const d = { mainPill: "integration_claude", activeIntegrations: ["integration_spotify", "integration_whatsapp", "integration_n8n"] };
+  assert.deepEqual(sanitizeDeclared(d, "linux").activeIntegrations, ["integration_n8n"]);
+  assert.deepEqual(sanitizeDeclared(d, "windows").activeIntegrations, ["integration_n8n"]);
   const empty = { mainPill: "integration_claude", activeIntegrations: [] };
-  assert.deepEqual(toggleDeclared(empty, "integration_spotify", "linux"), ["integration_spotify"]);
-  assert.deepEqual(toggleDeclared(empty, "integration_spotify", "windows"), ["integration_spotify"]);
+  assert.equal(toggleDeclared(empty, "integration_spotify", "linux"), null);
   // Claude Desktop is available on both Linux and Windows.
   assert.deepEqual(toggleDeclared(empty, "agent_claude-desktop", "linux"), ["agent_claude-desktop"]);
   assert.deepEqual(toggleDeclared(empty, "agent_claude-desktop", "windows"), ["agent_claude-desktop"]);

@@ -904,7 +904,6 @@ dependencies = [
  "libc",
  "lopdf",
  "mdns-sd",
- "miniz_oxide 0.8.9",
  "next-agent-macos-panel",
  "qrcode",
  "rcgen",

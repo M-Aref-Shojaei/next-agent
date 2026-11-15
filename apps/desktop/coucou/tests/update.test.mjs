@@ -36,7 +36,8 @@ test("progress, the header line and the busy phases", () => {
   assert.equal(percent(1.7), 100);
   assert.equal(percent(-1), 0);
   assert.equal(percent(Number.NaN), 0);
-  assert.equal(headerLine("WhatsApp in one click", "You have 0.5.0"), "WhatsApp in one click  ·  You have 0.5.0");
+  // Next Agent: removed WhatsApp/Spotify (owner request): the sample title named WhatsApp.
+  assert.equal(headerLine("Plan usage in one click", "You have 0.5.0"), "Plan usage in one click  ·  You have 0.5.0");
   assert.equal(headerLine(null, "You have 0.5.0"), "You have 0.5.0");
   assert.equal(headerLine("  ", "You have 0.5.0"), "You have 0.5.0");
   assert.equal(isBusy({ kind: "downloading", fraction: 0.1 }), true);

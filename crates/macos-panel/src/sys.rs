@@ -10,7 +10,6 @@
 //! - `NSWorkspace.frontmostApplication`, `runningApplications`,
 //!   `NSRunningApplication(processIdentifier:)` and its `bundleURL`
 //!   (`TerminalTarget+AppKit.swift`, `FlowDictation.swift`);
-//! - `NSWorkspace.urlForApplication(toOpen:)` (`SafeWebURL.swift`);
 //! - `localtime_r` and `getuid` from libc.
 //!
 //! # Unsafe code in this file
@@ -24,7 +23,7 @@ use objc2_app_kit::{NSApplicationActivationPolicy, NSEvent, NSRunningApplication
 use objc2_core_graphics::{
     CGDisplayCopyDisplayMode, CGDisplayMode, CGEvent, CGGetDisplaysWithPoint,
 };
-use objc2_foundation::{NSFullUserName, NSString, NSURL};
+use objc2_foundation::NSFullUserName;
 
 /// Wall-clock time in the user's time zone: (year, month 1–12, day, hour,
 /// minute, second).
@@ -185,16 +184,6 @@ pub fn app_bundle_path(pid: i32) -> Option<String> {
         .then_some(path)
 }
 
-/// Whether an app is registered for `scheme://` URLs.
-#[must_use]
-pub fn handles_scheme(scheme: &str) -> bool {
-    let Some(url) = NSURL::URLWithString(&NSString::from_str(&format!("{scheme}://"))) else {
-        return false;
-    };
-    NSWorkspace::sharedWorkspace()
-        .URLForApplicationToOpenURL(&url)
-        .is_some()
-}
 
 #[cfg(test)]
 mod tests {
