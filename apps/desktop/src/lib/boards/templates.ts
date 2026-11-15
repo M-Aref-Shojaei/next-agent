@@ -1,6 +1,7 @@
 // Board templates, authored as skeleton data (see skeleton.ts).
 import { sticky, STICKY_PRESETS, STICKY_SIZE } from "./stickies.ts";
 import { WIREFRAME_LIBRARY } from "./library.ts";
+import { FLOW_TINTS, INK, PAPER_TINT } from "./palette-data.ts";
 import type { Skeleton } from "./skeleton.ts";
 
 export interface BoardTemplate {
@@ -10,24 +11,23 @@ export interface BoardTemplate {
   elements: Skeleton[];
 }
 
-const INK = "#1e1e1e";
 const base = { strokeColor: INK, roughness: 0, strokeWidth: 2 } as const;
 
 function step(id: string, x: number, y: number, label: string): Skeleton {
-  return { type: "rectangle", id, x, y, width: 180, height: 80, ...base, roundness: { type: 3 }, backgroundColor: "#e7f5ff", fillStyle: "solid", label: { text: label, fontSize: 18 } };
+  return { type: "rectangle", id, x, y, width: 180, height: 80, ...base, roundness: { type: 3 }, backgroundColor: FLOW_TINTS.step, fillStyle: "solid", label: { text: label, fontSize: 18 } };
 }
 function link(from: string, to: string, label?: string): Skeleton {
   return { type: "arrow", x: 0, y: 0, ...base, start: { id: from }, end: { id: to }, ...(label ? { label: { text: label, fontSize: 14 } } : {}) };
 }
 
 const userFlow: Skeleton[] = [
-  { type: "ellipse", id: "start", x: 0, y: 0, width: 140, height: 70, ...base, backgroundColor: "#d3f9d8", fillStyle: "solid", label: { text: "Start", fontSize: 18 } },
+  { type: "ellipse", id: "start", x: 0, y: 0, width: 140, height: 70, ...base, backgroundColor: FLOW_TINTS.start, fillStyle: "solid", label: { text: "Start", fontSize: 18 } },
   step("landing", 220, -5, "Landing page"),
   step("signup", 480, -5, "Sign up form"),
-  { type: "diamond", id: "valid", x: 760, y: -30, width: 200, height: 130, ...base, backgroundColor: "#fff3bf", fillStyle: "solid", label: { text: "Valid?", fontSize: 18 } },
+  { type: "diamond", id: "valid", x: 760, y: -30, width: 200, height: 130, ...base, backgroundColor: FLOW_TINTS.decision, fillStyle: "solid", label: { text: "Valid?", fontSize: 18 } },
   step("error", 740, 170, "Show errors"),
   step("home", 1040, -5, "Dashboard"),
-  { type: "ellipse", id: "end", x: 1300, y: 0, width: 140, height: 70, ...base, backgroundColor: "#ffe3e3", fillStyle: "solid", label: { text: "Done", fontSize: 18 } },
+  { type: "ellipse", id: "end", x: 1300, y: 0, width: 140, height: 70, ...base, backgroundColor: FLOW_TINTS.end, fillStyle: "solid", label: { text: "Done", fontSize: 18 } },
   link("start", "landing"),
   link("landing", "signup"),
   link("signup", "valid"),
@@ -44,7 +44,7 @@ function wireframePage(): Skeleton[] {
   return [
     ...shift(get("desktop-frame"), 0, 0, "d-"),
     ...shift(get("nav-bar"), 120, 60, "n-"),
-    { type: "rectangle", x: 120, y: 140, width: 800, height: 180, ...base, backgroundColor: "#f1f3f5", fillStyle: "solid", roundness: { type: 3 }, label: { text: "Hero: headline, subtitle, call to action", fontSize: 20 } },
+    { type: "rectangle", x: 120, y: 140, width: 800, height: 180, ...base, backgroundColor: PAPER_TINT, fillStyle: "solid", roundness: { type: 3 }, label: { text: "Hero: headline, subtitle, call to action", fontSize: 20 } },
     ...shift(get("card"), 120, 350, "c1-"),
     ...shift(get("card"), 380, 350, "c2-"),
     ...shift(get("card"), 640, 350, "c3-"),
