@@ -16,7 +16,7 @@ import {
 } from "../core/layout";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
-import { SPOTIFY_ID, Spotify, islandDances } from "../core/spotify";
+// Next Agent: removed WhatsApp/Spotify (owner request): Spotify's state and the dance rules (Mochi danced to it).
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
@@ -238,10 +238,8 @@ export class Island {
         else if (task.id === "integration_claude" || task.sessionId) {
           void Bridge.openSession(task.sessionId ?? null, task.sessionCwd ?? null);
         } else if (task.id === "integration_n8n") void Bridge.openN8n();
-        // WhatsApp Desktop at the open conversation; WhatsApp Web when it isn't installed.
-        else if (task.id === "integration_whatsapp") void Bridge.whatsappOpenApp();
+        // Next Agent: removed WhatsApp/Spotify (owner request): WhatsApp's and Spotify's ↗.
         else if (task.id === "integration_gitea") void Bridge.openGitea();
-        else if (task.id === SPOTIFY_ID) void Bridge.spotifyOpen();
         else if (urls[task.id]) void Bridge.openUrl(urls[task.id]);
       },
       openUrl: (url) => {
@@ -553,7 +551,7 @@ export class Island {
 
   /**
    * What a click or a hover opens on: while Mochi is blue, the new version
-   * ("Coucou X is out", Update now); otherwise the usual view. A waiting
+   * ("Next Agent X is out", Update now); otherwise the usual view. A waiting
    * permission or question always comes first.
    */
   private openingView(): IslandViewName {
@@ -987,13 +985,12 @@ export class Island {
    */
   private updateClosed() {
     const style = closedIsland(State.settings.closedIsland);
-    const track = Spotify.state.track;
     const content: ClosedContent | null = State.mode === "hidden" || this.collapsed
       ? closedContent(style, {
         now: new Date(),
         locale: language(),
         planUsage: State.planUsage,
-        music: State.spotifyPlaying && track ? { title: track.title, artist: track.artist } : null,
+        music: null, // Next Agent: removed WhatsApp/Spotify (owner request): the Spotify track.
       })
       : null;
     const key = content ? `${style}|${content.text}|${content.dot ?? ""}|${content.note}` : style;
@@ -1414,15 +1411,8 @@ export class Island {
     const showOutfit = mainFocused || State.mode !== "expanded" || inWardrobe;
     const outfit = State.wardrobePreview ?? this.seasons.get(parseOutfit(State.settings.mochiOutfit));
     this.engine.setOutfit(showOutfit ? outfit : "none", !inWardrobe);
-    // Dances while music plays: always in the compact island, expanded only on
-    // the music pill's card (BotCanvasView, macOS). Asked every frame.
-    this.engine.setDancing(islandDances({
-      music: State.spotifyPlaying,
-      state: State.effectiveState,
-      mode: State.mode,
-      view: State.view,
-      focusId: State.focusTask?.id,
-    }));
+    // Next Agent: removed WhatsApp/Spotify (owner request): Mochi danced while Spotify played (islandDances).
+    this.engine.setDancing(false);
 
     this.engine.update(dt);
     // Cleared in device pixels, the whole canvas. At a fractional scale (150 %)

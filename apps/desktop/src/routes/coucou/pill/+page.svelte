@@ -7,7 +7,7 @@
 
   onMount(() => {
     document.documentElement.lang = "en";
-    document.title = "Coucou";
+    document.title = "Next Agent";
     void import("$coucou/pill/main.ts");
   });
 </script>

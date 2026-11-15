@@ -201,7 +201,7 @@ fn sync_dir(path: &Path) {
 }
 
 /// Replace `path` atomically (fsynced temp file + rename).
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = write_tmp(path, bytes).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);

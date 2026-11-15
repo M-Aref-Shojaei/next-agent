@@ -17,9 +17,13 @@ const failures = [];
 // index (crates/graph/src/index.rs), a separate rebuildable cache of the
 // Markdown graph that must not depend on crates/core. Each crate still has
 // exactly one file that talks to SQLite.
+// reqwest has two owners on purpose too: the router client, and the upstream
+// watch's GitHub adapter (crates/core/src/upstream/github.rs, Settings →
+// Upstreams). That one only reads GitHub's public API, unauthenticated, and is
+// kept apart so the LLM transport never learns about it and vice versa.
 const TRANSPORTS = {
   rusqlite: ["crates/core/src/store.rs", "crates/graph/src/index.rs"],
-  reqwest: "crates/core/src/router/",
+  reqwest: ["crates/core/src/router/", "crates/core/src/upstream/github.rs"],
   eventsource_stream: "crates/core/src/router/",
   keyring: "crates/core/src/router/",
 };
@@ -92,6 +96,17 @@ if (existsSync("upstream.lock.json")) {
       if (!existsSync(adapter)) failures.push(`upstream "${name}" adapter path missing: ${adapter}`);
       if (!entry.pin) failures.push(`upstream "${name}" has no pin`);
       if (!entry.checked) failures.push(`upstream "${name}" has no checked date`);
+      if (entry.watch !== undefined) {
+        const { repo, commit } = entry.watch ?? {};
+        if (typeof repo !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+          failures.push(`upstream "${name}" watch.repo must be owner/name`);
+        }
+        if (typeof commit !== "string" || !/^[0-9a-f]{40}$/i.test(commit)) {
+          failures.push(`upstream "${name}" watch.commit must be a full commit sha`);
+        } else if (!String(entry.pin ?? "").includes(commit)) {
+          failures.push(`upstream "${name}" watch.commit differs from its pin; re-pin both together`);
+        }
+      }
     }
   }
 }

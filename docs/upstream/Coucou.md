@@ -52,8 +52,7 @@ This page and NOTICE.md credit them instead. Every change to an upstream file ca
 | Plan usage | `codex_plan.rs`, `hook/statusline.rs`, `core/plan.ts`, `views/usage.ts` |
 | Integrations | `integrations.rs` (Stripe, Vercel, n8n, Resend, Notion), `github.rs`, `calcom.rs` |
 | Mail (Outlook through COM, Windows only) | `mail/*` |
-| WhatsApp (GOWA) | `whatsapp/*` |
-| Spotify | `spotify.rs` |
+| ~~WhatsApp (GOWA)~~, ~~Spotify~~ | **removed** at the owner's request (see below) |
 | Flow dictation | `flow/*`, `speech/*` (Parakeet through sherpa-onnx), `portal.rs` |
 | Notetaker | `notes/*` |
 | "OK Coucou" voice | `voice/*` |
@@ -88,8 +87,6 @@ This page and NOTICE.md credit them instead. Every change to an upstream file ca
 - chat and the CLI relay;
 - plan gauges;
 - the pollers, GitHub and Cal.com;
-- WhatsApp;
-- Spotify (on a Mac: media keys not wired);
 - Flow, the Notetaker and voice (with fewer engines);
 - the desktop companion;
 - the recap;
@@ -124,8 +121,8 @@ These are Swift-only code paths with no Tauri counterpart to copy. Each would be
   - `coucou_lib::invoke_handler` routes Coucou's command names to Coucou's handler and everything else to Next Agent's.
 - **Windows.**
   - Labels: `coucou-island`, `coucou-settings`, `coucou-mochi`, `coucou-pill`.
-  - Capability `capabilities/coucou.json` (`core:default`).
-  - CSP: Next Agent's, plus upstream's `media-src 'self' blob:`.
+  - Per-window command access. `apps/desktop/src-tauri/build.rs` declares every command (Next Agent's and the overlay's) in Tauri's app manifest, so a window may call only what its capability grants. `scripts/gen-capabilities.mjs` writes the capabilities from the code: `default.json` gives `main` Next Agent's commands only; `overlay-{island,settings,mochi,pill}.json` give each overlay window the overlay commands its own page reaches (its imports, the bridge methods they call, the commands those invoke), and none of Next Agent's. `make check` fails when they are stale; `scripts/tests/capabilities.test.ts` pins the rules.
+  - CSP: Next Agent's, plus upstream's `media-src 'self' blob:`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`.
 - **macOS.**
   - The island webview moves into the `IslandPanel` (level `mainMenu + 3`, `constrainFrameRect` passthrough), placed at the top centre of the chosen display by its frame in points.
   - The cursor poll flips `ignoresMouseEvents`.
@@ -135,9 +132,12 @@ These are Swift-only code paths with no Tauri counterpart to copy. Each would be
   - The island's Allow/Deny comes back on that stream and goes to `approval_respond`.
   - An approval answered in the main window closes the stream, and the card goes.
 - **Claude Code.**
-  - The relay and socket work as upstream: `~/Library/Application Support/dev.nextagent.desktop/coucou/coucou.sock`, a 0700 folder, and a uid check on both ends.
-  - Hooks are written only from Coucou's settings (Agents → Claude Code), after its diff, backup and confirmation. Nothing is written until then.
-- **Settings.** Next Agent's Settings → "Overlay / Coucou" opens Coucou's own settings window (`overlay_open`).
+  - The relay `next-agent-hook` and its socket `~/Library/Application Support/dev.nextagent.desktop/overlay/relay.sock`: a 0700 folder, and a uid check on both ends (on Windows, the pipe `\\.\pipe\next-agent-<sid>`, the client's SID checked by the app too).
+  - Limits: the first line within 5 s, at most 1 MiB (larger is refused, not cut), at most 64 connections at once; the relay reads at most 32 MiB of stdin.
+  - Hooks are written only from the overlay's settings window (Agents → Claude Code), after its diff, dated backup and confirmation (with the fingerprint of the preview). Nothing is written until then; only that window may call the write commands.
+  - The island offers Allow (once) and Deny; only those reach `approval_respond`. TODO(channels): hide any future "Always" for tasks the stream marks as from a channel.
+- **Settings.** Next Agent's Settings → "Overlay" opens the overlay's own settings window (`overlay_open`).
+- **Self-update.** Settings → General → Updates → "Update source" takes a GitHub `owner/repo`, empty by default; while empty nothing is checked or asked. Once set, the upstream consent question and schedule apply, tags are `vX.Y.Z`, and only releases and assets of that repository count.
 
 ### Differences from upstream (each marked `Next Agent:` in the code)
 - **Not at launch:**
@@ -148,13 +148,29 @@ These are Swift-only code paths with no Tauri counterpart to copy. Each would be
 - **Tests:**
   - Tests that read Coucou's Mac app or web site are skipped when those files are absent.
   - Two upstream tests shared a temp folder and raced on macOS; one now uses its own.
+  - Under `cargo test` the home folder is a temp folder of the test process, `CLAUDE_CONFIG_DIR` and the XDG / `%APPDATA%` variables are ignored, and secrets go to keyring's mock store: no test touches the real Application Support, `~/.claude` or Keychain.
+- **WhatsApp and Spotify: removed** (owner request). Code, UI, pills, settings, commands, the voice "music" tool, the dance to music, i18n strings, What's new items, tests, dependencies (`miniz_oxide`, the WinRT media and registry features) and the three `whatsapp-*` Keychain entries (deleted on first run on a Mac). Each cut is marked `Next Agent: removed WhatsApp/Spotify (owner request)`. JSON has no comments: the What's new items and i18n strings that named them were dropped.
+- **Renamed to Next Agent** (owner request; marked `Next Agent: renamed from Coucou (owner request)` where code changed):
+  - Visible text: inside string literals and the JSON tables only, "Coucou" and "Mochi" (and their Korean, Hindi, Arabic, Bengali and Russian spellings) became "Next Agent", "Coucoudoro" "Pomodoro". Comments, identifiers and the attribution headers are upstream's. A re-sync applies the same rule to the new upstream strings.
+  - Files and ids: the relay `next-agent-hook`, the log `next-agent.log`, the socket `relay.sock` (Mac) / `next-agent.sock` (Linux), the pipe `next-agent-<sid>`, `NEXT_AGENT_*` environment variables, the Keychain service `dev.nextagent.desktop.overlay`, the portal app id `dev.nextagent.desktop`, the data folders `…/dev.nextagent.desktop/overlay` on every system, the wake phrase « OK Next Agent » (Coucou's spellings still wake it).
+  - First run on a Mac: the old `dev.nextagent.desktop/coucou` folder moves to `overlay` (a link stays at the old path, so hooks written before keep starting and exit quietly), and the Keychain entries under `fr.louisraille.coucou` move to the new service (marker `.keychain-migrated`). Hooks with the old relay path still count as ours, so Install replaces them and Remove takes them out. On Windows and Linux nothing is moved: those old names belong to Coucou's own app.
+  - Kept, on purpose: the source folder, crate and module names (`apps/desktop/coucou`, `coucou_lib`, `coucou.rs`, `$coucou`), window labels and routes (`coucou-*`, `/coucou/*`), the hook payload fields (`coucou_agent` …), browser storage keys, other agents' plugin file names and group key (`coucou.json`, `coucou.js`, `"coucou"`), and the phone link's wire names (`_coucou._tcp`, `coucou://pair`, `coucou.v1`, `coucou-relay/v1`), which Coucou's Android app must match.
 - **Lints and checks:**
   - Upstream's style lints are allowed by name, and its formatting is kept (`rustfmt.toml`).
   - The structure heuristic skips the folder.
 
+## Upstream watch
+
+- Settings → Upstreams lists what Coucou published since the pin: commits (title, date, scope, link), releases, and the areas the range changed.
+- `crates/core/src/upstream/` reads the `watch` entry of `upstream.lock.json` (embedded at build time). It asks GitHub's public API once a day while the app runs, or on "Check now". It makes three unauthenticated requests: repository, compare from the pin, and releases.
+- It sends no token and no user data. A rate limit (403/429 with GitHub's headers) is remembered, and no check runs until it ends. The last result is kept in `upstream-watch.json` in the app data folder.
+- It never applies anything. Bringing a change in is a manual re-sync from the pin, then a re-pin of both `pin` and `watch.commit`.
+- It is generic: another upstream joins by getting a `watch` entry.
+
 ## Not verified
 - The Windows and Linux builds of the vendored crate: they cannot be compiled on a Mac.
 - Multi-display placement and mixed-DPI cursors on a Mac.
-- The Spotify, WhatsApp, mail and phone link features at run time.
+- The mail and phone link features at run time.
+- The Windows pipe's SID check and the other Windows/Linux edits of this change: written, not compiled here.
 - Flow dictation with real speech models: they download on demand.
-- **Bundling:** `tauri build` does not yet copy `coucou-hook` into the app's resources. Dev builds find it in `target/release` (built by `beforeDevCommand`).
+- **Bundling:** `tauri build` does not yet copy `next-agent-hook` into the app's resources. Dev builds find it in `target/release` (built by `beforeDevCommand`).

@@ -64,17 +64,8 @@ To ship replacements, add a `/sounds/` asset folder to the app (an `apps/desktop
 | `design/*` (animations, captures, outfits, prototype) | design references | not copied |
 | `windows/README.md` line 3 | `<img src="src-tauri/icons/128x128.png">` | broken image |
 
-## 5. The names "Coucou" and "Mochi"
+## 5. The names "Coucou" and "Mochi": done
 
-Kept as they are in the vendored code, so it stays a plain diff against upstream. Replace before publishing a build that shows them:
+Replaced by "Next Agent" wherever the product shows or names them (owner request): window titles, every UI string in the 14 languages, the tray, What's new, log lines, the relay (`next-agent-hook`), the Keychain service, the data folders, the update source and Next Agent's own Settings → Overlay. [[Coucou]] lists the rules, the first-run migration and the internal names kept on purpose. The legal attribution stays: `NOTICE.md`, the `Ported from Coucou (MIT, © 2026 Louis Raillé)` headers, the licence texts, the ADRs, `docs/upstream/*` and `upstream.lock.json`.
 
-| Where | What | Count / place |
-|---|---|---|
-| Interface strings | `src/i18n/strings.json`, `src/i18n/extra.json` | "Coucou" ×1160 and "Mochi" ×200 in strings.json, ×882 and ×79 in extra.json, across all languages |
-| TypeScript literals | `src/**/*.ts` | "Coucou" ×267, "Mochi" ×203 (comments included) |
-| Rust literals | `src-tauri/src/**/*.rs`, `hook/src` | "Coucou" ×520, "Mochi" ×79 (comments included); window titles in `lib.rs` (`create_settings_window`, `create_island_window`), tray menu and title in `tray.rs`, log lines `[coucou]` |
-| Window titles of the routes | `apps/desktop/src/routes/coucou/*/+page.svelte` | "Coucou", "Mochi" |
-| What's new | `src/whats-new/whats-new.json` | release notes naming Coucou |
-| Identifiers, not shown but carrying the name | keychain service `fr.louisraille.coucou` (`secrets.rs`); relay binary `coucou-hook` and its entries in `~/.claude/settings.json` (`hooks.rs`); socket `coucou.sock`; mDNS `_coucou._tcp` (`phone_link/discovery.rs`); relay label `coucou-relay/v1`; pill ids and `coucou_*` hook fields | changing them breaks compatibility with Coucou's relay, phone app and hooks; change them together |
-| Update check | `src-tauri/src/update.rs` | asks `github.com/Louis-CFM/coucou` releases, and only after the user agrees |
-| Next Agent's own UI | Settings → "Overlay / Coucou" (`apps/desktop/src/routes/(app)/settings/+page.svelte`) | credit line |
+Sections 1 to 4 (the character, icons, sounds and media) are still open.

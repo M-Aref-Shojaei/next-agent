@@ -1,11 +1,11 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/hook/src/main.rs @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
-//! coucou-hook — the relay Claude Code (and every other agent) runs on each hook
+//! next-agent-hook — the relay Claude Code (and every other agent) runs on each hook
 //! event.
 //!
 //! Reads the hook JSON on stdin, maps the agent's event and field names onto
 //! Claude Code's (normalize.rs), adds a little terminal context, and hands it to
-//! Coucou over the named pipe `\\.\pipe\coucou-<sid>` (Windows) or the Unix
-//! socket `$XDG_RUNTIME_DIR/coucou.sock` (Linux).
+//! Coucou over the named pipe `\\.\pipe\next-agent-<sid>` (Windows) or the Unix
+//! socket `$XDG_RUNTIME_DIR/next-agent.sock` (Linux).
 //!
 //! Hard rule (docs/CLAUDE.md): **never block the agent.**
 //! * If the pipe does not exist — Coucou is closed — we exit 0 immediately, with
@@ -23,9 +23,9 @@
 //!   (Approve commands from the notch) and then the click. 3 s for the first
 //!   line, 115 s for the click; anything else prints "ask" (reply.rs).
 //!
-//! Usage: `coucou-hook [--agent <name>] [<EventName>]` (the event name is also
+//! Usage: `next-agent-hook [--agent <name>] [<EventName>]` (the event name is also
 //! read from the JSON; `--agent` is absent for Claude Code), or
-//! `coucou-hook --statusline` as Claude Code's status line command (plan usage,
+//! `next-agent-hook --statusline` as Claude Code's status line command (plan usage,
 //! see statusline.rs): it passes the plan limits on and runs the status line the
 //! user had before, so that keeps working.
 
@@ -60,6 +60,9 @@ const DROPPED_FIELDS: &[&str] = &["tool_response", "tool_output", "transcript_pa
 /// Longest string forwarded for any single field; the island truncates to far
 /// less than this anyway.
 const MAX_FIELD_LEN: usize = 2_000;
+/// Next Agent: relay limits (security review): the most of a hook payload read
+/// from stdin. Fields are cut far below this anyway (MAX_FIELD_LEN, MAX_DIFF_TOTAL).
+const MAX_STDIN: u64 = 32 * 1024 * 1024;
 
 mod statusline;
 
@@ -126,7 +129,8 @@ fn main() {
     }
     let args = args();
     let mut raw = Vec::new();
-    let _ = std::io::stdin().read_to_end(&mut raw);
+    // Next Agent: relay limits (security review): at most MAX_STDIN bytes are read.
+    let _ = std::io::stdin().take(MAX_STDIN).read_to_end(&mut raw);
     let env = |key: &str| std::env::var(key).ok();
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 

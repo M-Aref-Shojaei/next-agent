@@ -103,7 +103,7 @@ pub fn is_shell(id: &str) -> bool {
     matches!(
         id,
         "explorer" | "applicationframehost" | "textinputhost" | "shellexperiencehost" | "searchhost"
-            | "startmenuexperiencehost" | "lockapp" | "coucou" | "gnome-shell" | "plasmashell" | "xfdesktop"
+            | "startmenuexperiencehost" | "lockapp" | "coucou" | "next-agent-desktop" | "gnome-shell" | "plasmashell" | "xfdesktop"
     )
 }
 
@@ -325,7 +325,7 @@ fn begin(app: &AppHandle, flow: &Arc<Flow>) -> Option<Listening> {
             app,
             "download",
             "#3B9EFF",
-            t("Download the voice model first, in Coucou → Settings → Recognition."),
+            t("Download the voice model first, in Next Agent → Settings → Recognition."),
             Some((t("Open Settings"), "openSettings")),
             10,
         );
@@ -359,7 +359,7 @@ fn begin(app: &AppHandle, flow: &Arc<Flow>) -> Option<Listening> {
                 app,
                 "mic",
                 "#FF6B6B",
-                t("Coucou can't hear you: the microphone is not allowed or not available."),
+                t("Next Agent can't hear you: the microphone is not allowed or not available."),
                 None,
                 8,
             );

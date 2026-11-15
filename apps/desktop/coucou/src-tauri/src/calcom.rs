@@ -53,7 +53,7 @@ async fn response(request: reqwest::RequestBuilder) -> Result<Value, String> {
 async fn fetch(app: &AppHandle, key: &str) -> Result<Value, String> {
     let config = config();
     let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(config.request_timeout_seconds)).user_agent("Coucou")
+        .timeout(Duration::from_secs(config.request_timeout_seconds)).user_agent("Next Agent")
         .build().map_err(|_| crate::i18n::t("Not available"))?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| invalid())?.as_millis() as i64;
@@ -68,8 +68,8 @@ async fn fetch(app: &AppHandle, key: &str) -> Result<Value, String> {
         if !active(app) { return Err(crate::i18n::t("Canceled")); }
         let mut url = reqwest::Url::parse(&config.url).map_err(|_| invalid())?;
         url.query_pairs_mut().append_pair("status", "upcoming")
-            .append_pair("afterStart", &crate::whatsapp::gateway::iso_utc(from))
-            .append_pair("beforeEnd", &crate::whatsapp::gateway::iso_utc(until))
+            .append_pair("afterStart", &iso_utc(from))
+            .append_pair("beforeEnd", &iso_utc(until))
             .append_pair("limit", &config.page_size.to_string());
         if let Some(cursor) = &cursor { url.query_pairs_mut().append_pair("cursor", cursor); }
         let value = response(http.get(url).bearer_auth(key).header("cal-api-version", &config.api_version)).await?;
@@ -112,6 +112,26 @@ fn parse_page(value: &Value) -> Result<(Vec<Value>, Option<String>), String> {
         Some(value["pagination"]["nextCursor"].as_str().filter(|s| !s.is_empty() && s.len() <= 4096).ok_or_else(invalid)?.to_owned())
     } else { None };
     Ok((bookings, next))
+}
+
+/// Next Agent: removed WhatsApp/Spotify (owner request). Cal.com used the
+/// WhatsApp gateway's date formatter; it lives here now, unchanged.
+pub fn iso_utc(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    // civil_from_days (Howard Hinnant).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", tod / 3600, tod % 3600 / 60, tod % 60)
 }
 
 #[cfg(test)]

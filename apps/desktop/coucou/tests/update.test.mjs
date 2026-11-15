@@ -36,7 +36,8 @@ test("progress, the header line and the busy phases", () => {
   assert.equal(percent(1.7), 100);
   assert.equal(percent(-1), 0);
   assert.equal(percent(Number.NaN), 0);
-  assert.equal(headerLine("WhatsApp in one click", "You have 0.5.0"), "WhatsApp in one click  ·  You have 0.5.0");
+  // Next Agent: removed WhatsApp/Spotify (owner request): the sample title named WhatsApp.
+  assert.equal(headerLine("Plan usage in one click", "You have 0.5.0"), "Plan usage in one click  ·  You have 0.5.0");
   assert.equal(headerLine(null, "You have 0.5.0"), "You have 0.5.0");
   assert.equal(headerLine("  ", "You have 0.5.0"), "You have 0.5.0");
   assert.equal(isBusy({ kind: "downloading", fraction: 0.1 }), true);
@@ -106,7 +107,7 @@ test("nothing opens over a waiting permission, and nothing is marked shown", () 
   assert.deepEqual(sent("update_shown"), []);
 });
 
-test("an announcement opens the card with Mochi surprised; Later snoozes it", () => {
+test("an announcement opens the card with Next Agent surprised; Later snoozes it", () => {
   emit("update-status", OUT);
   assert.equal(Updates.status.latest.version, "0.6.0");
   emit("update-offer", "announce");
@@ -128,7 +129,7 @@ test("an announcement with no version known yet, or while the chat is open, wait
   assert.deepEqual(shown, []);
 });
 
-test("the tray's Update Coucou to X… opens the card without marking anything", () => {
+test("the tray's Update Next Agent to X… opens the card without marking anything", () => {
   emit("update-status", OUT);
   State.mode = "expanded";
   State.view = "prompt";

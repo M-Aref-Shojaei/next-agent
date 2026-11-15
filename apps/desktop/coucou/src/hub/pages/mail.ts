@@ -58,7 +58,7 @@ function autoSortHint(view: TriageView, redraw: () => void): HTMLElement | null 
 export async function mailOverviewPage(page: HTMLElement, ctx: HubContext) {
   const view = await load();
   page.append(ctx.hero("mailOverview", t("Overview"),
-    t("Coucou sorts your Outlook inboxes: VIPs first, then banned words, then your rules. It never deletes a message.")));
+    t("Next Agent sorts your Outlook inboxes: VIPs first, then banned words, then your rules. It never deletes a message.")));
   const redraw = () => ctx.navigate("mailOverview");
 
   const sortCard = card(row(t("Sort new messages automatically"),
@@ -84,7 +84,7 @@ export async function mailOverviewPage(page: HTMLElement, ctx: HubContext) {
   ));
 
   if (view.sent.length > 0) {
-    page.append(label(t("Sent by Coucou")));
+    page.append(label(t("Sent by Next Agent")));
     const list = card();
     view.sent.forEach((e, i) => {
       if (i > 0) list.append(divider());
@@ -107,7 +107,7 @@ export async function mailOverviewPage(page: HTMLElement, ctx: HubContext) {
   page.append(journalHead);
   const journal = card();
   if (view.journal.length === 0) {
-    journal.append(emptyState(t("Nothing sorted yet. What Coucou does to your messages shows up here, with an Undo."), "idle", MAIL_BLUE));
+    journal.append(emptyState(t("Nothing sorted yet. What Next Agent does to your messages shows up here, with an Undo."), "idle", MAIL_BLUE));
   }
   view.journal.forEach((e, i) => {
     if (i > 0) journal.append(divider());
@@ -134,7 +134,7 @@ export async function mailRulesPage(page: HTMLElement, ctx: HubContext) {
   const view = await load();
   const redraw = () => ctx.navigate("mailRules");
   page.append(ctx.hero("mailRules", t("Rules"),
-    t("If a message matches, Coucou does the action. The first rule that matches wins; VIPs and banned words come before.")));
+    t("If a message matches, Next Agent does the action. The first rule that matches wins; VIPs and banned words come before.")));
   const hint = autoSortHint(view, redraw);
   if (hint) page.append(hint);
 

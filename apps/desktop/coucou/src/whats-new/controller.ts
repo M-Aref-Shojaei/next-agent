@@ -5,7 +5,7 @@
 // another card the user is reading is never replaced. The rules are in
 // whats-new.ts; the card is views/whatsnew.ts.
 //
-// The numbers of "Your Coucou so far" are read from this computer (the
+// The numbers of "Your Next Agent so far" are read from this computer (the
 // recap, Flow, the Notetaker) at that moment; nothing goes out.
 
 import { Bridge, IS_TAURI } from "../core/bridge";

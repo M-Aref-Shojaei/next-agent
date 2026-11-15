@@ -7,7 +7,7 @@
   import { onMount } from "svelte";
 
   onMount(() => {
-    document.title = "Mochi";
+    document.title = "Next Agent";
     void import("$coucou/desktop/main.ts");
   });
 </script>

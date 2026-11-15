@@ -620,7 +620,7 @@ async fn poll_github(app: AppHandle) {
         .get("https://api.github.com/user")
         .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "Coucou")
+        .header("User-Agent", "Next Agent")
         .send()
         .await;
     let Ok(response) = user else { return };
@@ -653,7 +653,7 @@ async fn poll_github(app: AppHandle) {
             .get(&url)
             .header("Authorization", format!("Bearer {token}"))
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "Coucou")
+            .header("User-Agent", "Next Agent")
             .send()
             .await;
         match resp {
@@ -785,7 +785,7 @@ async fn github_graphql(token: &str, query: &str, what: &str) -> Option<Value> {
         .post("https://api.github.com/graphql")
         .header("Authorization", format!("Bearer {token}"))
         .header("Content-Type", "application/json")
-        .header("User-Agent", "Coucou")
+        .header("User-Agent", "Next Agent")
         .json(&json!({ "query": query }))
         .send()
         .await;

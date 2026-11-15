@@ -6,7 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Bridge, IS_TAURI, onEvent } from "../core/bridge";
 import { MAX_DECLARED, availablePills, chooseMainPill, pillDefinition, sanitizeDeclared, toggleDeclared } from "../core/pills";
-import { Spotify } from "../core/spotify";
+// Next Agent: removed WhatsApp/Spotify (owner request): Spotify.
 import { State } from "../core/state";
 import { serviceCards } from "./phone-services";
 
@@ -99,13 +99,12 @@ function info(): string {
       fiveHourPercent: p.fiveHour?.usedPct ?? null,
       weekPercent: p.sevenDay?.usedPct ?? null,
     };
-  const s = Spotify.state;
   return JSON.stringify({
     pills: JSON.parse(describe()),
     sessions,
     claudePlan: plan(State.planUsage),
     codexPlan: plan(State.codexPlanUsage),
-    spotify: s.running && s.track ? { playing: s.playing, title: s.track.title, artist: s.track.artist } : null,
+    // Next Agent: removed WhatsApp/Spotify (owner request): spotify.
     services: serviceCards().map((c) => ({ service: c.title, headline: c.headline, about: c.reason, items: c.items })),
   });
 }

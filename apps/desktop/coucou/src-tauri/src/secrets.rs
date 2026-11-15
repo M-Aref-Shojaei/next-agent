@@ -7,7 +7,52 @@ use std::sync::{LazyLock, Mutex};
 
 use keyring::Entry;
 
-const SERVICE: &str = "fr.louisraille.coucou";
+// Next Agent: renamed from Coucou (owner request): was "fr.louisraille.coucou" (see `migrate_legacy`).
+const SERVICE: &str = "dev.nextagent.desktop.overlay";
+
+/// Nothing to move on Windows and Linux (see the macOS version).
+#[cfg(not(target_os = "macos"))]
+pub fn migrate_legacy() {}
+
+/// Coucou's service name, which the Mac build used before the rename.
+#[cfg(target_os = "macos")]
+const LEGACY_SERVICE: &str = "fr.louisraille.coucou";
+
+/// Next Agent: renamed from Coucou (owner request): moves the entries the Mac build stored under Coucou's service
+/// name to Next Agent's, once (a marker file in the private config folder),
+/// and deletes WhatsApp's old entries. Only on a Mac: on Windows and Linux that
+/// service name is Coucou's own app's, whose entries are not ours to move.
+#[cfg(target_os = "macos")]
+pub fn migrate_legacy() {
+    let marker = crate::settings::config_dir().join(".keychain-migrated");
+    if marker.exists() {
+        return;
+    }
+    let mut all_moved = true;
+    for key in KNOWN_KEYS.iter().chain(INTERNAL_KEYS) {
+        let (Ok(old), Ok(new)) = (Entry::new(LEGACY_SERVICE, key), Entry::new(SERVICE, key)) else { continue };
+        let Ok(value) = old.get_password() else { continue };
+        let moved = match new.get_password() {
+            // Already set under the new name: the new one wins.
+            Ok(_) => true,
+            Err(_) => new.set_password(&value).is_ok() && new.get_password().ok().as_deref() == Some(value.as_str()),
+        };
+        if moved {
+            let _ = old.delete_credential();
+        } else {
+            all_moved = false;
+        }
+    }
+    // Next Agent: removed WhatsApp/Spotify (owner request): its old entries go.
+    for key in ["whatsapp-url", "whatsapp-api-key", "whatsapp-webhook-secret"] {
+        if let Ok(old) = Entry::new(LEGACY_SERVICE, key) {
+            let _ = old.delete_credential();
+        }
+    }
+    if all_moved && crate::platform::ensure_private_dir(&crate::settings::config_dir()).is_ok() {
+        let _ = std::fs::write(&marker, b"");
+    }
+}
 
 /// Every key Coucou may store. Anything outside this list is refused.
 pub const KNOWN_KEYS: &[&str] = &[
@@ -36,7 +81,18 @@ fn entry(key: &str) -> Option<Entry> {
     if !KNOWN_KEYS.contains(&key) {
         return None;
     }
+    test_store();
     Entry::new(SERVICE, key).ok()
+}
+
+/// Next Agent: tests never touch the real home folder (security review): under `cargo test` every entry is keyring's in-memory mock,
+/// never the user's Keychain, Credential Manager or Secret Service.
+fn test_store() {
+    #[cfg(test)]
+    {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| keyring::set_default_credential_builder(keyring::mock::default_credential_builder()));
+    }
 }
 
 /// Whether each key is stored, as last seen. Each Secret Service lookup opens a
@@ -105,8 +161,8 @@ pub fn warm_up() {
 
 // ── Entries only Rust reads and writes ───────────────────────────────────────
 //
-// The phone link's certificate, key and pairing token, the relay's room, end-to-end key and access key,
-// and WhatsApp's gateway address, credential and webhook secret.
+// The phone link's certificate, key and pairing token, the relay's room, end-to-end key and access key.
+// Next Agent: removed WhatsApp/Spotify (owner request): WhatsApp's gateway address, credential and webhook secret.
 // They are not in KNOWN_KEYS
 // on purpose: the island has `secret_present` / `secret_set` / `secret_clear`
 // for those, and none of the three may be reachable from a webview.
@@ -119,11 +175,8 @@ pub const INTERNAL_KEYS: &[&str] = &[
     "phone-relay-room",
     "phone-relay-key",
     "phone-relay-access",
-    // WhatsApp's gateway address, its credential (GOWA's user:password or OpenWA's API key) and
-    // the webhook's signing secret: set from Settings through whatsapp_save_gateway, read by Rust only.
-    "whatsapp-url",
-    "whatsapp-api-key",
-    "whatsapp-webhook-secret",
+    // Next Agent: removed WhatsApp/Spotify (owner request): "whatsapp-url",
+    // "whatsapp-api-key", "whatsapp-webhook-secret".
 ];
 
 /// Whether the keystore would accept this key through `get_internal` / `set_internal`.
@@ -135,6 +188,7 @@ fn internal_entry(key: &str) -> Result<Entry, String> {
     if !is_internal(key) {
         return Err(format!("unknown key {key}"));
     }
+    test_store();
     Entry::new(SERVICE, key).map_err(|e| e.to_string())
 }
 
@@ -187,7 +241,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_certificate_sized_secret_round_trips_through_credential_manager() {
-        let entry = keyring::Entry::new("fr.louisraille.coucou.test", "phone-link-size-check").unwrap();
+        let entry = keyring::Entry::new("dev.nextagent.desktop.overlay.test", "phone-link-size-check").unwrap();
         let big: String = (0..1_200).map(|i| char::from(b"0123456789abcdef"[i % 16])).collect();
         entry.set_password(&big).expect("Credential Manager refused a certificate-sized secret");
         let back = entry.get_password().expect("could not read it back");

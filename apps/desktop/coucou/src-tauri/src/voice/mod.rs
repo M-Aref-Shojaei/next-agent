@@ -71,7 +71,7 @@ pub fn sync(app: &AppHandle) {
             std::thread::Builder::new().name("coucou-voice".into()).spawn(move || run(app2, stop2)).ok();
             *running = Some(Running { stop });
             speech::preload();
-            crate::log::line("voice: « OK Coucou » listening");
+            crate::log::line("voice: « OK Next Agent » listening");
         }
         (false, true) => {
             if let Some(r) = running.take() {
@@ -81,7 +81,7 @@ pub fn sync(app: &AppHandle) {
             if !dictation && !crate::notes::is_recording(app) {
                 speech::unload();
             }
-            crate::log::line("voice: « OK Coucou » off");
+            crate::log::line("voice: « OK Next Agent » off");
         }
         _ => {}
     }
@@ -178,7 +178,7 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             let question = match &mut mode {
                 Mode::Wake => match wake::after_wake(&heard) {
                     Some(rest) => {
-                        crate::log::line("voice: « OK Coucou » heard");
+                        crate::log::line("voice: « OK Next Agent » heard");
                         hide_at = None;
                         if crate::flow::text::word_count(&rest) >= 2 {
                             Some(rest)
@@ -209,7 +209,7 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
                 show(&app, Some(VoiceView {
                     phase: "speaking".into(),
                     heard: question,
-                    answer: if done { "✓".into() } else { crate::i18n::t("Coucou couldn't answer: check your Claude key in Notch → Chat.") },
+                    answer: if done { "✓".into() } else { crate::i18n::t("Next Agent couldn't answer: check your Claude key in Notch → Chat.") },
                 }));
                 hide_at = Some(Instant::now() + Duration::from_secs(5));
                 continue;
@@ -396,7 +396,7 @@ pub fn run_tool(app: &AppHandle, name: &str, input: &Value) -> (String, bool) {
             (answer, acted)
         }
         "service_info" => (ask_island(app, "info", json!({})).unwrap_or_else(|| "no data".into()), false),
-        "music" => music(app, input),
+        // Next Agent: removed WhatsApp/Spotify (owner request): "music" => music(app, input).
         "open_app" => open_app(input["name"].as_str().unwrap_or("")),
         "prepare_email" => {
             let to = input["recipient"].as_str().unwrap_or("").trim().to_string();
@@ -424,32 +424,7 @@ pub fn run_tool(app: &AppHandle, name: &str, input: &Value) -> (String, bool) {
     }
 }
 
-fn music(app: &AppHandle, input: &Value) -> (String, bool) {
-    let action = input["action"].as_str().unwrap_or("");
-    let (control, value) = match action {
-        "play_pause" => ("playPause", None),
-        "next" => ("next", None),
-        "previous" => ("previous", None),
-        "set_volume" => ("volume", Some(input["volume"].as_f64().unwrap_or(50.0).clamp(0.0, 100.0))),
-        "search" => {
-            let q = input["query"].as_str().unwrap_or("").trim();
-            if q.is_empty() {
-                return ("missing query".into(), false);
-            }
-            let encoded: String = q.chars().map(|c| if c.is_alphanumeric() { c.to_string() } else { "%20".into() }).collect();
-            crate::platform::open_url(&format!("spotify:search:{encoded}"));
-            return (format!("Spotify opened on a search for {q}: the user picks what to play."), true);
-        }
-        _ => return ("unknown action".into(), false),
-    };
-    let app2 = app.clone();
-    let done = tauri::async_runtime::block_on(crate::spotify::spotify_control(app2, control.into(), value));
-    if done {
-        ("done".into(), true)
-    } else {
-        ("Spotify is not running or not playing: tell the user to open it.".into(), false)
-    }
-}
+// Next Agent: removed WhatsApp/Spotify (owner request): fn music (Spotify controls).
 
 /// Opens an app whose name matches: a Start menu shortcut on Windows, a
 /// .desktop entry on Linux. Nothing else is ever run.
@@ -595,13 +570,13 @@ mod tests {
     }
 }
 
-/// With the models downloaded: `COUCOU_TEST_WAKE_WAV=… cargo test -- --ignored wake_in`.
+/// With the models downloaded: `NEXT_AGENT_TEST_WAKE_WAV=… cargo test -- --ignored wake_in`.
 #[cfg(test)]
 mod with_models {
     #[test]
     #[ignore]
     fn hears_the_wake_phrase_in_a_recording() {
-        let path = std::env::var("COUCOU_TEST_WAKE_WAV").expect("COUCOU_TEST_WAKE_WAV");
+        let path = std::env::var("NEXT_AGENT_TEST_WAKE_WAV").expect("NEXT_AGENT_TEST_WAKE_WAV");
         let bytes = std::fs::read(&path).unwrap();
         let rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
         let pcm: Vec<f32> = bytes[44..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();

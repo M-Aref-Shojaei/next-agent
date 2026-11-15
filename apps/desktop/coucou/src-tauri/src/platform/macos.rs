@@ -27,7 +27,7 @@ use tauri::{AppHandle, WebviewWindow};
 use super::{home_dir, LocalTime};
 
 /// File name of the Claude Code relay.
-pub const HOOK_EXE: &str = "coucou-hook";
+pub const HOOK_EXE: &str = "next-agent-hook";
 
 /// Environment variable holding the home directory.
 pub const HOME_VAR: &str = "HOME";
@@ -38,16 +38,44 @@ const APP_ID: &str = "dev.nextagent.desktop";
 
 // ── Files ─────────────────────────────────────────────────────────────────────
 
-/// ~/Library/Application Support/dev.nextagent.desktop/coucou — preferences
+/// ~/Library/Application Support/dev.nextagent.desktop/overlay — preferences
 /// (the Swift app keeps its own under its bundle id the same way).
+/// Next Agent: renamed from Coucou (owner request): the folder was `coucou`; `migrate_legacy_dir` moves it.
 pub fn config_dir() -> PathBuf {
     home_dir()
         .join("Library/Application Support")
         .join(APP_ID)
-        .join("coucou")
+        .join(OVERLAY_DIR)
 }
 
-/// Same folder: coucou-hook, the inbox and the log. One folder, so the relay
+/// The folder's name under Next Agent's support folder.
+const OVERLAY_DIR: &str = "overlay";
+
+/// What it was called before the rename.
+const LEGACY_DIR: &str = "coucou";
+
+/// Next Agent: renamed from Coucou (owner request): moves the old `coucou` folder (settings, recap, Flow history,
+/// notes, the relay) to `overlay` the first time the renamed app starts, and
+/// leaves a link at the old path. Hooks written before the rename run
+/// `…/coucou/coucou-hook`: through the link that old relay still starts, finds
+/// no socket under its old name and exits at once, so Claude Code carries on
+/// until the hooks are installed again from Settings → Agents.
+pub fn migrate_legacy_dir() {
+    let support = home_dir().join("Library/Application Support").join(APP_ID);
+    migrate_dir(&support.join(LEGACY_DIR), &support.join(OVERLAY_DIR));
+}
+
+fn migrate_dir(old: &Path, new: &Path) {
+    let is_real_dir = std::fs::symlink_metadata(old).is_ok_and(|m| m.file_type().is_dir());
+    if !is_real_dir || new.exists() {
+        return;
+    }
+    if std::fs::rename(old, new).is_ok() {
+        let _ = std::os::unix::fs::symlink(OVERLAY_DIR, old);
+    }
+}
+
+/// Same folder: next-agent-hook, the inbox and the log. One folder, so the relay
 /// sits at a stable path and the socket beside it stays short (sun_path is
 /// 104 bytes on macOS, HookServer.swift).
 pub fn local_dir() -> PathBuf {
@@ -95,14 +123,17 @@ fn is_private_dir(dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Where coucou-hook finds us: `coucou.sock` in the private config folder, as
+/// Where next-agent-hook finds us: `next-agent.sock` in the private config folder, as
 /// the Swift app keeps `nb.sock` in its support directory. Must match
 /// `socket_path()` in hook/src/mac.rs exactly.
 pub fn relay_socket_path() -> Option<PathBuf> {
     let dir = config_dir();
     let _ = ensure_private_dir(&dir);
-    is_private_dir(&dir).then(|| dir.join("coucou.sock"))
+    is_private_dir(&dir).then(|| dir.join(RELAY_SOCKET)) // Next Agent: renamed from Coucou (owner request)
 }
+
+/// The relay socket's name. Short: sun_path is 104 bytes on macOS.
+pub const RELAY_SOCKET: &str = "relay.sock";
 
 /// The user id, for the relay socket's peer check (pipe.rs).
 pub fn current_uid() -> u32 {
@@ -132,10 +163,7 @@ pub fn open_url(url: &str) {
     let _ = Command::new("/usr/bin/open").arg(url).spawn();
 }
 
-/// Whether an app handles the URL scheme (`whatsapp`…).
-pub fn handles_scheme(scheme: &str) -> bool {
-    panel::sys::handles_scheme(scheme)
-}
+// Next Agent: removed WhatsApp/Spotify (owner request): handles_scheme (WhatsApp's app check).
 
 pub fn reveal_folder(path: &str) {
     let _ = Command::new("/usr/bin/open").arg(path).spawn();
@@ -466,7 +494,7 @@ mod tests {
     #[test]
     fn coucou_files_live_under_next_agents_support_folder() {
         let dir = config_dir();
-        assert!(dir.ends_with("Library/Application Support/dev.nextagent.desktop/coucou"));
+        assert!(dir.ends_with("Library/Application Support/dev.nextagent.desktop/overlay"));
         assert_eq!(local_dir(), dir);
     }
 
@@ -477,8 +505,27 @@ mod tests {
         let path = Path::new("/Users/firstname.lastname-long")
             .join("Library/Application Support")
             .join(APP_ID)
-            .join("coucou/coucou.sock");
+            .join(OVERLAY_DIR)
+            .join(RELAY_SOCKET);
         assert!(path.as_os_str().len() < 104, "{}", path.display());
+    }
+
+    #[test]
+    fn the_old_folder_moves_once_and_leaves_a_link() {
+        let root = std::env::temp_dir().join(format!("next-agent-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (old, new) = (root.join(LEGACY_DIR), root.join(OVERLAY_DIR));
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("settings.json"), "{}").unwrap();
+        migrate_dir(&old, &new);
+        assert_eq!(std::fs::read_to_string(new.join("settings.json")).unwrap(), "{}");
+        assert!(std::fs::symlink_metadata(&old).unwrap().file_type().is_symlink());
+        // Through the link, the old relay path still resolves.
+        assert!(old.join("settings.json").exists());
+        // A second start changes nothing.
+        migrate_dir(&old, &new);
+        assert!(new.join("settings.json").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

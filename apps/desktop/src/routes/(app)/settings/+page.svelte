@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, type AuditStatus, type Rule } from "$lib/api.ts";
   import { app } from "$lib/app.svelte.ts";
+  import { upstreams } from "$lib/upstreams.svelte.ts";
 
   let routerUrl = $state("");
   let vaultPath = $state("");
@@ -67,11 +68,11 @@
   </section>
 
   <section aria-labelledby="h-overlay">
-    <h2 id="h-overlay">Overlay / Coucou</h2>
+    <h2 id="h-overlay">Overlay</h2>
     <p class="muted">
-      The island at the top of the screen (around the notch on a MacBook) is Coucou, built in (MIT; ADR-0011).
+      The island at the top of the screen (around the notch on a MacBook) is built in (vendored MIT code, credited in NOTICE.md; ADR-0011).
       It shows Next Agent's tasks and their approvals, which you can answer there; Next Agent's permission
-      engine still decides. Its settings live in its own window, as in Coucou.
+      engine still decides. Its settings live in its own window.
     </p>
     <div class="row">
       <button type="button" onclick={() => openOverlay("general")}>Open overlay settings…</button>
@@ -79,10 +80,16 @@
       <button type="button" onclick={() => openOverlay("dictation")}>Dictation and Notetaker…</button>
     </div>
     <p class="muted">
-      Claude Code sessions reach the island only once you install Coucou's hooks under <em>Agents → Claude Code</em>: it
+      Claude Code sessions reach the island only once you install the overlay's hooks under <em>Agents → Claude Code</em>: it
       shows the exact change to <code>~/.claude/settings.json</code>, saves a dated backup, and writes nothing until you
       confirm. Off until then.
     </p>
+  </section>
+
+  <section aria-labelledby="h-upstreams">
+    <h2 id="h-upstreams">Upstreams{#if upstreams.unseen > 0}<span class="badge">new</span>{/if}</h2>
+    <p>See what the projects we vendor or port from published since their pinned commit, on the
+      <a href="/settings/upstreams">Upstreams</a> page. Nothing is applied automatically.</p>
   </section>
 
   <section aria-labelledby="h-vault">
@@ -130,5 +137,6 @@
   form { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; margin-top: 8px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
   th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  .badge { margin-left: 8px; padding: 0 6px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; vertical-align: middle; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 </style>

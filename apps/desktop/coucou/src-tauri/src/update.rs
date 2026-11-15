@@ -1,6 +1,12 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/src-tauri/src/update.rs @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
-// "Coucou 0.6.0 is out" in the island, and on Windows one click to install it.
+// "Next Agent 0.6.0 is out" in the island, and on Windows one click to install it.
 // Port of MacUpdate.swift / MacUpdater.swift (the Mac's GitHub build).
+//
+// Next Agent: the update source is the owner's repository (owner request): Settings → General → Updates →
+// "Update source" names a GitHub owner/repo, empty by default. While it is
+// empty nothing is ever checked, asked or announced. Upstream asked
+// Louis-CFM/coucou; Coucou's own new commits are Next Agent's Upstream watch
+// (Settings → Upstreams in the main window), a separate thing.
 //
 // Nothing is asked of GitHub before the user says yes: the island asks once
 // (again a day later at most if the card was left unanswered), or Settings →
@@ -30,16 +36,46 @@ use tauri::{AppHandle, Emitter};
 use crate::i18n::t;
 use crate::island::WINDOW_LABEL;
 
-pub const RELEASES_URL: &str = "https://api.github.com/repos/Louis-CFM/coucou/releases?per_page=30";
-/// Where "What's new" goes when no release is known.
-pub const RELEASES_PAGE: &str = "https://github.com/Louis-CFM/coucou/releases";
+// Next Agent: the update source is the owner's repository (owner request): upstream's fixed RELEASES_URL / RELEASES_PAGE
+// (Louis-CFM/coucou) are built from the source instead.
 
-/// This platform's release tags: `windows-vX.Y.Z` / `linux-vX.Y.Z`. Never the
-/// rolling `windows-latest` / `linux-latest`, nor the Mac's `v…` or Android's.
-#[cfg(windows)]
-pub const TAG_PREFIX: &str = "windows-v";
-#[cfg(not(windows))]
-pub const TAG_PREFIX: &str = "linux-v";
+/// `owner/repo` as GitHub allows them: letters, digits, `-`, `_` and `.`, not
+/// `.` or `..`. Anything else is refused before any URL is built from it.
+pub fn valid_source(source: &str) -> bool {
+    let part = |p: &str| {
+        (1..=100).contains(&p.len())
+            && p != "."
+            && p != ".."
+            && p.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    };
+    matches!(source.split_once('/'), Some((owner, repo)) if part(owner) && part(repo))
+}
+
+/// `GET /repos/{source}/releases`, or None while no (valid) source is set.
+pub fn releases_url(source: &str) -> Option<String> {
+    valid_source(source).then(|| format!("https://api.github.com/repos/{source}/releases?per_page=30"))
+}
+
+/// Where "What's new" goes when no release is known.
+pub fn releases_page(source: &str) -> Option<String> {
+    valid_source(source).then(|| format!("https://github.com/{source}/releases"))
+}
+
+/// A release found at `source` keeps only what lives in that repository: its
+/// page, and assets under its own download path.
+fn scoped(release: Release, source: &str) -> Option<Release> {
+    // GitHub answers in the repository's own casing, whatever was typed.
+    let base = format!("https://github.com/{}/", source.to_ascii_lowercase());
+    if !release.page_url.to_ascii_lowercase().starts_with(&base) {
+        return None;
+    }
+    let downloads = format!("{base}releases/download/");
+    let assets = release.assets.into_iter().filter(|a| a.url.to_ascii_lowercase().starts_with(&downloads)).collect();
+    Some(Release { assets, ..release })
+}
+
+/// Next Agent's release tags: `vX.Y.Z` (upstream: `windows-v…` / `linux-v…`).
+pub const TAG_PREFIX: &str = "v";
 
 /// Once allowed, a look every 6 hours (GitHub allows 60 unauthenticated calls an hour).
 pub const CHECK_INTERVAL: i64 = 6 * 3600;
@@ -213,11 +249,12 @@ pub fn install_kind(exe: &str, has_uninstaller: bool, local_app_data: Option<&st
     let exe = win_path(exe);
     let Some((dir, _)) = exe.rsplit_once('\\') else { return InstallKind::Manual };
     if let Some(local) = local_app_data.filter(|l| !l.trim().is_empty()) {
-        if dir == format!("{}\\coucou", win_path(local)) {
+        // Next Agent: the update source is the owner's repository (owner request): Tauri's installers use the product name.
+        if dir == format!("{}\\next agent", win_path(local)) {
             return if has_uninstaller { InstallKind::Setup } else { InstallKind::Manual };
         }
     }
-    if program_files.iter().filter(|p| !p.trim().is_empty()).any(|p| dir == format!("{}\\coucou", win_path(p))) {
+    if program_files.iter().filter(|p| !p.trim().is_empty()).any(|p| dir == format!("{}\\next agent", win_path(p))) {
         return InstallKind::Msi;
     }
     InstallKind::Manual
@@ -227,8 +264,9 @@ pub fn install_kind(exe: &str, has_uninstaller: bool, local_app_data: Option<&st
 /// workflow publishes, nothing else.
 pub fn asset_name(kind: InstallKind, version: &str) -> Option<String> {
     match kind {
-        InstallKind::Setup => Some(format!("Coucou-Windows-{version}-setup.exe")),
-        InstallKind::Msi => Some(format!("Coucou-Windows-{version}.msi")),
+        // Next Agent: the update source is the owner's repository (owner request): Tauri's own names for Next Agent's installers.
+        InstallKind::Setup => Some(format!("Next Agent_{version}_x64-setup.exe")),
+        InstallKind::Msi => Some(format!("Next Agent_{version}_x64_en-US.msi")),
         InstallKind::Manual => None,
     }
 }
@@ -274,7 +312,7 @@ pub fn should_ask(asked_at: Option<i64>, now: i64) -> bool {
     due(asked_at, now, ASK_AGAIN)
 }
 
-/// Whether Mochi says "Coucou X is out": newer than what runs, and not shown
+/// Whether Mochi says "Next Agent X is out": newer than what runs, and not shown
 /// or put off for that version in the last day.
 pub fn should_announce(version: &str, current: &str, snoozed_version: Option<&str>, snoozed_at: Option<i64>, now: i64) -> bool {
     if !is_newer(version, current) {
@@ -291,6 +329,8 @@ pub fn should_announce(version: &str, current: &str, snoozed_version: Option<&st
 struct Prefs {
     /// None: not asked yet. true: Coucou may look at GitHub. false: never on its own.
     consent: Option<bool>,
+    /// Next Agent: the update source is the owner's repository (owner request): the GitHub `owner/repo` to look at; empty = off.
+    source: String,
     last_check: Option<i64>,
     snoozed_version: Option<String>,
     snoozed_at: Option<i64>,
@@ -329,6 +369,8 @@ pub struct LatestView {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     consent: Option<bool>,
+    /// Next Agent: the update source is the owner's repository (owner request).
+    source: String,
     current: String,
     latest: Option<LatestView>,
     /// "Update now" can install it here (Windows, setup.exe or MSI install).
@@ -360,8 +402,12 @@ fn state() -> MutexGuard<'static, Inner> {
     .unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Next Agent: the update source is the owner's repository (owner request): the version compared is Next Agent's (set by `start`), not
+/// the vendored crate's.
+static CURRENT: OnceLock<String> = OnceLock::new();
+
 pub fn current_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+    CURRENT.get().map_or(env!("CARGO_PKG_VERSION"), String::as_str)
 }
 
 fn now() -> i64 {
@@ -418,6 +464,7 @@ pub fn status() -> Status {
     let latest = s.latest.as_ref().filter(|r| is_newer(&r.version, current_version()));
     Status {
         consent: s.prefs.consent,
+        source: s.prefs.source.clone(),
         current: current_version().to_string(),
         latest: latest.map(|r| LatestView {
             version: r.version.clone(),
@@ -431,7 +478,7 @@ pub fn status() -> Status {
     }
 }
 
-/// Tells both windows, and the tray's "Update Coucou to X…".
+/// Tells both windows, and the tray's "Update Next Agent to X…".
 fn changed(app: &AppHandle) {
     let status = status();
     crate::tray::set_update(app, status.latest.as_ref().map(|l| l.version.as_str()));
@@ -455,6 +502,7 @@ fn set_phase(app: &AppHandle, phase: Phase) {
 /// At launch: a first look 30 s in, then every hour (GitHub only every 6 h).
 /// The task sleeps in between: nothing runs while nothing is due.
 pub fn start(app: AppHandle) {
+    let _ = CURRENT.set(app.package_info().version.to_string());
     remove_old_downloads();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FIRST_TICK).await;
@@ -472,10 +520,14 @@ async fn tick(app: &AppHandle, launch: bool) {
     if crate::integrations::PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    let (consent, asked_at, last_check) = {
+    let (consent, asked_at, last_check, source) = {
         let s = state();
-        (s.prefs.consent, s.prefs.asked_at, s.prefs.last_check)
+        (s.prefs.consent, s.prefs.asked_at, s.prefs.last_check, s.prefs.source.clone())
     };
+    // Next Agent: the update source is the owner's repository (owner request): no source, no question, no check.
+    if releases_url(&source).is_none() {
+        return;
+    }
     match consent {
         None if should_ask(asked_at, now()) => offer(app, "ask"),
         Some(true) if launch || should_check(last_check, now()) => check(app, false).await,
@@ -515,15 +567,16 @@ fn github_client(timeout: Duration) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .timeout(timeout)
-        .user_agent("Coucou")
+        .user_agent("Next Agent")
         .redirect(policy)
         .build()
         .map_err(|e| e.to_string())
 }
 
-async fn fetch_latest() -> Result<Option<Release>, String> {
+async fn fetch_latest(source: &str) -> Result<Option<Release>, String> {
+    let url = releases_url(source).ok_or("no update source")?;
     let response = github_client(Duration::from_secs(30))?
-        .get(RELEASES_URL)
+        .get(url)
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
@@ -532,23 +585,32 @@ async fn fetch_latest() -> Result<Option<Release>, String> {
         return Err(format!("HTTP {}", response.status().as_u16()));
     }
     let body = crate::net::read_capped(response, crate::net::MAX_BODY).await?;
-    Ok(latest(&body, TAG_PREFIX))
+    Ok(latest(&body, TAG_PREFIX).and_then(|r| scoped(r, source)))
 }
 
 /// One look at GitHub. `manual`: "Check now" in Settings, which opens the card
 /// when a new version is out.
 pub async fn check(app: &AppHandle, manual: bool) {
-    {
+    let source = {
         let mut s = state();
-        if s.busy() || s.check == CheckState::Checking {
+        // Next Agent: the update source is the owner's repository (owner request): nothing to ask while no source is set.
+        if s.busy() || s.check == CheckState::Checking || releases_url(&s.prefs.source).is_none() {
             return;
         }
         s.check = CheckState::Checking;
-    }
+        s.prefs.source.clone()
+    };
     changed(app);
-    let result = fetch_latest().await;
+    let result = fetch_latest(&source).await;
     let newer = {
         let mut s = state();
+        // The source changed meanwhile: this answer is the old repository's.
+        if s.prefs.source != source {
+            s.check = CheckState::None;
+            drop(s);
+            changed(app);
+            return;
+        }
         s.prefs.last_check = Some(now());
         save_prefs(&s.prefs);
         match result {
@@ -730,6 +792,36 @@ pub fn update_set_consent(app: AppHandle, allowed: bool) {
     }
 }
 
+/// Next Agent: the update source is the owner's repository (owner request): Settings → "Update source". Empty turns checking off; a new
+/// source forgets what the old one said.
+#[tauri::command]
+pub fn update_set_source(app: AppHandle, source: String) -> Result<Status, String> {
+    let source = source.trim().trim_matches('/').to_string();
+    if !source.is_empty() && !valid_source(&source) {
+        return Err(t("Not a GitHub owner/repo"));
+    }
+    {
+        let mut s = state();
+        if s.busy() {
+            return Err(t("Not a GitHub owner/repo"));
+        }
+        if s.prefs.source != source {
+            s.prefs.source = source;
+            s.prefs.last_check = None;
+            s.prefs.snoozed_version = None;
+            s.prefs.snoozed_at = None;
+            s.latest = None;
+            // A check under way keeps its state; its answer is dropped (`check`).
+            if s.check != CheckState::Checking {
+                s.check = CheckState::None;
+            }
+            save_prefs(&s.prefs);
+        }
+    }
+    changed(&app);
+    Ok(status())
+}
+
 /// "Check now" (a click: works with the toggle off too).
 #[tauri::command]
 pub async fn update_check(app: AppHandle) -> Status {
@@ -797,8 +889,13 @@ pub fn update_install(app: AppHandle) {
 /// "What's new" / "Get it on GitHub": the release's page (only ever a github.com address).
 #[tauri::command]
 pub fn update_open_page() {
-    let page = state().latest.as_ref().map(|r| r.page_url.clone()).filter(|u| allowed_url(u));
-    crate::platform::open_url(page.as_deref().unwrap_or(RELEASES_PAGE));
+    let (page, source) = {
+        let s = state();
+        (s.latest.as_ref().map(|r| r.page_url.clone()).filter(|u| allowed_url(u)), s.prefs.source.clone())
+    };
+    if let Some(page) = page.or_else(|| releases_page(&source)) {
+        crate::platform::open_url(&page);
+    }
 }
 
 #[cfg(test)]
@@ -816,18 +913,18 @@ mod tests {
               "html_url": "https://github.com/Louis-CFM/coucou/releases/tag/windows-v0.7.0", "assets": [] },
             { "tag_name": "v0.9.0", "draft": false, "prerelease": false,
               "html_url": "https://github.com/Louis-CFM/coucou/releases/tag/v0.9.0",
-              "body": "## What's new\n\n- **WhatsApp in one click** — Mac",
+              "body": "## What's new\n\n- **Plan usage in one click** — Mac",
               "assets": [{ "name": "Coucou.zip", "size": 34228988,
                 "browser_download_url": "https://github.com/Louis-CFM/coucou/releases/download/v0.9.0/Coucou.zip",
                 "digest": "sha256:24175a765704082c8b2e751f8b5ccb76b1eb3440ff2fd1e9c4cbe780c2193baa" }] },
             { "tag_name": "windows-v0.5.0", "draft": false, "prerelease": false,
               "html_url": "https://github.com/Louis-CFM/coucou/releases/tag/windows-v0.5.0",
-              "body": "Coucou for Windows 0.5.0 — Mochi at the top of your screen.\n\n## What's new\n\n- **Flow dictation** on Windows — hold right Ctrl\n- Other things",
+              "body": "Coucou for Windows 0.5.0 — Coucou at the top of your screen.\n\n## What's new\n\n- **Flow dictation** on Windows — hold right Ctrl\n- Other things",
               "assets": [
-                { "name": "Coucou-Windows-0.5.0-setup.exe", "size": 10950620,
+                { "name": "Next Agent_0.5.0_x64-setup.exe", "size": 10950620,
                   "browser_download_url": "https://github.com/Louis-CFM/coucou/releases/download/windows-v0.5.0/Coucou-Windows-0.5.0-setup.exe",
                   "digest": "sha256:e8234a092e8fe1bf6eed0395e6db13052be8fe47413949c2b7fa368467342337" },
-                { "name": "Coucou-Windows-0.5.0.msi", "size": 14086144,
+                { "name": "Next Agent_0.5.0_x64_en-US.msi", "size": 14086144,
                   "browser_download_url": "https://github.com/Louis-CFM/coucou/releases/download/windows-v0.5.0/Coucou-Windows-0.5.0.msi",
                   "digest": "sha256:79bced83c414722e84d47e99005a37910147624dc5e4edf55aa66ff6462cd09f" }] },
             { "tag_name": "windows-latest", "draft": false, "prerelease": false,
@@ -896,7 +993,7 @@ mod tests {
     #[test]
     fn the_headline_is_the_first_bold_bullet_of_whats_new() {
         let h = |s: &str| headline(Some(s));
-        assert_eq!(h("Intro\n\n## What's new\n\n- **WhatsApp in one click** *(macOS)* — more\n- second").as_deref(), Some("WhatsApp in one click"));
+        assert_eq!(h("Intro\n\n## What's new\n\n- **Plan usage in one click** *(macOS)* — more\n- second").as_deref(), Some("Plan usage in one click"));
         assert_eq!(h("## What’s new\n* Plain *first* item\n").as_deref(), Some("Plain first item"));
         assert_eq!(h("## What's new\n\n## Install\n- **Not this**"), None);
         assert_eq!(h("- **No section**"), None);
@@ -923,40 +1020,65 @@ mod tests {
     }
 
     #[test]
+    // Next Agent: the update source is the owner's repository (owner request):
+    // Next Agent's install folders and installer names.
     fn the_installer_follows_how_this_copy_was_installed() {
         let local = Some(r"C:\Users\Ana\AppData\Local");
         let pf = vec![r"C:\Program Files".to_string(), r"C:\Program Files (x86)".to_string()];
         let kind = |exe: &str, uninst: bool| install_kind(exe, uninst, local, &pf);
-        assert_eq!(kind(r"C:\Users\Ana\AppData\Local\Coucou\coucou.exe", true), InstallKind::Setup);
-        assert_eq!(kind(r"c:\users\ana\appdata\local\COUCOU\Coucou.exe", true), InstallKind::Setup);
+        assert_eq!(kind(r"C:\Users\Ana\AppData\Local\Next Agent\next-agent-desktop.exe", true), InstallKind::Setup);
+        assert_eq!(kind(r"c:\users\ana\appdata\local\NEXT AGENT\Next-Agent-Desktop.exe", true), InstallKind::Setup);
         // A portable exe copied there: no NSIS uninstaller next to it.
-        assert_eq!(kind(r"C:\Users\Ana\AppData\Local\Coucou\coucou.exe", false), InstallKind::Manual);
-        assert_eq!(kind(r"C:\Program Files\Coucou\coucou.exe", false), InstallKind::Msi);
-        assert_eq!(kind(r"C:\Program Files (x86)\Coucou\coucou.exe", false), InstallKind::Msi);
+        assert_eq!(kind(r"C:\Users\Ana\AppData\Local\Next Agent\next-agent-desktop.exe", false), InstallKind::Manual);
+        assert_eq!(kind(r"C:\Program Files\Next Agent\next-agent-desktop.exe", false), InstallKind::Msi);
+        assert_eq!(kind(r"C:\Program Files (x86)\Next Agent\next-agent-desktop.exe", false), InstallKind::Msi);
         // The portable exe, a build, a folder that only looks alike.
         assert_eq!(kind(r"C:\Users\Ana\Downloads\coucou.exe", true), InstallKind::Manual);
         assert_eq!(kind(r"C:\dev\coucou\windows\target\release\coucou.exe", false), InstallKind::Manual);
-        assert_eq!(kind(r"C:\Program Files\Coucou\bin\coucou.exe", false), InstallKind::Manual);
-        assert_eq!(kind(r"C:\Users\Ana\AppData\Local\Coucou\bin\coucou-hook.exe", true), InstallKind::Manual);
+        assert_eq!(kind(r"C:\Program Files\Next Agent\bin\next-agent-desktop.exe", false), InstallKind::Manual);
+        assert_eq!(kind(r"C:\Users\Ana\AppData\Local\Next Agent\bin\next-agent-hook.exe", true), InstallKind::Manual);
         assert_eq!(kind("coucou.exe", true), InstallKind::Manual);
-        assert_eq!(install_kind(r"C:\Program Files\Coucou\coucou.exe", false, None, &[]), InstallKind::Manual);
+        assert_eq!(install_kind(r"C:\Program Files\Next Agent\next-agent-desktop.exe", false, None, &[]), InstallKind::Manual);
         assert_eq!(install_kind("/opt/Coucou/coucou", false, Some(""), &[String::new()]), InstallKind::Manual);
     }
 
     #[test]
     fn the_asset_is_the_exact_installer_for_the_kind() {
         let w = latest(&fixture(), "windows-v").unwrap();
-        assert_eq!(pick_asset(&w, InstallKind::Setup).unwrap().name, "Coucou-Windows-0.5.0-setup.exe");
-        assert_eq!(pick_asset(&w, InstallKind::Msi).unwrap().name, "Coucou-Windows-0.5.0.msi");
+        assert_eq!(pick_asset(&w, InstallKind::Setup).unwrap().name, "Next Agent_0.5.0_x64-setup.exe");
+        assert_eq!(pick_asset(&w, InstallKind::Msi).unwrap().name, "Next Agent_0.5.0_x64_en-US.msi");
         assert_eq!(pick_asset(&w, InstallKind::Manual), None);
         // A look-alike name, or one served from elsewhere, is never picked.
         let mut odd = w.clone();
         odd.assets = vec![
             Asset { name: "Coucou-Windows-setup.exe".into(), url: w.assets[0].url.clone(), size: 1, digest: None },
-            Asset { name: "Coucou-Windows-0.5.0.msi".into(), url: "https://evil.example.com/x.msi".into(), size: 1, digest: None },
+            Asset { name: "Next Agent_0.5.0_x64_en-US.msi".into(), url: "https://evil.example.com/x.msi".into(), size: 1, digest: None },
         ];
         assert_eq!(pick_asset(&odd, InstallKind::Setup), None);
         assert_eq!(pick_asset(&odd, InstallKind::Msi), None);
+    }
+
+    #[test]
+    fn the_update_source_is_an_owner_and_a_repo_or_nothing() {
+        assert_eq!(
+            releases_url("someone/next-agent").as_deref(),
+            Some("https://api.github.com/repos/someone/next-agent/releases?per_page=30")
+        );
+        assert_eq!(releases_page("a.b/c_d").as_deref(), Some("https://github.com/a.b/c_d/releases"));
+        for bad in ["", "someone", "someone/", "/repo", "a/b/c", "../x", "a/..", "a b/c", "a/c?x=1", "a/c#x", "évil/x"] {
+            assert_eq!(releases_url(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_release_keeps_only_what_lives_in_its_repository() {
+        let w = latest(&fixture(), "windows-v").unwrap();
+        assert!(scoped(w.clone(), "someone/else").is_none());
+        let kept = scoped(w.clone(), "louis-cfm/Coucou").unwrap();
+        assert_eq!(kept.assets.len(), w.assets.len());
+        let mut moved = w;
+        moved.assets[0].url = "https://github.com/someone/else/releases/download/x/y.exe".into();
+        assert_eq!(scoped(moved, "Louis-CFM/coucou").unwrap().assets.len(), 1);
     }
 
     #[test]
@@ -1017,9 +1139,10 @@ mod tests {
         let p: Prefs = serde_json::from_str("{}").unwrap();
         assert_eq!(p, Prefs::default());
         let round: Prefs = serde_json::from_str(&serde_json::to_string(&Prefs {
-            consent: Some(false), last_check: Some(5), snoozed_version: Some("0.6.0".into()), snoozed_at: Some(6), asked_at: Some(7),
+            consent: Some(false), source: "someone/next-agent".into(), last_check: Some(5), snoozed_version: Some("0.6.0".into()), snoozed_at: Some(6), asked_at: Some(7),
         }).unwrap()).unwrap();
         assert_eq!(round.snoozed_version.as_deref(), Some("0.6.0"));
         assert_eq!(round.asked_at, Some(7));
+        assert_eq!(round.source, "someone/next-agent");
     }
 }

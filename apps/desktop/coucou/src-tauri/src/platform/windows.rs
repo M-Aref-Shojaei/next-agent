@@ -10,7 +10,7 @@ use std::process::Command;
 
 use tauri::{AppHandle, Manager, WebviewWindow};
 
-use ::windows::core::{w, BOOL, HSTRING, PCWSTR, PWSTR};
+use ::windows::core::{w, BOOL, HSTRING, PWSTR}; // Next Agent: removed WhatsApp/Spotify (owner request): PCWSTR
 use ::windows::Win32::Foundation::{
     CloseHandle, HANDLE, HLOCAL, HWND, LPARAM, LocalFree, POINT, RPC_E_CHANGED_MODE,
 };
@@ -24,10 +24,11 @@ use ::windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use ::windows::Win32::System::Ole::RevokeDragDrop;
 use ::windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
-use ::windows::Win32::System::Registry::{RegGetValueW, HKEY_CLASSES_ROOT, RRF_RT_REG_SZ};
+// Next Agent: removed WhatsApp/Spotify (owner request): the registry import handles_scheme used.
 use ::windows::Win32::System::SystemInformation::GetLocalTime;
 use ::windows::Win32::System::Threading::{
-    AttachThreadInput, GetCurrentProcess, GetCurrentThreadId, OpenProcessToken,
+    AttachThreadInput, GetCurrentProcess, GetCurrentThreadId, OpenProcess, OpenProcessToken,
+    PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use ::windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayoutList, MapVirtualKeyExW, ToUnicodeEx, HKL, MAPVK_VK_TO_VSC,
@@ -48,7 +49,7 @@ use super::LocalTime;
 use crate::session_window::{self, Proc};
 
 /// File name of the Claude Code relay.
-pub const HOOK_EXE: &str = "coucou-hook.exe";
+pub const HOOK_EXE: &str = "next-agent-hook.exe";
 
 /// Environment variable holding the home directory.
 pub const HOME_VAR: &str = "USERPROFILE";
@@ -58,21 +59,27 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 // ── Files ─────────────────────────────────────────────────────────────────────
 
-/// %APPDATA%\Coucou — preferences.
+/// %APPDATA%\dev.nextagent.desktop\overlay — preferences.
+/// Next Agent: renamed from Coucou (owner request): was %APPDATA%\Coucou, which stays Coucou's own app's.
 pub fn config_dir() -> PathBuf {
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("Coucou")
+        .filter(|_| !cfg!(test)) // Next Agent: tests never touch the real home folder (security review)
+        .unwrap_or_else(|| super::home_dir().join("AppData").join("Roaming"));
+    base.join("dev.nextagent.desktop").join("overlay")
 }
 
-/// %LOCALAPPDATA%\Coucou — where coucou-hook.exe, the inbox and the log live.
+/// %LOCALAPPDATA%\Coucou — where next-agent-hook.exe, the inbox and the log live.
 pub fn local_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("Coucou")
+        .filter(|_| !cfg!(test)) // Next Agent: tests never touch the real home folder (security review)
+        .unwrap_or_else(|| super::home_dir().join("AppData").join("Local"));
+    base.join("dev.nextagent.desktop").join("overlay") // Next Agent: renamed from Coucou (owner request)
 }
+
+/// Next Agent: renamed from Coucou (owner request): nothing to move on Windows (the old folders are Coucou's own app's).
+pub fn migrate_legacy_dir() {}
 
 /// Where a saved image goes, best first: Pictures (also where OneDrive moves
 /// it), then Downloads and the profile folder. The caller takes the first one
@@ -126,17 +133,7 @@ pub fn open_url(url: &str) {
         .spawn();
 }
 
-/// Whether an app on this computer registered the URL scheme (`whatsapp`…), so
-/// `open_url` on one of its links reaches that app instead of a "pick an app"
-/// prompt. Every registered scheme carries an empty "URL Protocol" value; a
-/// Microsoft Store app's is written there too, for as long as it is installed.
-pub fn handles_scheme(scheme: &str) -> bool {
-    let key = HSTRING::from(scheme);
-    unsafe {
-        RegGetValueW(HKEY_CLASSES_ROOT, PCWSTR(key.as_ptr()), w!("URL Protocol"), RRF_RT_REG_SZ, None, None, None)
-    }
-    .is_ok()
-}
+// Next Agent: removed WhatsApp/Spotify (owner request): handles_scheme (WhatsApp's app check).
 
 pub fn reveal_folder(path: &str) {
     let _ = Command::new("explorer").arg(path).spawn();
@@ -185,14 +182,31 @@ pub fn cli_candidates(name: &str) -> Vec<PathBuf> {
 //
 // Named pipes share one machine-wide namespace, so the SID in the name is what
 // keeps two accounts on the same machine from ever meeting on `coucou-*`.
-// coucou-hook computes the same string (hook/src/win.rs) and additionally checks
+// next-agent-hook computes the same string (hook/src/win.rs) and additionally checks
 // that the process serving the pipe really is us.
 
 /// The SID of the account this process runs as, as `S-1-5-21-…`.
 pub fn current_user_sid() -> Option<String> {
+    unsafe { process_handle_user_sid(GetCurrentProcess()) }
+}
+
+/// Next Agent: relay limits (security review): the SID of the account process `pid` runs as, so the relay
+/// pipe serves only a next-agent-hook run by this same user.
+pub fn process_user_sid(pid: u32) -> Option<String> {
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let sid = process_handle_user_sid(process);
+        let _ = CloseHandle(process);
+        sid
+    }
+}
+
+/// The user SID of the process behind `process` (upstream's body of
+/// `current_user_sid`, for any process handle).
+unsafe fn process_handle_user_sid(process: HANDLE) -> Option<String> {
     unsafe {
         let mut token = HANDLE::default();
-        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
+        OpenProcessToken(process, TOKEN_QUERY, &mut token).ok()?;
 
         // First call sizes the buffer, second fills it.
         let mut needed = 0u32;

@@ -8,9 +8,8 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Settings } from "./state";
 import type { RecapHistory, RecapPrefs } from "../recap/summary";
-import type { SpotifyState } from "./spotify";
+// Next Agent: removed WhatsApp/Spotify (owner request): the SpotifyState and WhatsApp view types.
 import type { UpdateStatus } from "./update";
-import type { WaIslandView, WaSettingsView, WaTestResult } from "./whatsapp";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -20,7 +19,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   try {
     return await invoke<T>(cmd, args);
   } catch (err) {
-    console.error(`[coucou] ${cmd} failed`, err);
+    console.error(`[next-agent] ${cmd} failed`, err);
     return null;
   }
 }
@@ -56,7 +55,7 @@ export interface PhoneRelayStatus {
   url: string;
   hasAccess: boolean;
   state: PhoneRelayState;
-  /** The relay settings are shown: for testers (COUCOU_RELAY_SETTINGS=1), or when a relay is already on. */
+  /** The relay settings are shown: for testers (NEXT_AGENT_RELAY_SETTINGS=1), or when a relay is already on. */
   shown: boolean;
 }
 
@@ -286,7 +285,7 @@ export const Bridge = {
 
   openSettingsWindow: () => call<void>("open_settings_window"),
 
-  /** Writes to %LOCALAPPDATA%\Coucou\coucou.log, next to the Rust lines. */
+  /** Writes to %LOCALAPPDATA%\Coucou\next-agent.log, next to the Rust lines. */
   log: (message: string) => call<void>("log_line", { message }),
 
   // ── Claude Code hooks ─────────────────────────────────────────────────────
@@ -470,41 +469,7 @@ export const Bridge = {
   /** Asleep, the cursor poll stops. */
   desktopSetAsleep: (asleep: boolean) => call<void>("desktop_mochi_set_asleep", { asleep }),
 
-  // ── Spotify (src-tauri/src/spotify.rs) ────────────────────────────────────
-  /** Reads the player again (the card came on screen) and reports it. */
-  spotifyRefresh: () => call<SpotifyState | null>("spotify_refresh"),
-  /** True when Spotify took it. `value`: seconds for seek, 0/1 for shuffle and repeat, 0…100 for volume. */
-  spotifyControl: (action: SpotifyAction, value?: number) =>
-    call<boolean>("spotify_control", { action, value: value ?? null }),
-  /** Brings Spotify forward or starts it; without it, its download page. */
-  spotifyOpen: () => call<boolean>("spotify_open"),
-  /** Whether there is a Spotify to launch (Settings). */
-  spotifyInstalled: () => call<boolean>("spotify_installed"),
-
-  // ── WhatsApp (src-tauri/src/whatsapp) ─────────────────────────────────────
-  /** The island's copy, asked once at start (then the "whatsapp" event). Island only. */
-  whatsappIsland: () => call<WaIslandView>("whatsapp_island"),
-  /** A conversation opened in the card: its latest messages, the receipt if Settings says so. */
-  whatsappOpen: (chat: string) => call<void>("whatsapp_open", { chat }),
-  whatsappClose: (chat: string) => call<void>("whatsapp_close", { chat }),
-  /** The card's ↗: WhatsApp Desktop at the open conversation, or WhatsApp Web without it. */
-  whatsappOpenApp: () => call<boolean>("whatsapp_open_app"),
-  /** Enter or the send button only. True once the gateway took it. */
-  whatsappSend: (chat: string, text: string) => call<boolean>("whatsapp_send", { chat, text }),
-  /** A chat id, or (Settings) a phone number. */
-  whatsappIgnore: (chat: string) => call<void>("whatsapp_ignore", { chat }),
-  whatsappUnignore: (chat: string) => call<void>("whatsapp_unignore", { chat }),
-  /** Settings only, from here down. */
-  whatsappSettings: () => call<WaSettingsView>("whatsapp_settings"),
-  whatsappSetOptions: (enabled: boolean, muteGroups: boolean, markReadOnOpen: boolean) =>
-    callOrThrow<void>("whatsapp_set_options", { enabled, muteGroups, markReadOnOpen }),
-  /** `credential`: null keeps the stored one, "" removes it. */
-  whatsappSaveGateway: (g: {
-    gateway: "gowa" | "openwa"; url: string; credential: string | null; port: number; autoStart: boolean; gowaPath: string;
-  }) => callOrThrow<void>("whatsapp_save_gateway", g),
-  whatsappTest: () => call<WaTestResult>("whatsapp_test"),
-  /** "Install WhatsApp" / "Update": GOWA from its GitHub releases, on this click only. */
-  whatsappInstall: () => call<void>("whatsapp_install"),
+  // Next Agent: removed WhatsApp/Spotify (owner request): spotify_* and whatsapp_* commands.
 
   // ── New versions (src-tauri/src/update.rs) ────────────────────────────────
   updateStatus: () => call<UpdateStatus>("update_status"),
@@ -512,6 +477,8 @@ export const Bridge = {
   updateSetConsent: (allowed: boolean) => call<void>("update_set_consent", { allowed }),
   /** "Check now": one look at GitHub, the toggle on or off. */
   updateCheck: () => call<UpdateStatus>("update_check"),
+  /** Next Agent: the update source is the owner's repository (owner request): "owner/repo", or "" to turn checking off. */
+  updateSetSource: (source: string) => callOrThrow<UpdateStatus>("update_set_source", { source }),
   /** The island opened the card Rust offered ("ask" or "announce"). */
   updateShown: (kind: "ask" | "announce") => call<void>("update_shown", { kind }),
   /** Settings → Install X: opens the island's update card. */
@@ -526,7 +493,7 @@ export const Bridge = {
   updateOpenPage: () => call<void>("update_open_page"),
 };
 
-export type SpotifyAction = "playPause" | "next" | "previous" | "seek" | "shuffle" | "repeat" | "volume";
+// Next Agent: removed WhatsApp/Spotify (owner request): SpotifyAction.
 
 export type ShortcutStatus =
   | "active" | "off" | "inUse" | "duplicate" | "invalid"
@@ -560,7 +527,7 @@ export async function emitToWindow(label: string, event: string, payload?: unkno
   try {
     await emitTo(label, event, payload);
   } catch (err) {
-    console.error(`[coucou] emit ${event} failed`, err);
+    console.error(`[next-agent] emit ${event} failed`, err);
   }
 }
 
@@ -655,7 +622,7 @@ export interface HookPreview {
 
 /** Same as `call`, but surfaces the error so the UI can show what went wrong. */
 async function callOrThrow<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (!IS_TAURI) throw new Error("not running inside Coucou");
+  if (!IS_TAURI) throw new Error("not running inside Next Agent");
   return invoke<T>(cmd, args);
 }
 

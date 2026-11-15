@@ -25,10 +25,7 @@ import { buildWardrobe } from "./wardrobe";
 import { buildUpdate } from "./update";
 import { buildWhatsNew } from "./whatsnew";
 import { buildLaunch } from "./launch";
-import { buildSpotifyCard, buildSpotifyPill, type SpotifyPillHost } from "./spotify";
-import { SPOTIFY_ID } from "../core/spotify";
-import { buildWhatsAppCard } from "./whatsapp";
-import { WHATSAPP_ID } from "../core/whatsapp";
+// Next Agent: removed WhatsApp/Spotify (owner request): the Spotify and WhatsApp cards and pill.
 import { MAIL_ID } from "../core/mail";
 import { buildMailCard } from "./mail";
 import type { Outfit, OutfitSelection } from "../mochi/wardrobe";
@@ -220,18 +217,9 @@ function buildOverview(actions: ViewActions): ViewHost {
   // Opened from a plan pill in the header: stands in for the left card.
   const plan = new PlanCard();
   let planTimer: number | null = null;
-  // Spotify's card and pill are kept and updated in place: the progress bar
-  // runs on, and a slider being dragged must not be rebuilt under the pointer.
-  const spotifyCard = buildSpotifyCard();
-  let spotifyPill: SpotifyPillHost | null = null;
-  // WhatsApp's card too: its reply field keeps the draft and the keyboard while messages arrive.
-  // Mail's card too (classic Outlook): the search field keeps its text and the keyboard.
+  // Next Agent: removed WhatsApp/Spotify (owner request): Spotify's and WhatsApp's cards, kept in place like this one.
+  // Mail's card is kept and updated in place (classic Outlook): the search field keeps its text and the keyboard.
   const mailCard = buildMailCard({ keyboard: (on) => actions.keyboard(on) });
-  const whatsappCard = buildWhatsAppCard({
-    openSettings: () => actions.openSettingsWindow(),
-    keyboard: (on) => actions.keyboard(on),
-    holdOpen: (on) => actions.holdOpen(on),
-  });
 
   const el = h("div", { class: "view overview" },
     h("div", { class: "left" }, left),
@@ -241,7 +229,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   let pillIds = "";
   let detailOpen = false;
   let lastFocus: string | null = null;
-  let mode: "ticker" | "card" | "plan" | "diff" | "spotify" | "whatsapp" | "mail" | null = null;
+  let mode: "ticker" | "card" | "plan" | "diff" | "mail" | null = null; // Next Agent: removed WhatsApp/Spotify (owner request): "spotify", "whatsapp"
   let cardKey = "";
   /** The list row highlighted at the last sync, to scroll only when it moves. */
   let shownSelection: number | null = null;
@@ -389,15 +377,7 @@ function buildOverview(actions: ViewActions): ViewHost {
           }));
         }
         ticker.sync(task);
-      } else if (task && task.id === SPOTIFY_ID) {
-        // Its own card for every state: playing, idle, not installed.
-        if (mode !== "spotify") {
-          clear(leftBody);
-          leftBody.append(spotifyCard.el);
-          mode = "spotify";
-          cardKey = "";
-        }
-        spotifyCard.sync();
+      // Next Agent: removed WhatsApp/Spotify (owner request): the Spotify card.
       } else if (task && task.id === MAIL_ID) {
         if (mode !== "mail") {
           clear(leftBody);
@@ -406,15 +386,7 @@ function buildOverview(actions: ViewActions): ViewHost {
           cardKey = "";
         }
         mailCard.sync();
-      } else if (task && task.id === WHATSAPP_ID) {
-        // Its own card in every state: not linked, no message, conversations, one open.
-        if (mode !== "whatsapp") {
-          clear(leftBody);
-          leftBody.append(whatsappCard.el);
-          mode = "whatsapp";
-          cardKey = "";
-        }
-        whatsappCard.sync();
+      // Next Agent: removed WhatsApp/Spotify (owner request): the WhatsApp card.
       } else if (task) {
         const info = State.integrations[task.id];
         const key = [
@@ -444,18 +416,10 @@ function buildOverview(actions: ViewActions): ViewHost {
       if (pillKey !== pillIds) {
         pillIds = pillKey;
         clear(pills);
-        spotifyPill = null;
-        for (const t of others) {
-          if (t.id === SPOTIFY_ID) {
-            spotifyPill = buildSpotifyPill(t, () => actions.setFocus(t.id));
-            pills.append(spotifyPill.el);
-          } else {
-            pills.append(buildPill(t, actions));
-          }
-        }
+        // Next Agent: removed WhatsApp/Spotify (owner request): the Spotify pill, built in place of buildPill.
+        for (const t of others) pills.append(buildPill(t, actions));
         pruneMiniBots();
       }
-      spotifyPill?.sync();
     },
   };
 }

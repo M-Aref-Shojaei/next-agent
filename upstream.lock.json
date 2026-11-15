@@ -1,5 +1,5 @@
 {
-  "$comment": "External components we build against or port from (ADR-0009). Re-syncing a port means diffing upstream from the pinned commit. See docs/architecture/Module Boundaries.md.",
+  "$comment": "External components we build against or port from (ADR-0009). Re-syncing a port means diffing upstream from the pinned commit. See docs/architecture/Module Boundaries.md. An entry with `watch` ({repo: owner/name on GitHub, commit: the full pinned sha}) is checked by Settings → Upstreams (crates/core/src/upstream/), which only reports new commits and releases.",
   "components": {
     "9router": {
       "pin": "v0.5.119 @ 1855aa4 (studied; ported, not bundled)",
@@ -71,11 +71,16 @@
     "coucou": {
       "pin": "main @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8 (latest main on 2026-11-14; whole Tauri app vendored; no assets)",
       "vendored": "windows/src-tauri -> apps/desktop/coucou/src-tauri, windows/hook -> apps/desktop/coucou/hook, windows/src -> apps/desktop/coucou/src, windows/tests -> apps/desktop/coucou/tests, windows/{dev,scripts,nsis,README.md,package.json,tsconfig.json}, android/relay/test-vectors.json; macOS layer translated from NotchBuddy/Sources/App (platform/macos.rs, flow/os_macos.rs, hook/src/mac.rs, crates/macos-panel/src/sys.rs). Re-sync: diff upstream windows/ from this pin against apps/desktop/coucou (Next Agent changes are marked `Next Agent:`)",
+      "removed": "WhatsApp (src-tauri/src/whatsapp, src/*/whatsapp.ts) and Spotify (src-tauri/src/spotify.rs, src/*/spotify.ts), owner request; cuts marked `Next Agent: removed WhatsApp/Spotify (owner request)`. Names shown in the product renamed to Next Agent (docs/upstream/Coucou.md)",
       "licence": "MIT (code), assets excluded (LICENSE-ASSETS.md); android/ and phone link MIT © Rhytam Biswas",
       "adapter": "apps/desktop/coucou",
       "checked": "2026-11-14",
       "risk": "medium",
-      "role": "overlay: the whole Coucou app (ADR-0011); Next Agent tasks via apps/desktop/src-tauri/src/coucou.rs"
+      "role": "overlay: the whole Coucou app (ADR-0011); Next Agent tasks via apps/desktop/src-tauri/src/coucou.rs",
+      "watch": {
+        "repo": "Louis-CFM/coucou",
+        "commit": "0d7fe58884d99f275f3238e8dbe29ddee69fa9e8"
+      }
     },
     "logseq": {
       "pin": "0.10.9 @ c67b8b5fa47f8fe1e1954226c9bdfabd46ebb968 (last file-graph release; studied deps/graph-parser, deps/common, src/main/frontend/util/fs.cljs; ported, not bundled)",

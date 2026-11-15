@@ -20,6 +20,7 @@ pub mod store;
 pub mod subagent;
 pub mod task;
 pub mod tools;
+pub mod upstream;
 pub mod vault;
 pub mod workspace;
 pub mod worktree;

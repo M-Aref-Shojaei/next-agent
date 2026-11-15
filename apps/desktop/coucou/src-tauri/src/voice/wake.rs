@@ -57,6 +57,13 @@ fn is_coucou(word: &str) -> bool {
     )
 }
 
+/// Next Agent: renamed from Coucou (owner request): the wake phrase is « OK Next Agent ». How Parakeet may
+/// write "next agent", in two words ("agents", and "nex" before a vowel).
+/// Coucou's own spellings still wake it too.
+fn is_next_agent_pair(a: &str, b: &str) -> bool {
+    matches!(a, "next" | "nex" | "nexed") && matches!(b, "agent" | "agents" | "asian" | "aging")
+}
+
 /// …or in two.
 fn is_coucou_pair(a: &str, b: &str) -> bool {
     matches!(
@@ -87,7 +94,7 @@ pub fn after_wake(text: &str) -> Option<String> {
                     return Some(words[j + 1..].join(" ").trim_start_matches([',', '.', '!', ' ']).trim().to_string());
                 }
                 if let Some(next) = norm.get(j + 1) {
-                    if is_coucou_pair(w, next) {
+                    if is_coucou_pair(w, next) || is_next_agent_pair(w, next) {
                         return Some(words[j + 2..].join(" ").trim_start_matches([',', '.', '!', ' ']).trim().to_string());
                     }
                 }
@@ -220,11 +227,16 @@ mod tests {
 
     #[test]
     fn the_wake_phrase_however_parakeet_writes_it() {
-        assert_eq!(after_wake("OK Coucou, play some music.").as_deref(), Some("play some music."));
+        // Next Agent: renamed from Coucou (owner request).
+        assert_eq!(after_wake("OK Next Agent, what time is it?").as_deref(), Some("what time is it?"));
+        assert_eq!(after_wake("Okay, next agents.").as_deref(), Some(""));
+        assert_eq!(after_wake("Hey Next Agent ajoute Stripe").as_deref(), Some("ajoute Stripe"));
+        assert_eq!(after_wake("ok next week"), None);
+        assert_eq!(after_wake("OK Next Agent, play some music.").as_deref(), Some("play some music."));
         assert_eq!(after_wake("Okay, coucou! Quelle heure est-il ?").as_deref(), Some("Quelle heure est-il ?"));
         assert_eq!(after_wake("O.K. Cuckoo what's the weather").as_deref(), Some("what's the weather"));
         assert_eq!(after_wake("ok cou cou ajoute Stripe").as_deref(), Some("ajoute Stripe"));
-        assert_eq!(after_wake("OK Coucou.").as_deref(), Some(""));
+        assert_eq!(after_wake("OK Next Agent.").as_deref(), Some(""));
         assert_eq!(after_wake("Hey coucou, ça va ?").as_deref(), Some("ça va ?"));
         // A Brazilian speaker's « OK Coucou », as Parakeet wrote it (#813).
         assert_eq!(after_wake("Okay, cocku.").as_deref(), Some(""));

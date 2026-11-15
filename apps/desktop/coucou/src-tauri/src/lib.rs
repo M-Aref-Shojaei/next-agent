@@ -41,14 +41,14 @@ mod settings;
 mod shortcuts;
 mod sounds;
 mod speech;
-mod spotify;
+// Next Agent: removed WhatsApp/Spotify (owner request): mod spotify;
 mod tray;
 mod update;
 mod voice;
 #[cfg(windows)]
 mod webview_drop;
 mod webview_memory;
-mod whatsapp;
+// Next Agent: removed WhatsApp/Spotify (owner request): mod whatsapp;
 
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -133,7 +133,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         let manager = app.autolaunch();
         let result = if settings.autostart { manager.enable() } else { manager.disable() };
         if let Err(err) = result {
-            eprintln!("[coucou] autostart: {err}");
+            eprintln!("[next-agent] autostart: {err}");
         }
     }
     if screen_changed {
@@ -142,8 +142,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         island::apply_geometry(&app, &settings.screen, collapsed.then_some(size));
     }
     integrations::settings_saved(&app, &settings.active_integrations);
-    spotify::sync(&app, &settings.active_integrations);
-    whatsapp::sync(&settings.active_integrations);
+    // Next Agent: removed WhatsApp/Spotify (owner request): spotify::sync, whatsapp::sync.
     if shortcuts_changed {
         shortcuts::apply(&app, &settings.shortcuts);
     }
@@ -168,7 +167,7 @@ fn set_system_languages(app: AppHandle, languages: Vec<String>) {
 fn language_changed(app: &AppHandle) {
     tray::retitle(app);
     if let Some(window) = app.get_webview_window(HUB_LABEL) {
-        let _ = window.set_title("Coucou");
+        let _ = window.set_title("Next Agent");
     }
 }
 
@@ -768,7 +767,7 @@ fn create_settings_window(app: &AppHandle) {
     let url = settings_page_url(app);
     match WebviewWindowBuilder::new(app, HUB_LABEL, url)
         .additional_browser_args(BROWSER_ARGS)
-        .title("Coucou")
+        .title("Next Agent")
         .inner_size(1100.0, 720.0)
         .min_inner_size(820.0, 560.0)
         .resizable(true)
@@ -795,7 +794,7 @@ fn create_settings_window(app: &AppHandle) {
             });
             webview_memory::set_low(&win, true); // created hidden
         }
-        Err(err) => log::line(format!("Coucou window failed: {err}")),
+        Err(err) => log::line(format!("Next Agent window failed: {err}")),
     }
 }
 
@@ -833,7 +832,7 @@ pub fn show_hub(app: &AppHandle, page: Option<&str>) {
         // Creating it at startup can fail on some machines (WebView2
         // 0x80070578, #775): try again now, on the main thread, where
         // window creation can't deadlock a command.
-        log::line("Coucou window missing, creating it again");
+        log::line("Next Agent window missing, creating it again");
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
             create_settings_window(&handle);
@@ -890,6 +889,8 @@ pub struct Boot {
 /// Coucou's plugins and state on Next Agent's builder.
 pub fn builder(builder: tauri::Builder<tauri::Wry>) -> (tauri::Builder<tauri::Wry>, Boot) {
     platform::prepare_environment();
+    // Next Agent: renamed from Coucou (owner request): the old folder moves first.
+    platform::migrate_legacy_dir();
     let loaded = settings::load();
     i18n::set_picked(&loaded.language);
     let gate = Arc::new(PollGate::new());
@@ -1078,22 +1079,7 @@ coucou_commands![
             sounds::custom_sound,
             sounds::reveal_sounds_folder,
             sounds::reload_sounds,
-            spotify::spotify_refresh,
-            spotify::spotify_control,
-            spotify::spotify_open,
-            spotify::spotify_installed,
-            whatsapp::whatsapp_island,
-            whatsapp::whatsapp_open,
-            whatsapp::whatsapp_close,
-            whatsapp::whatsapp_open_app,
-            whatsapp::whatsapp_send,
-            whatsapp::whatsapp_ignore,
-            whatsapp::whatsapp_unignore,
-            whatsapp::whatsapp_settings,
-            whatsapp::whatsapp_set_options,
-            whatsapp::whatsapp_save_gateway,
-            whatsapp::whatsapp_test,
-            whatsapp::whatsapp_install,
+            // Next Agent: removed WhatsApp/Spotify (owner request): spotify_*, whatsapp_* commands.
             flow::flow_status,
             flow::flow_set_prefs,
             flow::flow_history,
@@ -1130,6 +1116,7 @@ coucou_commands![
             voice::voice_say_native,
             update::update_status,
             update::update_set_consent,
+            update::update_set_source, // Next Agent: the update source is the owner's repository (owner request)
             update::update_check,
             update::update_shown,
             update::update_show,
@@ -1145,7 +1132,7 @@ coucou_commands![
 /// (tauri.linux.conf.json on Linux), under Next Agent's label and route.
 fn create_island_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     let builder = WebviewWindowBuilder::new(app, island::WINDOW_LABEL, WebviewUrl::App("coucou/island".into()))
-        .title("Coucou")
+        .title("Next Agent")
         .inner_size(240.0, 6.0)
         .resizable(false)
         .decorations(false)
@@ -1172,6 +1159,9 @@ fn create_island_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> 
 pub fn setup(app: &mut tauri::App, boot: Boot) -> Result<(), Box<dyn std::error::Error>> {
     let Boot { loaded, gate } = boot;
     let handle = app.handle().clone();
+    // Next Agent: renamed from Coucou (owner request): the old Keychain entries
+    // move first, before the phone link or anything else reads one.
+    secrets::migrate_legacy();
     secrets::warm_up();
     app.manage(phone_link::PhoneLink::new(handle.clone()));
     tray::build(&handle)?;
@@ -1212,15 +1202,13 @@ pub fn setup(app: &mut tauri::App, boot: Boot) -> Result<(), Box<dyn std::error:
     gate.set_active(true);
     island::spawn_cursor_poll(handle.clone(), gate.clone());
 
-    log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
+    log::line(format!("--- Next Agent {} started ---", env!("CARGO_PKG_VERSION")));
     hooks::ensure_hook_exe(&handle);
     pipe::start(handle.clone());
     phone_link::start_if_enabled(&handle);
     integrations::start(handle.clone());
     mail::start(handle.clone());
-    spotify::sync(&handle, &loaded.active_integrations);
-    // WhatsApp (experimental): nothing runs unless it is turned on and its pill is active.
-    whatsapp::start(&handle, &loaded.active_integrations);
+    // Next Agent: removed WhatsApp/Spotify (owner request): spotify::sync, whatsapp::start.
     shortcuts::apply(&handle, &loaded.shortcuts);
     // New versions: nothing goes to GitHub until the user agrees (update.rs).
     update::start(handle.clone());
@@ -1253,8 +1241,7 @@ pub fn on_run_event(app: &AppHandle, event: &tauri::RunEvent) {
     if let tauri::RunEvent::Exit = event {
         phone_link::stop_on_exit(app);
         notes::shutdown(app);
-        // GOWA started by Coucou stops with it; the conversations were only in memory.
-        whatsapp::shutdown();
+        // Next Agent: removed WhatsApp/Spotify (owner request): whatsapp::shutdown.
     }
 }
 

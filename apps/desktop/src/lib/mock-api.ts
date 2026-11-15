@@ -1,6 +1,7 @@
 // In-memory stand-in for the Rust commands, used outside Tauri.
 import type { Api, BoardDoc, Workspace } from "./api.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
+import type { WatchView } from "./upstreams.ts";
 import {
   defaultSettings,
   type Combo,
@@ -23,6 +24,16 @@ const combos: Combo[] = [];
 let gatewaySettings: GatewaySettings = defaultSettings();
 let catalog: { models: number; updatedAt: number | null } = { models: 0, updatedAt: null };
 let cacheEntries = 3;
+const PIN = "0d7fe58884d99f275f3238e8dbe29ddee69fa9e8";
+let upstreamView: WatchView = {
+  watched: [{ id: "coucou", repo: "Louis-CFM/coucou", commit: PIN }],
+  reports: [],
+  lastCheck: null,
+  rateLimitedUntil: null,
+  unseen: [],
+  checking: false,
+  error: null,
+};
 const mockDay = (offset: number, cost: number, requests: number): UsageTotals => ({
   key: new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10),
   requests, failures: 0, promptTokens: requests * 1200, completionTokens: requests * 300,
@@ -292,6 +303,41 @@ export const mockApi: Api = {
     return removed;
   },
   async overlayOpen() {},
+  async upstreamWatchStatus() {
+    return upstreamView;
+  },
+  async upstreamWatchCheck() {
+    const now = Math.floor(Date.now() / 1000);
+    const commit = (n: number, title: string, areas: string[]) => ({
+      sha: `${n}`.repeat(40), short: `${n}`.repeat(7), title, areas,
+      date: new Date(Date.now() - n * 3_600_000).toISOString(),
+      url: `https://github.com/Louis-CFM/coucou/commit/${`${n}`.repeat(40)}`,
+    });
+    upstreamView = {
+      ...upstreamView,
+      lastCheck: now,
+      unseen: ["coucou"],
+      reports: [{
+        id: "coucou", repo: "Louis-CFM/coucou", pinned: PIN, pinnedDate: "2026-11-14T08:00:00Z", branch: "main",
+        aheadBy: 2,
+        commits: [commit(1, "feat(island): example commit", ["island"]), commit(2, "Fix a typo", [])],
+        releases: [],
+        areas: [{ path: "windows/src-tauri", files: 3 }, { path: "windows/src", files: 1 }],
+        compareUrl: `https://github.com/Louis-CFM/coucou/compare/${PIN}...main`,
+        checkedAt: now,
+        error: null,
+      }],
+    };
+    return upstreamView;
+  },
+  async upstreamWatchMarkSeen() {
+    upstreamView = { ...upstreamView, unseen: [] };
+    return upstreamView;
+  },
+  async upstreamOpen() {},
+  async onUpstreamWatch() {
+    return () => {};
+  },
   async boardList() {
     requireVault();
     return [...boards.entries()]

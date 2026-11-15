@@ -1,6 +1,6 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/src/views/update.ts @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
 // The update card — port of UpdateCardView (MacUpdateViews.swift): the
-// one-time question, "Coucou X is out" with Update now · What's new · Later,
+// one-time question, "Next Agent X is out" with Update now · What's new · Later,
 // then the download's progress, or what went wrong. Same green wash and the
 // same left inset as the other cards, Mochi on the left.
 
@@ -49,7 +49,7 @@ export function buildUpdate(): ViewHost {
 
       if (Updates.asking) {
         title.textContent = t("Get new versions from the island?");
-        line.textContent = t("Mochi checks Coucou's releases on GitHub a few times a day and tells you when one is out. Nothing about you is sent.");
+        line.textContent = t("Next Agent checks Next Agent's releases on GitHub a few times a day and tells you when one is out. Nothing about you is sent.");
         buttons("ask", () => [
           btn(t("Yes, tell me"), "primary", () => Updates.answer(true)),
           btn(t("No thanks"), "secondary", () => Updates.answer(false)),
@@ -69,13 +69,13 @@ export function buildUpdate(): ViewHost {
       }
 
       if (!r) {
-        title.textContent = t("Coucou is up to date");
+        title.textContent = t("Next Agent is up to date");
         line.textContent = youHave;
         buttons("none", () => [btn(t("OK"), "secondary", () => Updates.dismiss())]);
         return;
       }
 
-      title.textContent = t("Coucou {version} is out", { version: r.version });
+      title.textContent = t("Next Agent {version} is out", { version: r.version });
       title.title = title.textContent;
       switch (phase.kind) {
         case "downloading": {
@@ -90,7 +90,7 @@ export function buildUpdate(): ViewHost {
           buttons("busy", () => []);
           return;
         case "installing":
-          line.textContent = t("Installing… Coucou closes and comes back by itself.");
+          line.textContent = t("Installing… Next Agent closes and comes back by itself.");
           buttons("busy", () => []);
           return;
         case "idle":

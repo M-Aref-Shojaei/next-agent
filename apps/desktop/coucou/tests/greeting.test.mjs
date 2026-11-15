@@ -47,11 +47,11 @@ function run(tc) {
   }
 }
 
-test("Mochi stays inside the island for the whole greeting", () => {
+test("Next Agent stays inside the island for the whole greeting", () => {
   run(Number.POSITIVE_INFINITY);
 });
 
-test("Mochi stays inside the island when the greeting is cut short", () => {
+test("Next Agent stays inside the island when the greeting is cut short", () => {
   for (let tc = 0.3; tc < GREETING_END + 0.4; tc += 0.1) run(tc);
 });
 
@@ -65,7 +65,7 @@ test("he slides to the side to wave, then comes back to the middle", () => {
   assert.equal(back.handL, 0);
 });
 
-test("he lands where the compact island's Mochi sits", () => {
+test("he lands where the compact island's Next Agent sits", () => {
   const end = greetingPose(10, 5);
   assert.equal(end.y, NOTCH_H / 2);
   assert.equal(end.x, GREETING_W / 2 - COMPACT_W / 2 + 40);

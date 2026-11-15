@@ -207,7 +207,7 @@ async fn download_all(app: &AppHandle) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .read_timeout(Duration::from_secs(60))
-        .user_agent(concat!("Coucou/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Next Agent/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| e.to_string())?;
     let mut last_emit = Instant::now();
@@ -485,7 +485,7 @@ mod tests {
     }
 }
 
-/// With the models downloaded: `COUCOU_TEST_WAV=… cargo test -- --ignored speech`.
+/// With the models downloaded: `NEXT_AGENT_TEST_WAV=… cargo test -- --ignored speech`.
 #[cfg(test)]
 mod with_models {
     #[test]
@@ -499,13 +499,13 @@ mod with_models {
     }
 
     /// A dictation that starts with the microphone's click and the first word
-    /// already under way (a French one, from `COUCOU_SUDDEN_WAV`, 16 kHz):
+    /// already under way (a French one, from `NEXT_AGENT_SUDDEN_WAV`, 16 kHz):
     /// Parakeet used to write half of it in English.
     /// `cargo test -p coucou --lib a_sudden_start -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn a_sudden_start_keeps_its_language() {
-        let path = std::env::var("COUCOU_SUDDEN_WAV").expect("COUCOU_SUDDEN_WAV");
+        let path = std::env::var("NEXT_AGENT_SUDDEN_WAV").expect("NEXT_AGENT_SUDDEN_WAV");
         let samples = super::audio::read_wav(std::path::Path::new(&path)).unwrap();
         let t = super::transcribe(&samples).expect("models");
         println!("{}", t.text);
@@ -518,7 +518,7 @@ mod with_models {
     #[test]
     #[ignore]
     fn transcribes_a_recording() {
-        let path = std::env::var("COUCOU_TEST_WAV").expect("COUCOU_TEST_WAV");
+        let path = std::env::var("NEXT_AGENT_TEST_WAV").expect("NEXT_AGENT_TEST_WAV");
         let bytes = std::fs::read(&path).unwrap();
         let rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
         let pcm: Vec<f32> = bytes[44..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();

@@ -289,7 +289,7 @@ pub fn setup(app: &AppHandle) {
             None => mode = DesktopMode::Off,
         }
     }
-    crate::log::line(format!("desktop Mochi: {}", mode.as_str()));
+    crate::log::line(format!("desktop Next Agent: {}", mode.as_str()));
     let desktop = Arc::new(Desktop::new(mode));
     app.manage(desktop.clone());
     // Nothing takes the mouse until he is out.
@@ -312,7 +312,7 @@ fn page_url(app: &AppHandle) -> WebviewUrl {
 fn create_window(app: &AppHandle, _mode: DesktopMode) -> Option<WebviewWindow> {
     let mut builder = WebviewWindowBuilder::new(app, LABEL, page_url(app))
         .additional_browser_args(crate::BROWSER_ARGS)
-        .title("Mochi")
+        .title("Next Agent")
         .inner_size(SIZE, SIZE)
         // GTK won't size a non-resizable window below its natural size (see
         // island::apply_geometry). Windows would grow resize borders instead.
@@ -340,7 +340,7 @@ fn create_window(app: &AppHandle, _mode: DesktopMode) -> Option<WebviewWindow> {
             Some(win)
         }
         Err(err) => {
-            crate::log::line(format!("desktop Mochi window failed: {err}"));
+            crate::log::line(format!("desktop Next Agent window failed: {err}"));
             None
         }
     }
@@ -825,7 +825,7 @@ pub async fn desktop_mochi_fly_out(app: AppHandle, anywhere: Option<bool>) -> bo
     }
     refresh_layer_display(&app, &d);
     let Some(target) = target_spot(&app, &d, anywhere.unwrap_or(false)) else {
-        crate::log::line("desktop Mochi: his spot is on a display that is gone — he stays home");
+        crate::log::line("desktop Next Agent: his spot is on a display that is gone — he stays home");
         remember(&app, |p| p.on_desktop = false);
         return false;
     };

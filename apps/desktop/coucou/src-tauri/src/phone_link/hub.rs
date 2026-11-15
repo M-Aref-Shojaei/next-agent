@@ -74,7 +74,7 @@ const STATES: &[&str] = &[
 ];
 
 /// How a decision gets back to the agent. The app's implementation answers the
-/// waiting `coucou-hook` and closes the card on the island.
+/// waiting `next-agent-hook` and closes the card on the island.
 pub trait Host: Send + Sync {
     fn decide(&self, request_id: &str, allow: bool);
     /// A phone answered a question Claude Code asked: each question's text mapped to the label picked (a list of

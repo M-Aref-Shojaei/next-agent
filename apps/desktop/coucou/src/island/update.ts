@@ -109,7 +109,7 @@ class UpdateController {
     }
   }
 
-  /** Tray → "Update Coucou to X…", Settings → Install X. */
+  /** Tray → "Update Next Agent to X…", Settings → Install X. */
   show() {
     this.offer("show");
   }

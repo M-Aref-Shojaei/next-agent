@@ -90,10 +90,10 @@ pub fn description(id: &str) -> &'static str {
         "attachFrontWindow" => n_("Attach the front window to the chat"),
         "nextPill" => n_("Next pill"),
         "prevPill" => n_("Previous pill"),
-        "muteToggle" => n_("Mute or unmute Mochi"),
-        "desktopToggle" => n_("Send Mochi to the desktop"),
+        "muteToggle" => n_("Mute or unmute Next Agent"),
+        "desktopToggle" => n_("Send Next Agent to the desktop"),
         "wardrobeToggle" => n_("Open the wardrobe"),
-        _ => "Coucou",
+        _ => "Next Agent",
     }
 }
 
@@ -679,7 +679,7 @@ mod wayland {
         #[test]
         fn every_action_has_a_description() {
             for def in ACTIONS {
-                assert_ne!(description(def.id), "Coucou", "{}", def.id);
+                assert_ne!(description(def.id), "Next Agent", "{}", def.id);
             }
         }
     }

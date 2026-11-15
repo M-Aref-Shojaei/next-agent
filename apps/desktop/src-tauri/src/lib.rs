@@ -8,6 +8,7 @@ pub mod notes;
 pub mod review;
 pub mod service;
 pub mod tasks;
+pub mod upstreams;
 pub mod wire;
 
 use next_agent_process_manager::{
@@ -47,6 +48,8 @@ pub fn run() {
                 app.handle().clone(),
                 Arc::clone(&service),
             ));
+            // Settings → Upstreams: a daily, report-only look at upstream GitHub repos.
+            app.manage(upstreams::start(app.handle(), &dir));
             tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
             coucou_lib::setup(app, boot)?;
             Ok(())
@@ -93,6 +96,10 @@ pub fn run() {
             gateway::gateway_cache_count,
             gateway::gateway_cache_clear,
             commands::overlay_open,
+            upstreams::upstream_watch_status,
+            upstreams::upstream_watch_check,
+            upstreams::upstream_watch_mark_seen,
+            upstreams::upstream_open,
             commands::board_list,
             commands::board_create,
             commands::board_open,
