@@ -61,7 +61,7 @@ pub fn token_budget(context_window: u64) -> u64 {
 /// The `review` profile: every tool denied but the six it needs, 16 turns.
 #[must_use]
 pub fn profile() -> AgentProfile {
-    let mut text = String::from("---\nmode: subagent\ndescription: Background review of a finished task (memory and skills only).\nsteps: 16\npermissions:\n  \"*\": deny\n");
+    let mut text = format!("---\nmode: subagent\ndescription: Background review of a finished task (memory and skills only).\nsteps: {MAX_ITERATIONS}\npermissions:\n  \"*\": deny\n");
     for tool in ALLOWED_TOOLS {
         let _ = writeln!(text, "  {tool}: allow");
     }

@@ -28,8 +28,12 @@ use serde_json::json;
 pub const ONESHOT_GRACE_SECONDS: i64 = 120;
 const MIN_CATCH_UP: i64 = 120;
 const MAX_CATCH_UP: i64 = 7_200;
+const MINUTES_PER_HOUR: i64 = 60;
+const MINUTES_PER_DAY: i64 = 1_440;
+/// Characters of the prompt used as a job's default name.
+const DEFAULT_NAME_CHARS: usize = 50;
 /// Upper bound on `grace_minutes` (one day).
-pub const MAX_GRACE_MINUTES: i64 = 1_440;
+pub const MAX_GRACE_MINUTES: i64 = MINUTES_PER_DAY;
 
 const HELP: &str = "Use:\n  - Interval: '30m', 'every 30m', 'every 2h' (recurring)\n  - One-shot delay: 'in 30m', 'in 2h' (fires once)\n  - Weekly/daily: 'every monday 9am', 'weekdays at 9am' (recurring)\n  - Cron: '0 9 * * *' (cron expression)\n  - Timestamp: '2026-02-03T14:00:00' (one-shot at time)";
 
@@ -244,8 +248,8 @@ fn parse_duration(text: &str) -> Option<i64> {
     };
     let per = match unit.trim() {
         "m" | "min" | "mins" | "minute" | "minutes" => 1,
-        "h" | "hr" | "hrs" | "hour" | "hours" => 60,
-        "d" | "day" | "days" => 1_440,
+        "h" | "hr" | "hrs" | "hour" | "hours" => MINUTES_PER_HOUR,
+        "d" | "day" | "days" => MINUTES_PER_DAY,
         _ => return None,
     };
     (n > 0).then(|| n.saturating_mul(per))
@@ -612,7 +616,12 @@ fn get_job(store: &Store, id: &str) -> Result<CronJobRow, String> {
 /// Invalid spec (schedule, mode, time zone, …) or a database error.
 pub fn schedule_job(store: &Store, spec: &JobSpec, now: i64) -> Result<CronJobRow, String> {
     let (schedule, _, first) = validate(spec, now)?;
-    let default_name: String = spec.prompt.trim().chars().take(50).collect();
+    let default_name: String = spec
+        .prompt
+        .trim()
+        .chars()
+        .take(DEFAULT_NAME_CHARS)
+        .collect();
     let default_name = if default_name.is_empty() {
         spec.skills
             .first()

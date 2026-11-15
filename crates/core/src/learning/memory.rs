@@ -518,13 +518,7 @@ impl MemoryStore {
                     total - limit
                 ),
             };
-            return Err(if batch {
-                fail(format!(
-                    "{message} No operations were applied (batch is all-or-nothing)."
-                ))
-            } else {
-                with_entries(message, &entries)
-            });
+            return Err(batch_fail(message));
         }
         let lone_remove = matches!(ops, [MemoryOp::Remove { .. }]);
         if !entries.is_empty() && working.is_empty() && !lone_remove {

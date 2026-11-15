@@ -694,16 +694,7 @@ impl Store {
              WHERE scope = 'global' OR workspace_id = ?1
              ORDER BY created_at ASC, id ASC",
         )?;
-        let rows = statement.query_map(rusqlite::params![workspace_id], |row| {
-            Ok(RuleRow {
-                id: row.get(0)?,
-                scope: row.get(1)?,
-                workspace_id: row.get(2)?,
-                effect: row.get(3)?,
-                kind: row.get(4)?,
-                pattern: row.get(5)?,
-            })
-        })?;
+        let rows = statement.query_map(rusqlite::params![workspace_id], rule_from_row)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
@@ -868,6 +859,148 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))
             .expect("count");
         assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn messages_outside_counts_each_side_of_the_window() {
+        let store = Store::open_in_memory().expect("open");
+        store
+            .session_start(&SessionRow {
+                id: "s1".into(),
+                source: "cli".into(),
+                started_at: 1,
+                ..SessionRow::default()
+            })
+            .expect("session");
+        for content in ["a", "b", "c", "d"] {
+            store
+                .message_append(&MessageRow {
+                    session_id: "s1".into(),
+                    role: "user".into(),
+                    content: Some(content.into()),
+                    ts: 1,
+                    ..MessageRow::default()
+                })
+                .expect("append");
+        }
+        // Ids are 1..=4: two below 3, one above 3.
+        assert_eq!(store.messages_outside("s1", 3, 3).expect("counts"), (2, 1));
+    }
+
+    #[test]
+    fn messages_outside_is_zero_for_a_session_without_messages() {
+        let store = Store::open_in_memory().expect("open");
+        assert_eq!(
+            store.messages_outside("missing", 10, 0).expect("counts"),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn session_first_returns_the_earliest_message_of_that_role() {
+        let store = Store::open_in_memory().expect("open");
+        store
+            .session_start(&SessionRow {
+                id: "s1".into(),
+                source: "cli".into(),
+                started_at: 1,
+                ..SessionRow::default()
+            })
+            .expect("session");
+        for (role, content) in [
+            ("user", "first"),
+            ("assistant", "reply"),
+            ("user", "second"),
+        ] {
+            store
+                .message_append(&MessageRow {
+                    session_id: "s1".into(),
+                    role: role.into(),
+                    content: Some(content.into()),
+                    ts: 1,
+                    ..MessageRow::default()
+                })
+                .expect("append");
+        }
+        let first = store
+            .session_first("s1", "user")
+            .expect("query")
+            .expect("a user message");
+        assert_eq!(first.content.as_deref(), Some("first"));
+        assert!(store.session_first("s1", "tool").expect("query").is_none());
+    }
+
+    #[test]
+    fn session_first_is_none_for_an_empty_session() {
+        let store = Store::open_in_memory().expect("open");
+        store
+            .session_start(&SessionRow {
+                id: "s1".into(),
+                source: "cli".into(),
+                started_at: 1,
+                ..SessionRow::default()
+            })
+            .expect("session");
+        assert!(store.session_first("s1", "user").expect("query").is_none());
+    }
+
+    #[test]
+    fn delete_combo_removes_the_row_and_reports_misses() {
+        let store = Store::open_in_memory().expect("open");
+        let combo = ComboRow {
+            id: "k1".into(),
+            name: "fast".into(),
+            kind: "llm".into(),
+            models: r#"["openai/gpt-4o-mini"]"#.into(),
+            strategy: None,
+            sticky_limit: None,
+            confidence_threshold: None,
+            weights: None,
+        };
+        store.upsert_combo(&combo).expect("combo");
+        assert!(store.delete_combo("k1").expect("delete"));
+        assert_eq!(store.list_combos().expect("list").len(), 0);
+        assert!(!store.delete_combo("k1").expect("delete again"));
+    }
+
+    #[test]
+    fn delete_combo_is_false_when_nothing_matches() {
+        let store = Store::open_in_memory().expect("open");
+        assert!(!store.delete_combo("missing").expect("delete"));
+    }
+
+    #[test]
+    fn cron_due_lists_scheduled_jobs_at_or_before_now() {
+        let store = Store::open_in_memory().expect("open");
+        let job = CronJobRow {
+            id: "j1".into(),
+            workspace_id: "ws".into(),
+            name: "n".into(),
+            prompt: "p".into(),
+            schedule: "every 1h".into(),
+            skills: "[]".into(),
+            mode: "auto".into(),
+            state: "scheduled".into(),
+            next_run_at: Some(100),
+            origin: "user".into(),
+            created_at: 1,
+            ..CronJobRow::default()
+        };
+        store.cron_put(&job).expect("put");
+        assert_eq!(store.cron_due(99).expect("early").len(), 0);
+        let due: Vec<String> = store
+            .cron_due(100)
+            .expect("due")
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        assert_eq!(due, vec!["j1".to_string()]);
+    }
+
+    #[test]
+    fn cron_due_is_empty_without_jobs() {
+        let store = Store::open_in_memory().expect("open");
+        assert_eq!(store.cron_due(i64::MAX).expect("due").len(), 0);
     }
 
     fn rule(id: &str, scope: &str, workspace_id: Option<&str>) -> RuleRow {
@@ -1177,19 +1310,7 @@ impl Store {
             "SELECT task_id, seq, call_id, tool, work_tree, git_dir, tree, created_at, undone_at
              FROM agent_step_snapshots WHERE task_id = ?1 ORDER BY seq ASC",
         )?;
-        let rows = statement.query_map(rusqlite::params![task_id], |row| {
-            Ok(StepSnapshotRow {
-                task_id: row.get(0)?,
-                seq: row.get(1)?,
-                call_id: row.get(2)?,
-                tool: row.get(3)?,
-                work_tree: row.get(4)?,
-                git_dir: row.get(5)?,
-                tree: row.get(6)?,
-                created_at: row.get(7)?,
-                undone_at: row.get(8)?,
-            })
-        })?;
+        let rows = statement.query_map(rusqlite::params![task_id], step_snapshot_from_row)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
@@ -1404,17 +1525,7 @@ impl Store {
             "SELECT id, provider, auth_type, name, priority, is_active, data
              FROM llm_connections ORDER BY priority ASC, name ASC",
         )?;
-        let rows = statement.query_map([], |row| {
-            Ok(ConnectionRow {
-                id: row.get(0)?,
-                provider: row.get(1)?,
-                auth_type: row.get(2)?,
-                name: row.get(3)?,
-                priority: row.get(4)?,
-                is_active: row.get(5)?,
-                data: row.get(6)?,
-            })
-        })?;
+        let rows = statement.query_map([], connection_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -1466,18 +1577,7 @@ impl Store {
             "SELECT id, name, kind, models, strategy, sticky_limit, confidence_threshold, weights
              FROM llm_combos ORDER BY name",
         )?;
-        let rows = statement.query_map([], |row| {
-            Ok(ComboRow {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                kind: row.get(2)?,
-                models: row.get(3)?,
-                strategy: row.get(4)?,
-                sticky_limit: row.get(5)?,
-                confidence_threshold: row.get(6)?,
-                weights: row.get(7)?,
-            })
-        })?;
+        let rows = statement.query_map([], combo_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -1501,14 +1601,7 @@ impl Store {
             "SELECT session, combo, model, quality FROM llm_smart_sticky
              WHERE session = ?1 AND combo = ?2",
         )?;
-        let mut rows = statement.query_map([session, combo], |row| {
-            Ok(StickyRow {
-                session: row.get(0)?,
-                combo: row.get(1)?,
-                model: row.get(2)?,
-                window: row.get(3)?,
-            })
-        })?;
+        let mut rows = statement.query_map([session, combo], sticky_from_row)?;
         Ok(rows.next().transpose()?)
     }
 
@@ -1664,17 +1757,7 @@ impl Store {
             "SELECT ts, session, combo, from_model, to_model, reason, confidence
              FROM llm_switches WHERE substr(ts, 1, 10) >= ?1 ORDER BY id DESC LIMIT ?2",
         )?;
-        let rows = statement.query_map(rusqlite::params![since, limit], |row| {
-            Ok(SwitchRow {
-                ts: row.get(0)?,
-                session: row.get(1)?,
-                combo: row.get(2)?,
-                from_model: row.get(3)?,
-                to_model: row.get(4)?,
-                reason: row.get(5)?,
-                confidence: row.get(6)?,
-            })
-        })?;
+        let rows = statement.query_map(rusqlite::params![since, limit], switch_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -1758,17 +1841,13 @@ impl Store {
             self.conn
                 .query_row("SELECT date('now', ?1)", [offset], |row| row.get(0))?
         };
-        let group = |column: &str| -> Result<Vec<UsageTotals>, StoreError> {
+        let by_cost = "SUM(cost) DESC, SUM(requests) DESC";
+        let group = |column: &str, order: &str| -> Result<Vec<UsageTotals>, StoreError> {
             let sql = format!(
                 "SELECT {column}, SUM(requests), SUM(failures), SUM(prompt_tokens),
                     SUM(completion_tokens), SUM(cached_tokens), SUM(reasoning_tokens), SUM(cost)
                  FROM llm_usage_daily WHERE day >= ?1 GROUP BY {column}
-                 ORDER BY {}",
-                if column == "day" {
-                    "day ASC"
-                } else {
-                    "SUM(cost) DESC, SUM(requests) DESC"
-                }
+                 ORDER BY {order}"
             );
             let mut statement = self.conn.prepare(&sql)?;
             let rows = statement.query_map([&since], |row| {
@@ -1785,10 +1864,10 @@ impl Store {
             })?;
             Ok(rows.collect::<Result<_, _>>()?)
         };
-        let by_provider = group("provider")?;
-        let by_model = group("model")?;
-        let by_role = group("role")?;
-        let daily = group("day")?;
+        let by_provider = group("provider", by_cost)?;
+        let by_model = group("model", by_cost)?;
+        let by_role = group("role", by_cost)?;
+        let daily = group("day", "day ASC")?;
         let mut totals = UsageTotals {
             key: "total".into(),
             ..UsageTotals::default()
@@ -1816,28 +1895,7 @@ impl Store {
              FROM llm_usage WHERE substr(ts, 1, 10) >= ?1 ORDER BY id DESC LIMIT ?2",
         )?;
         let limit = i64::try_from(recent).unwrap_or(i64::MAX);
-        let rows = statement.query_map(rusqlite::params![since, limit], |row| {
-            Ok(UsageRow {
-                ts: row.get(0)?,
-                provider: row.get(1)?,
-                model: row.get(2)?,
-                connection_id: row.get(3)?,
-                role: row.get(4)?,
-                combo: row.get(5)?,
-                endpoint: row.get(6)?,
-                status: row.get(7)?,
-                prompt_tokens: row.get(8)?,
-                completion_tokens: row.get(9)?,
-                cached_tokens: row.get(10)?,
-                cache_creation_tokens: row.get(11)?,
-                reasoning_tokens: row.get(12)?,
-                cost: row.get(13)?,
-                cost_known: row.get(14)?,
-                latency_ms: row.get(15)?,
-                saver_bytes_before: row.get(16)?,
-                saver_bytes_after: row.get(17)?,
-            })
-        })?;
+        let rows = statement.query_map(rusqlite::params![since, limit], usage_from_row)?;
         let recent_rows = rows.collect::<Result<_, _>>()?;
         let switches = self.switches_since(&since, limit)?;
         let (cache_hits, cache_saved_tokens, cache_saved_cost) = self.conn.query_row(
@@ -2295,6 +2353,100 @@ fn cron_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CronJobRow> {
         last_task_id: row.get(18)?,
         origin: row.get(19)?,
         created_at: row.get(20)?,
+    })
+}
+
+fn connection_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectionRow> {
+    Ok(ConnectionRow {
+        id: row.get(0)?,
+        provider: row.get(1)?,
+        auth_type: row.get(2)?,
+        name: row.get(3)?,
+        priority: row.get(4)?,
+        is_active: row.get(5)?,
+        data: row.get(6)?,
+    })
+}
+
+fn combo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ComboRow> {
+    Ok(ComboRow {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        kind: row.get(2)?,
+        models: row.get(3)?,
+        strategy: row.get(4)?,
+        sticky_limit: row.get(5)?,
+        confidence_threshold: row.get(6)?,
+        weights: row.get(7)?,
+    })
+}
+
+fn sticky_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StickyRow> {
+    Ok(StickyRow {
+        session: row.get(0)?,
+        combo: row.get(1)?,
+        model: row.get(2)?,
+        window: row.get(3)?,
+    })
+}
+
+fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RuleRow> {
+    Ok(RuleRow {
+        id: row.get(0)?,
+        scope: row.get(1)?,
+        workspace_id: row.get(2)?,
+        effect: row.get(3)?,
+        kind: row.get(4)?,
+        pattern: row.get(5)?,
+    })
+}
+
+fn step_snapshot_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StepSnapshotRow> {
+    Ok(StepSnapshotRow {
+        task_id: row.get(0)?,
+        seq: row.get(1)?,
+        call_id: row.get(2)?,
+        tool: row.get(3)?,
+        work_tree: row.get(4)?,
+        git_dir: row.get(5)?,
+        tree: row.get(6)?,
+        created_at: row.get(7)?,
+        undone_at: row.get(8)?,
+    })
+}
+
+fn switch_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SwitchRow> {
+    Ok(SwitchRow {
+        ts: row.get(0)?,
+        session: row.get(1)?,
+        combo: row.get(2)?,
+        from_model: row.get(3)?,
+        to_model: row.get(4)?,
+        reason: row.get(5)?,
+        confidence: row.get(6)?,
+    })
+}
+
+fn usage_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageRow> {
+    Ok(UsageRow {
+        ts: row.get(0)?,
+        provider: row.get(1)?,
+        model: row.get(2)?,
+        connection_id: row.get(3)?,
+        role: row.get(4)?,
+        combo: row.get(5)?,
+        endpoint: row.get(6)?,
+        status: row.get(7)?,
+        prompt_tokens: row.get(8)?,
+        completion_tokens: row.get(9)?,
+        cached_tokens: row.get(10)?,
+        cache_creation_tokens: row.get(11)?,
+        reasoning_tokens: row.get(12)?,
+        cost: row.get(13)?,
+        cost_known: row.get(14)?,
+        latency_ms: row.get(15)?,
+        saver_bytes_before: row.get(16)?,
+        saver_bytes_after: row.get(17)?,
     })
 }
 

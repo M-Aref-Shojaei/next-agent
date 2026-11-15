@@ -636,6 +636,36 @@ fn curator_only_touches_unpinned_agent_skills() {
     );
 }
 
+#[test]
+fn curate_reactivates_fresh_stale_skills_and_stales_or_archives_by_idle_days() {
+    let now = 100 * SECS_PER_DAY;
+    let facts = |name: &str, state: &str, idle_days: i64| UsageFacts {
+        name: name.into(),
+        agent_created: true,
+        pinned: false,
+        state: state.into(),
+        use_count: 1,
+        last_activity_at: Some(now - idle_days * SECS_PER_DAY),
+        created_at: 0,
+    };
+    let decisions = curate(
+        &[
+            facts("fresh", "stale", STALE_AFTER_DAYS - 1),
+            facts("stale", "active", STALE_AFTER_DAYS + 1),
+            facts("old", "active", ARCHIVE_AFTER_DAYS + 1),
+        ],
+        now,
+    );
+    assert_eq!(
+        decisions,
+        [
+            ("fresh".to_string(), Transition::Reactivate),
+            ("stale".to_string(), Transition::MarkStale),
+            ("old".to_string(), Transition::Archive),
+        ]
+    );
+}
+
 // --- security regressions -------------------------------------------------
 
 #[cfg(unix)]
