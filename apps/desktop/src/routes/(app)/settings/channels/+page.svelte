@@ -191,7 +191,7 @@
         );
         keep(
           await api.onChannelChange((id) => {
-            if (id === selectedId) void loadDetails().catch(() => {});
+            if (id === selectedId) void loadDetails().catch((e) => (message = String(e)));
           }),
         );
       } catch (e) {
