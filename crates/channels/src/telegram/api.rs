@@ -8,6 +8,11 @@ use crate::channel::ChannelError;
 use serde_json::{json, Value};
 use std::time::Duration;
 
+/// Extra time a request may take beyond the long-poll window before it times out.
+const REQUEST_SLACK_SECS: u64 = 15;
+/// How long establishing the TCP/TLS connection may take.
+const CONNECT_TIMEOUT_SECS: u64 = 10;
+
 /// Production Bot API.
 pub const DEFAULT_BASE_URL: &str = "https://api.telegram.org";
 
@@ -56,8 +61,8 @@ impl TelegramApi {
             ));
         }
         let http = reqwest::Client::builder()
-            .timeout(poll + Duration::from_secs(15))
-            .connect_timeout(Duration::from_secs(10))
+            .timeout(poll + Duration::from_secs(REQUEST_SLACK_SECS))
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
             .build()
             .map_err(|e| {
                 ChannelError::Fatal(format!(
