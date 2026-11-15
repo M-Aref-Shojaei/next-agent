@@ -1,0 +1,14 @@
+<!-- Ported from Coucou (MIT, © 2026 Louis Raillé): windows/dev/island-preview.html @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8 -->
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Coucou — island preview</title>
+  <style>html,body{background:#3a4a5a !important}</style></head>
+  <body>
+    <div id="root"></div>
+    <script>window.__answers = { boot: { settings: { language: "fr" }, cursorPoll: true } };</script>
+    <script type="module">
+      import "./tauri-mock.ts";
+      await import("/src/main.ts");
+    </script>
+  </body>
+</html>

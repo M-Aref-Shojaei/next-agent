@@ -1,0 +1,3 @@
+# Next Agent: Coucou's vendored code keeps upstream's formatting, so a re-sync
+# stays a plain diff against Coucou (ADR-0011).
+disable_all_formatting = true

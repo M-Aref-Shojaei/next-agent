@@ -2,9 +2,9 @@
 
 pub mod boards;
 pub mod commands;
+pub mod coucou;
 pub mod gateway;
 pub mod notes;
-pub mod overlay;
 pub mod review;
 pub mod service;
 pub mod tasks;
@@ -28,9 +28,11 @@ pub const APP_IDENTIFIER: &str = "dev.nextagent.desktop";
 /// # Panics
 /// Panics if the Tauri runtime cannot start (unrecoverable at launch).
 pub fn run() {
-    overlay::platform::prepare_environment();
-    tauri::Builder::default()
-        .setup(|app| {
+    // The overlay is Coucou's Tauri app, vendored whole (ADR-0011): its
+    // plugins and state, its setup, its commands and its run-event handling.
+    let (builder, boot) = coucou_lib::builder(tauri::Builder::default());
+    builder
+        .setup(move |app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let service = Arc::new(AppService::new(dir.join("next-agent.db"))?);
@@ -41,11 +43,15 @@ pub fn run() {
                 let _ = handle.emit("graph-changed", files);
             }));
             app.manage(notes);
-            overlay::init(app.handle(), &service);
+            app.manage(coucou::Adapter::start(
+                app.handle().clone(),
+                Arc::clone(&service),
+            ));
             tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
+            coucou_lib::setup(app, boot)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(coucou_lib::invoke_handler(tauri::generate_handler![
             commands::workspace_open,
             commands::workspace_list,
             commands::vault_set,
@@ -86,12 +92,7 @@ pub fn run() {
             gateway::gateway_catalog_refresh,
             gateway::gateway_cache_count,
             gateway::gateway_cache_clear,
-            overlay::overlay_info,
-            overlay::overlay_set_settings,
-            overlay::overlay_set_rect,
-            overlay::overlay_set_expanded,
-            overlay::overlay_set_collapsed,
-            overlay::overlay_open_task,
+            commands::overlay_open,
             commands::board_list,
             commands::board_create,
             commands::board_open,
@@ -100,9 +101,10 @@ pub fn run() {
             commands::board_delete,
             commands::board_sketch,
             commands::board_export,
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running Next Agent");
+        ]))
+        .build(tauri::generate_context!())
+        .expect("error while running Next Agent")
+        .run(|app, event| coucou_lib::on_run_event(app, &event));
 }
 
 /// Health probe for the status-bar dot: the provider behind the `chat` role

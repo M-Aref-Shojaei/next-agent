@@ -1,77 +1,160 @@
 ---
 title: Coucou
 tags: [upstream]
-status: researched
+status: vendored
 ---
 
-# Coucou — what we port
+# Coucou: vendored whole
 
-- Repo: https://github.com/Louis-CFM/coucou
-- Licence: **MIT for code only**, © 2026 Louis Raillé.
-- **Do not reuse** the name "Coucou", the Mochi character, the icon, the sounds or any other media. `LICENSE-ASSETS.md` excludes them from the licence.
-- Platforms: macOS is Swift/SwiftUI (`NotchBuddy/`). Windows and Linux use **Tauri 2** (`windows/`), the same stack as ours.
+- **Repo:** https://github.com/Louis-CFM/coucou
+- **Licence:** MIT for the code, © 2026 Louis Raillé. The phone link and `android/` are © Rhytam Biswas, also MIT.
+- **Not covered by the licence:** the name, Mochi, icons, sounds and media (`LICENSE-ASSETS.md`). None are copied. See [[Coucou art to replace]].
+- **Pin:** `main @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8`, the latest `main` on 2026-11-14 (`upstream.lock.json`).
+- **Decision:** [[ADR-0011 Vendor Whole Upstream Codebases on Request]]. It replaces the partial island port that ADR-0009 allowed.
 
-## Our overlay
-- A second Tauri window.
-- Shows the active task, the mode, and pending approvals. You can approve or deny from it.
-- Reads task events directly inside the app. It needs **no hooks, sockets or Claude settings edits**; Coucou needs those only because it watches outside agents.
+## Layout
 
-## Window setup (from `windows/src-tauri/tauri.conf.json`, `island.rs`)
-- Window flags: `decorations:false`, `transparent:true`, `alwaysOnTop:true`, `skipTaskbar:true`, `shadow:false`, `focus:false`.
-- Size: start tiny (240×6). Grow to about 720×320 when expanded.
-- Placement:
-  1. Centre horizontally on the chosen monitor.
-  2. On Windows, offset below the work-area top so a top taskbar is not covered.
-  3. Call `set_size` → `set_position` → `set_size` again (a move to another monitor can rescale the window) → `set_always_on_top(true)`.
-  4. On Linux, call `set_resizable(true)` first. GTK won't shrink a non-resizable window.
-- Monitor choice: a saved display ID. If it is missing, use the cursor's display, then the primary display.
-
-## Click-through
-- Windows/macOS: poll the cursor position (16 ms when near the island, 50 ms when far). Call `set_ignore_cursor_events` only when the state changes. Add a 14 px margin around the island.
-- macOS (Coucou native): adaptive polling, from 120 Hz while dragging down to 8 Hz when idle. Pause while the display sleeps.
-- Linux: set an input region shaped like the island. On wlroots and KDE, use gtk-layer-shell. On GNOME, run as an XWayland dock window.
-
-## macOS notch (needs objc2 calls on `ns_window()`, or the third-party `tauri-nspanel`, which is unverified)
-- Use an `NSPanel` with `.nonactivatingPanel`, at level `mainMenu+3`.
-- Collection behaviour: `canJoinAllSpaces`, `stationary`, `fullScreenAuxiliary`, `ignoresCycle`.
-- Override the frame constraint so the panel can sit in the notch.
-- Detect the notch from `NSScreen.safeAreaInsets.top > 0`.
-  - Notch width = screen width − left auxiliary area − right auxiliary area (fallback 184 pt).
-  - No notch: draw an 80 pt pill, at most 24 pt tall.
-- No private APIs were seen in the code we read.
-
-## Animation
-- Grow: a spring (response 0.5, damping 0.72).
-- Shrink: `cubic-bezier(0.45, 0, 0.2, 1)` over 0.34 s.
-
-## Approval queue (`ApprovalQueue.swift`)
-- First in, first out. Holds at most 5 approvals.
-- Each approval has a timeout of about 115 s.
-- An approval is cleared when its session stops, its session sends a new prompt, or its session ends.
-- An approval matches its result by (session, tool, input key).
-
-## Implementation status (overlay: a port of Coucou)
-
-Ported from Coucou `0d7fe58884d99f275f3238e8dbe29ddee69fa9e8` (pinned in `upstream.lock.json`). Every ported file starts with `// Ported from Coucou (MIT, © 2026 Louis Raillé): <path> @ <commit>`. Code only: no name, character, icon, sound or media. `scripts/check-no-coucou-assets.mjs` (in `make check` and CI) fails if any `*.xcassets/`, `sounds/`, `docs/media/` or `design/` file lands in the repo.
-
-| Coucou file | Ours |
+| Upstream | Ours |
 |---|---|
-| `NotchBuddy/Sources/CoucouKit/IslandScreenGeometry.swift` | `crates/macos-panel/src/geometry.rs` |
-| `NotchBuddy/Sources/App/IslandDisplayChoice.swift` | `crates/macos-panel/src/display.rs` |
-| `NotchBuddy/Sources/App/IslandPlacement.swift` (notch, top corners) | `crates/macos-panel/src/placement.rs` |
-| `NotchBuddy/Sources/App/IslandWindowController.swift` (`IslandPanel`, `setupPanel`, `relocate`, `targetScreen`, `displayUUID`, `screenGeometry`) | `crates/macos-panel/src/mac.rs` |
-| `IslandWindowController.swift` (`pollFrame`, `adjustPollRate`, screen sleep) + `windows/src-tauri/src/island.rs` (cursor poll, hit margin) | `apps/desktop/src-tauri/src/overlay/poll.rs`, `overlay/mod.rs` |
-| `windows/src-tauri/src/island.rs` (monitor keys, work-area offset, `apply_geometry`, `clamp_collapsed`) | `overlay/geometry.rs`, `overlay/mod.rs` |
-| `windows/src-tauri/src/platform/{linux,windows}.rs` (layer-shell, Dock, input region, GDK pointer watch, GNOME → XWayland) | `overlay/platform.rs` |
-| `NotchBuddy/Sources/App/IslandStateMachine.swift` | `apps/desktop/src/lib/island/fsm.ts` |
-| `windows/src/core/anim.ts` | `lib/island/anim.ts` |
-| `IslandRootView.swift` (`IslandShape`) | `lib/island/shape.ts` |
-| `IslandWindowController.swift` (`islandSize`), `IslandTypes.swift` (`IslandConst`), `windows/src/core/layout.ts` | `lib/island/layout.ts` |
-| `ApprovalQueue.swift` + the 115 s wait in `HookServer.swift` | `lib/overlay-model.ts` |
-| `IslandRootView.swift` (container, header, mini grid), `IslandViewContent.swift` (approval, empty), `windows/src/views/views.ts`, `windows/src/style.css` | `routes/overlay/+page.svelte` |
+| `windows/src-tauri/` (Rust app) | `apps/desktop/coucou/src-tauri/` (workspace crate `coucou`, lib `coucou_lib`) |
+| `windows/hook/` (relay) | `apps/desktop/coucou/hook/` (crate `coucou-hook`) |
+| `windows/src/` (TypeScript UI) | `apps/desktop/coucou/src/` (alias `$coucou`) |
+| `windows/tests/` | `apps/desktop/coucou/tests/`, run by `scripts/test.mjs` with its `setup.mjs` |
+| `windows/{dev,scripts,nsis}/`, `README.md`, `package.json`, `tsconfig.json` | same paths. They are copied as is: the dev previews, the generators and the NSIS hook are not wired into Next Agent's build, and `tsconfig.json` runs in `pnpm check`. |
+| `windows/{index,settings,mochi,pill}.html` | the SvelteKit routes `/coucou/{island,settings,mochi,pill}`, which mount the same element and import the same entry module |
+| `windows/vite.config.ts` | not copied: SvelteKit builds the pages. Its shared-sounds plugin served assets we do not ship. |
+| `windows/src-tauri/tauri*.conf.json`, `capabilities/default.json`, `build.rs`, `src/main.rs` | merged into Next Agent's one app (see below) |
+| `android/relay/test-vectors.json`, `android/LICENSE` | `apps/desktop/coucou/android/relay/`, read by the phone-link crypto tests |
+| `windows/src-tauri/icons/`, `windows/screenshots/`, `windows/Cargo.lock`, `package-lock.json`, workspace `Cargo.toml` | not copied: assets, and lock files that the workspace replaces |
 
-**Same as Coucou:** panel 720×560 (macOS) / 720×320 (PC, folding to a 240×6 wake strip while hidden), level `mainMenu+3`, `canJoinAllSpaces | stationary | fullScreenAuxiliary | ignoresCycle`, `constrainFrameRect` returning the frame, non-activating `NSPanel`; notch width = screen − both auxiliary areas (fallback 184), height = top safe-area inset, no-notch bar 80×min(24, menu bar); hidden = the notch (drawn invisible), compact = notch + 160 × notch height, expanded 640×160; radii 14 (rest) / 22 (open) / 18 (corner tile); open spring (0.5, 0.72), close `cubic-bezier(.45,0,.2,1)` 340 ms; hover only peeks (Open on hover off), a click or an approval opens, auto-close 15 s after the pointer leaves (0.6 s if hover-opened), compact hides after 3 min away; click-through poll at 60/20/8 Hz with a 6 pt margin (14 px on a PC), paused while the display sleeps; display choice by UUID (notch / menu bar / follow mouse / display); approvals FIFO, five on the island, 115 s each, cleared when the task ends.
+Every file has a `Ported from Coucou (MIT, © 2026 Louis Raillé): <path> @ <commit>` header, except the files with no comment syntax:
+- `package.json`
+- `tsconfig.json`
+- `src/i18n/strings.json`
+- `src/i18n/extra.json`
+- `src/whats-new/whats-new.json`
+- `src-tauri/src/calcom/defaults.json`
+- `android/relay/test-vectors.json`
+- `android/LICENSE`
 
-**Our differences (by design):** data from the `task-stream` event and `task-started`, decisions through `approval_respond` and the permission engine; the mascot is a neutral placeholder in Coucou's spot and size (`lib/components/IslandMascot.svelte`, the slot for the owner's own artwork); glyphs are Lucide (house.fill → house, gearshape → settings, xmark → x, chevron.up → chevron-up); no sounds; the overview card is a short "task / Open in Next Agent" card (Coucou's overview shows its agent pills and ticker). On macOS the webview moves from the hidden Tauri window into a real `IslandPanel`, because AppKit observes the Tauri window with KVO, so its class cannot be swapped to `NSPanel`. A request past 115 s or beyond the fifth is not lost: it is still waiting in the app.
+This page and NOTICE.md credit them instead. Every change to an upstream file carries a `Next Agent:` comment.
 
-**Not verified:** Windows and Linux (the Linux half cannot be compiled on a Mac; layer-shell is behind the opt-in `layer-shell` cargo feature, which needs `libgtk-layer-shell`); multi-monitor moves; display sleep. On this Mac: the panel at layer 27, y = 0, centred; hidden, hover-peek and expanded states in the page; clicks and hover in the real panel could not be driven from the sandbox.
+## Inventory
+
+### Tauri app features (all copied)
+
+| Feature | Files |
+|---|---|
+| Island window | `island.rs`, `platform/*`, `webview_memory.rs`, `island/{island,fsm}.ts`, `core/{layout,closed,anim}.ts` |
+| Claude Code and agent hooks, approvals, questions | `hook/`, `pipe.rs`, `hooks.rs`, `agents.rs`, `agent_hooks.rs`, `config_file.rs`, `agy_rules.rs`, `agy_approvals.rs`, `island/{hooks,agents}.ts` |
+| Open terminal, launch a session, drop files | `session_window.rs`, `herdr.rs`, `launch.rs`, `files.rs`, `webview_drop.rs` |
+| Chat | `chat.rs`, `claude.rs`, `openai_compat.rs`, `local_chat.rs`, `cli_relay.rs`, `claude_code.rs`, `net.rs` |
+| Plan usage | `codex_plan.rs`, `hook/statusline.rs`, `core/plan.ts`, `views/usage.ts` |
+| Integrations | `integrations.rs` (Stripe, Vercel, n8n, Resend, Notion), `github.rs`, `calcom.rs` |
+| Mail (Outlook through COM, Windows only) | `mail/*` |
+| WhatsApp (GOWA) | `whatsapp/*` |
+| Spotify | `spotify.rs` |
+| Flow dictation | `flow/*`, `speech/*` (Parakeet through sherpa-onnx), `portal.rs` |
+| Notetaker | `notes/*` |
+| "OK Coucou" voice | `voice/*` |
+| Android phone link | `phone_link/*` |
+| Desktop companion, wardrobe | `desktop.rs`, `src/mochi/*`, `src/desktop` |
+| Weekly recap | `recap.rs`, `src/recap/*` |
+| Settings and the hub window | `settings.rs`, `src/settings`, `src/hub` |
+| Plumbing | `secrets.rs`, `tray.rs`, `shortcuts.rs`, `update.rs`, `sounds.rs`, `i18n.rs`, `log.rs`, `identity.rs`, `src/whats-new`, `src/upload` |
+
+### Swift Mac app features and their status here
+
+**Translated for macOS** (the Tauri app had no macOS build):
+
+| Feature | Swift source | Ours |
+|---|---|---|
+| Notch `IslandPanel` | `IslandWindowController` | `platform/macos.rs` with `crates/macos-panel` (`adopt`, `place_frame`, `set_ignores_mouse`, `set_key`) |
+| Cursor poll | `IslandWindowController` | same |
+| Click-through | `IslandWindowController` | same |
+| Focus the terminal | `TerminalTarget+AppKit` | `focus_session_window` (`open -a <bundle>`) |
+| Launch a session | `LaunchScript`, `SessionLauncher` | `launch.rs` (a `.command` file opened in Terminal) |
+| Folder picker | `NSOpenPanel` | AppleScript `choose folder` |
+| User's name | `NSFullUserName` | `macos-panel::sys` |
+| Keychain | | `keyring` with `apple-native` |
+| Flow keys | `FlowShortcut` | polled key state, `flow/os_macos.rs` |
+| Flow paste | `FlowDictation` | ⌘V through `CGEventPost` |
+| App in front, running apps | `NSWorkspace` | `macos-panel::sys` |
+| Voice: open an app, speak | | `/Applications` search, `say` |
+| Relay socket | `HookServer` | `hook/src/mac.rs` |
+
+**Already in the Tauri app, so copied:**
+- hooks, approvals and questions;
+- chat and the CLI relay;
+- plan gauges;
+- the pollers, GitHub and Cal.com;
+- WhatsApp;
+- Spotify (on a Mac: media keys not wired);
+- Flow, the Notetaker and voice (with fewer engines);
+- the desktop companion;
+- the recap;
+- updates and What's new;
+- the Android link.
+
+**Mac-only in Swift, not in the Tauri app, not translated:**
+
+| Feature | Swift source |
+|---|---|
+| Corner island | `CornerIsland` |
+| iPhone link | `PhoneLink/`: CloudKit, APNs, Live Activities |
+| Apple Music | `MusicController` |
+| Apple Mail | `MailController` |
+| Claude Desktop reply watcher | AX |
+| Screen and window capture | `ScreenCapture`, `QuickScreenshot`, `WindowContextCapture` |
+| Pomodoro timer | Coucoudoro |
+| Crypto and portfolio | |
+| Machine vitals, work streak | IOKit |
+| Apple speech recogniser, fn-key dictation | |
+| Apple Intelligence summaries | FoundationModels |
+| Contacts lookup | |
+| Focus-mode quieting | |
+| App Store review, demo engine | |
+
+These are Swift-only code paths with no Tauri counterpart to copy. Each would be a new port.
+
+## How it runs inside Next Agent
+
+- **One builder.**
+  - `apps/desktop/src-tauri/src/lib.rs` calls `coucou_lib::builder` (Coucou's plugins and state), `coucou_lib::setup` (its setup, plus the island window that its tauri.conf.json declared) and `coucou_lib::on_run_event`.
+  - `coucou_lib::invoke_handler` routes Coucou's command names to Coucou's handler and everything else to Next Agent's.
+- **Windows.**
+  - Labels: `coucou-island`, `coucou-settings`, `coucou-mochi`, `coucou-pill`.
+  - Capability `capabilities/coucou.json` (`core:default`).
+  - CSP: Next Agent's, plus upstream's `media-src 'self' blob:`.
+- **macOS.**
+  - The island webview moves into the `IslandPanel` (level `mainMenu + 3`, `constrainFrameRect` passthrough), placed at the top centre of the chosen display by its frame in points.
+  - The cursor poll flips `ignoresMouseEvents`.
+- **Next Agent's tasks.**
+  - `apps/desktop/src-tauri/src/coucou.rs` turns each `task-stream` event into the hook event Claude Code would send: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`/`PostToolUseFailure`, `Stop`, `StopFailure`, `Interrupt`.
+  - Each event is tagged `coucou_agent: "next-agent"`, which gives Next Agent its own pill. It is written to `pipe.rs` `connect_in_process`, the same `handle` a relay connection goes through.
+  - The island's Allow/Deny comes back on that stream and goes to `approval_respond`.
+  - An approval answered in the main window closes the stream, and the card goes.
+- **Claude Code.**
+  - The relay and socket work as upstream: `~/Library/Application Support/dev.nextagent.desktop/coucou/coucou.sock`, a 0700 folder, and a uid check on both ends.
+  - Hooks are written only from Coucou's settings (Agents → Claude Code), after its diff, backup and confirmation. Nothing is written until then.
+- **Settings.** Next Agent's Settings → "Overlay / Coucou" opens Coucou's own settings window (`overlay_open`).
+
+### Differences from upstream (each marked `Next Agent:` in the code)
+- **Not at launch:**
+  - Coucou's window does not open at launch.
+  - Single-instance, autostart and global-shortcut plugins come with it.
+  - `tauri-build`'s `cfg(dev)` is never set in the library.
+- **The character:** drawn as the orb (`orb.ts`). `outfits.ts` keeps only the wardrobe icon.
+- **Tests:**
+  - Tests that read Coucou's Mac app or web site are skipped when those files are absent.
+  - Two upstream tests shared a temp folder and raced on macOS; one now uses its own.
+- **Lints and checks:**
+  - Upstream's style lints are allowed by name, and its formatting is kept (`rustfmt.toml`).
+  - The structure heuristic skips the folder.
+
+## Not verified
+- The Windows and Linux builds of the vendored crate: they cannot be compiled on a Mac.
+- Multi-display placement and mixed-DPI cursors on a Mac.
+- The Spotify, WhatsApp, mail and phone link features at run time.
+- Flow dictation with real speech models: they download on demand.
+- **Bundling:** `tauri build` does not yet copy `coucou-hook` into the app's resources. Dev builds find it in `target/release` (built by `beforeDevCommand`).

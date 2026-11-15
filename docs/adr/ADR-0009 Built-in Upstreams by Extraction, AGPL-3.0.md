@@ -8,6 +8,7 @@ status: proposed
 
 - **Status:** proposed · **Date:** 2026-11-14
 - Supersedes the integration modes in [[Upstream Evaluation]], and the "user-run 9Router" assumption (Q2) in [[ADR-0007 Minimize Sidecars in M1]].
+- Amended by [[ADR-0011 Vendor Whole Upstream Codebases on Request]]: an upstream the owner asks to vendor whole (Coucou) is copied, not extracted.
 - Resolves Q1 (licence) in [[Risks and Open Questions]].
 
 ## Context

@@ -291,41 +291,7 @@ export const mockApi: Api = {
     cacheEntries = 0;
     return removed;
   },
-  async overlayInfo() {
-    return {
-      settings: { enabled: true, position: "top-center" as const, monitor: null },
-      monitors: [{ key: "display:MOCK", label: "Mock display" }],
-      island: {
-        hasNotch: true,
-        width: 185,
-        height: 32,
-        compactExtra: 160,
-        panel: [720, 560] as [number, number],
-        position: "top-center" as const,
-        platform: "macos" as const,
-      },
-    };
-  },
-  async overlaySetSettings() {},
-  async overlaySetRect() {},
-  async overlaySetExpanded() {},
-  async overlaySetCollapsed() {},
-  async overlayOpenTask() {},
-  async onTaskStream() {
-    return () => {};
-  },
-  async onTaskStarted() {
-    return () => {};
-  },
-  async onOverlayPointer() {
-    return () => {};
-  },
-  async onOverlayGeometry() {
-    return () => {};
-  },
-  async onFocusTask() {
-    return () => {};
-  },
+  async overlayOpen() {},
   async boardList() {
     requireVault();
     return [...boards.entries()]
