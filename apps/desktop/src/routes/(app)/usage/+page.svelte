@@ -17,10 +17,10 @@
 
   type Metric = "cost" | "tokens" | "requests";
   const PERIODS = [
-    { days: 1, label: "Today" },
-    { days: 7, label: "7 days" },
-    { days: 30, label: "30 days" },
-    { days: 0, label: "All time" },
+    { days: 1, chartDays: 30, label: "Today" },
+    { days: 7, chartDays: 7, label: "7 days" },
+    { days: 30, chartDays: 30, label: "30 days" },
+    { days: 0, chartDays: 30, label: "All time" },
   ];
 
   let days = $state(7);
@@ -43,8 +43,8 @@
     void load();
   }
 
-  // The chart always covers a whole period; "today" and "all" show 7 / 30 days.
-  const chartDays = $derived(days === 7 ? 7 : 30);
+  // The chart always covers a whole period; "today" and "all" show 30 days.
+  const chartDays = $derived(PERIODS.find((p) => p.days === days)?.chartDays ?? 30);
   const bars = $derived(usage ? dailyBars(usage.daily, chartDays, metric) : []);
   const barValue = (value: number) =>
     metric === "cost" ? formatCost(value) : metric === "tokens" ? formatTokens(value) : String(value);
