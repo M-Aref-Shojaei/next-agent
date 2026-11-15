@@ -245,12 +245,6 @@ impl BuiltinExecutor {
         self
     }
 
-    /// The frozen context this task started with (tests).
-    #[must_use]
-    pub fn preamble(&self) -> Option<&str> {
-        self.preamble.as_deref()
-    }
-
     /// Hand new messages to the transcript (never the system prompt).
     fn flush_transcript(&mut self) {
         let start = self.recorded.max(1);

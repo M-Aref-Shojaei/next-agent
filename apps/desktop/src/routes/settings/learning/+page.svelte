@@ -10,13 +10,13 @@
     memoryUsage,
     relativeTime,
     sortSkills,
-    splitList,
     usagePercent,
     type CronInput,
     type CronJob,
     type MemoryState,
     type SkillInfo,
   } from "$lib/learning.ts";
+  import { parseList } from "$lib/gateway.ts";
 
   let message = $state("");
   let reviewOn = $state(true);
@@ -30,6 +30,10 @@
 
   const ws = $derived(app.activeWorkspaceId);
 
+  async function reloadSkills() {
+    if (ws) skills = sortSkills(await api.skillsOverview(ws));
+  }
+
   function fail(e: unknown) {
     message = String(e);
   }
@@ -39,7 +43,7 @@
     if (!ws) return;
     memory = await api.memoryGet(ws);
     drafts = { memory: memory.memory.text, user: memory.user.text };
-    skills = sortSkills(await api.skillsOverview(ws));
+    await reloadSkills();
     jobs = await api.cronJobs(ws);
   }
   onMount(() => void load().catch(fail));
@@ -72,7 +76,7 @@
       if (action === "pin") await api.skillPin(ws, skill.root, skill.name, !skill.pinned);
       if (action === "archive") await api.skillArchive(ws, skill.name);
       if (action === "restore") await api.skillRestore(ws, skill.root, skill.name);
-      if (action !== "view") skills = sortSkills(await api.skillsOverview(ws));
+      if (action !== "view") await reloadSkills();
     } catch (e) {
       fail(e);
     }
@@ -82,7 +86,7 @@
     try {
       const r = await api.curatorRun();
       message = `Curator checked ${r.checked} agent-created skills: ${r.markedStale.length} marked stale, ${r.archived.length} archived, ${r.reactivated.length} reactivated.`;
-      if (ws) skills = sortSkills(await api.skillsOverview(ws));
+      await reloadSkills();
     } catch (e) {
       fail(e);
     }
@@ -98,7 +102,7 @@
     event.preventDefault();
     if (!form || !ws) return;
     try {
-      await api.cronSave({ ...form, skills: splitList(skillsText) });
+      await api.cronSave({ ...form, skills: parseList(skillsText) });
       form = null;
       jobs = await api.cronJobs(ws);
       message = "Job saved.";

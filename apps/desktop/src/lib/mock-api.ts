@@ -1,7 +1,7 @@
 // In-memory stand-in for the Rust commands, used outside Tauri.
 import type { Api, BoardDoc, Workspace } from "./api.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
-import { memoryUsage, type CronJob, type LearningSettings, type SkillInfo } from "./learning.ts";
+import { ENTRY_DELIMITER, MEMORY_LIMITS, memoryUsage, type CronJob, type LearningSettings, type SkillInfo } from "./learning.ts";
 import {
   defaultSettings,
   type Combo,
@@ -44,9 +44,10 @@ const mockSkills: SkillInfo[] = [
   { name: "notes", description: "Use when writing daily notes.", category: null, scope: "user", root: "/vault/skills", state: "stale", pinned: true, createdBy: null, useCount: 1, viewCount: 1, patchCount: 0, lastActivityAt: null },
 ];
 const cronJobs: CronJob[] = [];
+const fileOf = (target: "memory" | "user") => (target === "memory" ? "MEMORY.md" : "USER.md");
 const memoryFile = (target: "memory" | "user") => {
   const { entries, used } = memoryUsage(memoryText[target]);
-  return { target, text: entries.join("\n§\n"), entries: entries.length, used, limit: target === "memory" ? 2200 : 1375, path: `/data/memory/${target === "memory" ? "MEMORY" : "USER"}.md` };
+  return { target, text: entries.join(ENTRY_DELIMITER), entries: entries.length, used, limit: MEMORY_LIMITS[target], path: `/data/memory/${fileOf(target)}` };
 };
 const findSkill = (name: string) => {
   const skill = mockSkills.find((s) => s.name === name);
@@ -421,9 +422,9 @@ export const mockApi: Api = {
     return { memory: memoryFile("memory"), user: memoryFile("user") };
   },
   async memorySave(_ws, target, text) {
-    const limit = target === "memory" ? 2200 : 1375;
+    const limit = MEMORY_LIMITS[target];
     const { used } = memoryUsage(text);
-    if (used > limit) throw `${target === "memory" ? "MEMORY" : "USER"}.md would be ${used}/${limit} chars; shorten or remove entries first.`;
+    if (used > limit) throw `${fileOf(target)} would be ${used}/${limit} chars; shorten or remove entries first.`;
     memoryText[target] = text;
     return { memory: memoryFile("memory"), user: memoryFile("user") };
   },

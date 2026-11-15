@@ -80,9 +80,7 @@ pub struct ReviewApprover;
 impl Approver for ReviewApprover {
     fn approve(&mut self, _call_id: &str, request: &ToolRequest, _reason: &str) -> Approval {
         match request {
-            ToolRequest::Learn(learn) if matches!(learn.tool, "memory" | "skill_manage") => {
-                Approval::Allow
-            }
+            ToolRequest::Learn(learn) if learn.mutating => Approval::Allow,
             _ => Approval::Deny,
         }
     }

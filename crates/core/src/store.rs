@@ -338,6 +338,7 @@ pub const MIGRATIONS: &[&str] = &[
         origin TEXT NOT NULL DEFAULT 'user',
         created_at INTEGER NOT NULL
     )",
+    "CREATE INDEX IF NOT EXISTS cron_jobs_due ON cron_jobs(state, next_run_at)",
     // --- end memory-skills ---
 ];
 
@@ -2090,6 +2091,17 @@ pub struct SkillUsageRow {
     pub archived_at: Option<i64>,
 }
 
+impl SkillUsageRow {
+    /// Newest of last use, view and patch.
+    #[must_use]
+    pub fn last_activity_at(&self) -> Option<i64> {
+        [self.last_used_at, self.last_viewed_at, self.last_patched_at]
+            .into_iter()
+            .flatten()
+            .max()
+    }
+}
+
 /// Which usage counter to bump.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillCounter {
@@ -2274,20 +2286,122 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if the write fails (unknown session included).
     pub fn message_append(&self, message: &MessageRow) -> Result<i64, StoreError> {
-        self.conn.execute(
-            "INSERT INTO agent_messages (session_id, role, content, tool_calls, tool_call_id, tool_name, ts, token_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        Ok(self
+            .messages_append(std::slice::from_ref(message))?
+            .pop()
+            .unwrap_or_default())
+    }
+
+    /// Append messages of one session in one transaction. Returns their ids.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if a write fails; nothing is kept then.
+    pub fn messages_append(&self, messages: &[MessageRow]) -> Result<Vec<i64>, StoreError> {
+        let Some(first) = messages.first() else {
+            return Ok(Vec::new());
+        };
+        let tx = self.conn.unchecked_transaction()?;
+        let mut ids = Vec::with_capacity(messages.len());
+        {
+            let mut insert = tx.prepare_cached(
+                "INSERT INTO agent_messages (session_id, role, content, tool_calls, tool_call_id, tool_name, ts, token_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )?;
+            for m in messages {
+                insert.execute(rusqlite::params![
+                    m.session_id,
+                    m.role,
+                    m.content,
+                    m.tool_calls,
+                    m.tool_call_id,
+                    m.tool_name,
+                    m.ts,
+                    m.token_count
+                ])?;
+                ids.push(tx.last_insert_rowid());
+            }
+        }
+        tx.execute(
+            "UPDATE agent_sessions SET message_count = message_count + ?2 WHERE id = ?1",
             rusqlite::params![
-                message.session_id, message.role, message.content, message.tool_calls,
-                message.tool_call_id, message.tool_name, message.ts, message.token_count
+                first.session_id,
+                i64::try_from(messages.len()).unwrap_or(i64::MAX)
             ],
         )?;
-        let id = self.conn.last_insert_rowid();
-        self.conn.execute(
-            "UPDATE agent_sessions SET message_count = message_count + 1 WHERE id = ?1",
-            rusqlite::params![message.session_id],
+        tx.commit()?;
+        Ok(ids)
+    }
+
+    /// The first (`newest == false`) or last `n` messages of a session, in
+    /// order.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn session_edge(
+        &self,
+        session_id: &str,
+        newest: bool,
+        n: usize,
+    ) -> Result<Vec<MessageRow>, StoreError> {
+        let sql = format!(
+            "SELECT * FROM (SELECT {MESSAGE_COLUMNS} FROM agent_messages m WHERE m.session_id = ?1 ORDER BY m.id {} LIMIT ?2) ORDER BY 1",
+            if newest { "DESC" } else { "ASC" }
+        );
+        let mut statement = self.conn.prepare_cached(&sql)?;
+        let rows = statement.query_map(
+            rusqlite::params![session_id, i64::try_from(n).unwrap_or(i64::MAX)],
+            |row| message_from_row(row, 0),
         )?;
-        Ok(id)
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Messages of a session with an id below `below` and above `above`.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn messages_outside(
+        &self,
+        session_id: &str,
+        below: i64,
+        above: i64,
+    ) -> Result<(i64, i64), StoreError> {
+        Ok(self.conn.query_row(
+            "SELECT COALESCE(SUM(id < ?2), 0), COALESCE(SUM(id > ?3), 0) FROM agent_messages WHERE session_id = ?1",
+            rusqlite::params![session_id, below, above],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    }
+
+    /// The first message of a role in a session.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn session_first(
+        &self,
+        session_id: &str,
+        role: &str,
+    ) -> Result<Option<MessageRow>, StoreError> {
+        let sql = format!(
+            "SELECT {MESSAGE_COLUMNS} FROM agent_messages m WHERE m.session_id = ?1 AND m.role = ?2 ORDER BY m.id LIMIT 1"
+        );
+        let mut statement = self.conn.prepare_cached(&sql)?;
+        let mut rows = statement.query_map(rusqlite::params![session_id, role], |row| {
+            message_from_row(row, 0)
+        })?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Message count of a session.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn session_len(&self, session_id: &str) -> Result<usize, StoreError> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM agent_messages WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get(0),
+        )?;
+        Ok(usize::try_from(n).unwrap_or(0))
     }
 
     /// Compaction replaced the live context: archive the active messages.
@@ -2307,7 +2421,7 @@ impl Store {
     /// Returns [`StoreError`] if the query fails.
     pub fn session_get(&self, id: &str) -> Result<Option<SessionRow>, StoreError> {
         let sql = format!("SELECT {SESSION_COLUMNS} FROM agent_sessions s WHERE s.id = ?1");
-        let mut statement = self.conn.prepare(&sql)?;
+        let mut statement = self.conn.prepare_cached(&sql)?;
         let mut rows =
             statement.query_map(rusqlite::params![id], |row| session_from_row(row, 0))?;
         Ok(rows.next().transpose()?)
@@ -2622,6 +2736,20 @@ impl Store {
         );
         let mut statement = self.conn.prepare(&sql)?;
         let rows = statement.query_map(rusqlite::params![workspace_id], cron_from_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Scheduled jobs whose `next_run_at` has come (indexed; the 20 s
+    /// scheduler tick reads only these).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn cron_due(&self, now: i64) -> Result<Vec<CronJobRow>, StoreError> {
+        let sql = format!(
+            "SELECT {CRON_COLUMNS} FROM cron_jobs WHERE state = 'scheduled' AND next_run_at <= ?1 ORDER BY next_run_at, id"
+        );
+        let mut statement = self.conn.prepare_cached(&sql)?;
+        let rows = statement.query_map(rusqlite::params![now], cron_from_row)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 

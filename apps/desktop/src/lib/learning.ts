@@ -79,6 +79,9 @@ export interface CronInput {
 /** Separator between memory entries on disk. */
 export const ENTRY_DELIMITER = "\n§\n";
 
+/** Character caps of MEMORY.md and USER.md (mirrors the Rust constants). */
+export const MEMORY_LIMITS = { memory: 2200, user: 1375 } as const;
+
 /** Characters the editor text would use once saved (trimmed, deduplicated entries). */
 export function memoryUsage(text: string): { entries: string[]; used: number } {
   const entries: string[] = [];
@@ -102,11 +105,6 @@ export function relativeTime(secs: number | null, now = Date.now()): string {
   const [n, unit] =
     abs < 60 ? [abs, "s"] : abs < 3600 ? [Math.round(abs / 60), "min"] : abs < 86_400 ? [Math.round(abs / 3600), "h"] : [Math.round(abs / 86_400), "d"];
   return delta >= 0 ? `in ${n} ${unit}` : `${n} ${unit} ago`;
-}
-
-/** "a, b , c" → ["a", "b", "c"]. */
-export function splitList(text: string): string[] {
-  return text.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
 /** Group skills for the list: active and stale first, archived last, then by name. */

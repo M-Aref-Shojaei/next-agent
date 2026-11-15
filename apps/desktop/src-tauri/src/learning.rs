@@ -247,17 +247,35 @@ impl AppService {
     /// sessions do not write the user's memory).
     pub(crate) fn learning_for(&self, plan: &Plan) -> Learning {
         let cron = plan.extras.source == Some("cron");
-        Learning {
-            workspace_id: plan.workspace_id.clone(),
-            sandbox_root: plan.root.clone(),
-            memory_dir: self.memory_dir(&plan.workspace_id),
-            skills: self.skills_for(&plan.workspace_root),
-            db_path: self.db_path().to_path_buf(),
-            session_id: Some(plan.spec.id.as_str().to_string()),
-            tools: ToolSet {
+        self.learning(
+            &plan.workspace_id,
+            &plan.workspace_root,
+            &plan.root,
+            plan.spec.id.as_str(),
+            ToolSet {
                 memory: !cron,
                 ..ToolSet::ALL
             },
+        )
+    }
+
+    /// Learning tools for one task or review fork of a workspace.
+    fn learning(
+        &self,
+        workspace_id: &str,
+        workspace_root: &Path,
+        sandbox_root: &Path,
+        session_id: &str,
+        tools: ToolSet,
+    ) -> Learning {
+        Learning {
+            workspace_id: workspace_id.to_string(),
+            sandbox_root: sandbox_root.to_path_buf(),
+            memory_dir: self.memory_dir(workspace_id),
+            skills: self.skills_for(workspace_root),
+            db_path: self.db_path().to_path_buf(),
+            session_id: Some(session_id.to_string()),
+            tools,
             review: false,
         }
     }
@@ -270,16 +288,7 @@ impl AppService {
             workspace_id: plan.workspace_id.clone(),
             task_id: Some(id),
             source: plan.extras.source.unwrap_or("task").to_string(),
-            title: Some(
-                plan.spec
-                    .prompt
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .chars()
-                    .take(80)
-                    .collect(),
-            ),
+            title: Some(title_of(&plan.spec.prompt, 80)),
             started_at: sessions::now(),
             ..SessionRow::default()
         };
@@ -338,15 +347,7 @@ impl AppService {
         let service = Arc::clone(self);
         let job = ReviewJob {
             task_id: plan.spec.id.as_str().to_string(),
-            title: plan
-                .spec
-                .prompt
-                .lines()
-                .next()
-                .unwrap_or("")
-                .chars()
-                .take(60)
-                .collect(),
+            title: title_of(&plan.spec.prompt, 60),
             workspace_id: plan.workspace_id.clone(),
             workspace_root: plan.workspace_root.clone(),
         };
@@ -425,17 +426,17 @@ impl AppService {
             ..SessionRow::default()
         };
         let learning = Learning {
-            workspace_id: job.workspace_id.clone(),
-            sandbox_root: job.workspace_root.clone(),
-            memory_dir: self.memory_dir(&job.workspace_id),
-            skills: self.skills_for(&job.workspace_root),
-            db_path: self.db_path().to_path_buf(),
-            session_id: Some(id.as_str().to_string()),
-            tools: ToolSet {
-                session_search: false,
-                ..ToolSet::ALL
-            },
             review: true,
+            ..self.learning(
+                &job.workspace_id,
+                &job.workspace_root,
+                &job.workspace_root,
+                id.as_str(),
+                ToolSet {
+                    session_search: false,
+                    ..ToolSet::ALL
+                },
+            )
         };
         let client = BudgetClient::new(Arc::new(gateway.with_session(id.as_str())), budget);
         let mut executor = BuiltinExecutor::new(Arc::new(client), &job.workspace_root)
@@ -533,7 +534,7 @@ impl AppService {
     /// Every skill of the workspace and the vault, archived ones included.
     pub fn skills_overview(&self, workspace_id: &str) -> Result<Vec<SkillDto>, String> {
         let skills = self.workspace_skills(workspace_id)?;
-        skills::clear_cache();
+        let found = skills.discover();
         let store = self.store()?;
         let mut out = Vec::new();
         for root in skills.roots() {
@@ -566,17 +567,10 @@ impl AppService {
                     use_count: u.use_count,
                     view_count: u.view_count,
                     patch_count: u.patch_count,
-                    last_activity_at: [u.last_used_at, u.last_viewed_at, u.last_patched_at]
-                        .into_iter()
-                        .flatten()
-                        .max(),
+                    last_activity_at: u.last_activity_at(),
                 }
             };
-            for info in skills
-                .discover()
-                .into_iter()
-                .filter(|s| s.root == root.path)
-            {
+            for info in found.iter().filter(|s| s.root == root.path).cloned() {
                 out.push(dto(info.name, info.description, info.category, None));
             }
             for name in skills::archived(&root.path) {
@@ -669,10 +663,7 @@ impl AppService {
                     pinned: u.pinned,
                     state: u.state.clone(),
                     use_count: u.use_count,
-                    last_activity_at: [u.last_used_at, u.last_viewed_at, u.last_patched_at]
-                        .into_iter()
-                        .flatten()
-                        .max(),
+                    last_activity_at: u.last_activity_at(),
                     created_at: u.created_at,
                 })
                 .collect();
@@ -769,46 +760,34 @@ impl AppService {
     /// Start one claimed run as its own task. Returns the task id.
     pub fn cron_dispatch(self: &Arc<Self>, run: &DueRun, sink: Sink) -> Result<String, String> {
         let job = &run.job;
-        // Checked again here, not only when the job was saved: a row edited
-        // behind the app's back must not run with more power.
-        if !matches!(job.mode.as_str(), "plan" | "manual" | "auto") {
-            let error = format!("cron jobs never run in `{}` mode", job.mode);
-            let _ = self.store()?.cron_record_run(
-                &job.id,
-                sessions::now(),
-                "error",
-                Some(&error),
-                None,
-            );
-            return Err(error);
-        }
-        let request = TaskRequest {
-            workspace_id: job.workspace_id.clone(),
-            prompt: job.prompt.clone(),
-            mode: job.mode.clone(),
-            profile: None,
-        };
-        let extras = TaskExtras {
-            source: Some("cron"),
-            skills: cron::job_skills(job),
-            model_role: job.model_role.clone(),
-            workdir: job.workdir.clone(),
-        };
         let now = sessions::now();
-        match self.task_start_with(&request, sink, extras) {
-            Ok(task_id) => {
-                let _ =
-                    self.store()?
-                        .cron_record_run(&job.id, now, "started", None, Some(&task_id));
-                Ok(task_id)
-            }
-            Err(error) => {
-                let _ = self
-                    .store()?
-                    .cron_record_run(&job.id, now, "error", Some(&error), None);
-                Err(error)
-            }
-        }
+        // The mode is checked again here, not only when the job was saved:
+        // a row edited behind the app's back must not run with more power.
+        let outcome = if matches!(job.mode.as_str(), "plan" | "manual" | "auto") {
+            let request = TaskRequest {
+                workspace_id: job.workspace_id.clone(),
+                prompt: job.prompt.clone(),
+                mode: job.mode.clone(),
+                profile: None,
+            };
+            let extras = TaskExtras {
+                source: Some("cron"),
+                skills: cron::job_skills(job),
+                model_role: job.model_role.clone(),
+                workdir: job.workdir.clone(),
+            };
+            self.task_start_with(&request, sink, extras)
+        } else {
+            Err(format!("cron jobs never run in `{}` mode", job.mode))
+        };
+        let (status, error, task) = match &outcome {
+            Ok(task_id) => ("started", None, Some(task_id.as_str())),
+            Err(error) => ("error", Some(error.as_str()), None),
+        };
+        let _ = self
+            .store()?
+            .cron_record_run(&job.id, now, status, error, task);
+        outcome
     }
 
     /// Claim due runs (at most once each) and start them.
@@ -824,6 +803,17 @@ impl AppService {
             .map(|run| self.cron_dispatch(run, sink_for(&run.job)))
             .collect()
     }
+}
+
+/// The first line of a prompt, cut to `n` characters.
+fn title_of(prompt: &str, n: usize) -> String {
+    prompt
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(n)
+        .collect()
 }
 
 struct ReviewJob {

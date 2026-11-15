@@ -629,12 +629,6 @@ fn no_symlinks(base: &Path, rel: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-}
-
 fn stamp(secs: i64) -> String {
     let zoned = jiff::Timestamp::from_second(secs).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
     zoned.strftime("%Y%m%d%H%M%S").to_string()
@@ -951,7 +945,7 @@ impl Skills {
     #[must_use]
     pub fn apply_batch(&self, ops: &[SkillOp], cx: &ManageContext<'_>) -> BatchOutcome {
         let fail = |message: String| BatchOutcome {
-            result: json!({"success": false, "error": message}),
+            result: super::fail(message),
             changes: Vec::new(),
         };
         if ops.is_empty() {
@@ -1163,7 +1157,7 @@ impl Skills {
                 ))?;
                 // Rollback for a created skill: remove the new folder.
                 snapshots.push((dir.clone(), None));
-                write_file_in(&dir, Path::new("SKILL.md"), content.as_bytes())?;
+                write_file_in(&dir, Path::new("SKILL.md"), content)?;
                 dirs.insert(name.clone(), (dir.clone(), root.path.clone()));
                 Ok((
                     json!({"name": name, "action": "create", "message": format!("Skill '{name}' created."), "path": dir, "scope": scope,
@@ -1190,7 +1184,7 @@ impl Skills {
                     }
                 }
                 scan(content)?;
-                write_file_in(&dir, Path::new("SKILL.md"), content.as_bytes())?;
+                write_file_in(&dir, Path::new("SKILL.md"), content)?;
                 Ok((
                     json!({"name": name, "action": "patch", "message": format!("Skill '{name}' updated (full rewrite).")}),
                     Some(SkillChange {
@@ -1245,7 +1239,7 @@ impl Skills {
                     }
                 }
                 scan(&text)?;
-                write_file_in(&dir, &rel, text.as_bytes())?;
+                write_file_in(&dir, &rel, &text)?;
                 let n = edited.replacements;
                 Ok((
                     json!({"name": name, "action": "patch", "file_path": label,
@@ -1279,7 +1273,7 @@ impl Skills {
                     needs_view(name, &rel.display().to_string())?;
                 }
                 scan(file_content)?;
-                write_file_in(&dir, &rel, file_content.as_bytes())?;
+                write_file_in(&dir, &rel, file_content)?;
                 Ok((
                     json!({"name": name, "action": "write_file", "file_path": rel,
                            "message": format!("File '{}' written to skill '{name}'.", rel.display())}),
@@ -1336,7 +1330,7 @@ impl Skills {
         cx: &ManageContext<'_>,
     ) -> BatchOutcome {
         let fail = |message: String| BatchOutcome {
-            result: json!({"success": false, "error": message}),
+            result: super::fail(message),
             changes: Vec::new(),
         };
         if cx.review {
@@ -1434,7 +1428,7 @@ fn check_inside(root: &Path, dir: &Path) -> Result<(), String> {
 }
 
 /// Write `dir/rel` atomically, creating subfolders, never through a symlink.
-fn write_file_in(dir: &Path, rel: &Path, bytes: &[u8]) -> Result<(), String> {
+fn write_file_in(dir: &Path, rel: &Path, text: &str) -> Result<(), String> {
     no_symlinks(dir, rel)?;
     let path = dir.join(rel);
     if let Some(parent) = path.parent() {
@@ -1442,7 +1436,8 @@ fn write_file_in(dir: &Path, rel: &Path, bytes: &[u8]) -> Result<(), String> {
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
     no_symlinks(dir, rel)?;
-    super::write_atomic(&path, bytes).map_err(|e| format!("cannot write {}: {e}", rel.display()))
+    crate::vault::write_atomic(&path, text)
+        .map_err(|e| format!("cannot write {}: {e}", rel.display()))
 }
 
 fn read_bytes(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
@@ -1580,7 +1575,10 @@ pub fn archive_dir(root: &Path, dir: &Path, name: &str) -> Result<PathBuf, Strin
         .map_err(|e| format!("cannot create {}: {e}", archive.display()))?;
     let mut target = archive.join(name);
     if target.exists() {
-        target = archive.join(format!("{name}-{}", stamp(now_secs())));
+        target = archive.join(format!(
+            "{name}-{}",
+            stamp(crate::learning::sessions::now())
+        ));
     }
     fs::rename(dir, &target).map_err(|e| format!("cannot archive {}: {e}", dir.display()))?;
     // Drop an empty category folder left behind.

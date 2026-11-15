@@ -20,35 +20,9 @@ pub mod yaml;
 
 pub use tools::{LearnChange, Learning, LearningTools, ToolSet};
 
-use std::fs;
-use std::io::Write as _;
-use std::path::Path;
+use serde_json::{json, Value};
 
-/// Write through a temp file in the same folder, fsync, then rename, so a
-/// crash never leaves a half-written file.
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let dir = path.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
-    })?;
-    fs::create_dir_all(dir)?;
-    let name = path
-        .file_name()
-        .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    let temp = dir.join(format!(".{name}.{}-{nanos}.tmp", std::process::id()));
-    let result = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        fs::rename(&temp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
+/// The JSON a learning tool returns on failure.
+pub(crate) fn fail(message: impl Into<String>) -> Value {
+    json!({"success": false, "error": message.into()})
 }

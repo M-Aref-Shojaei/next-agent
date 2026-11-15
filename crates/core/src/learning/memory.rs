@@ -372,7 +372,7 @@ impl MemoryStore {
         if !text.is_empty() {
             text.push('\n');
         }
-        super::write_atomic(&path, text.as_bytes())
+        crate::vault::write_atomic(&path, &text)
             .map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 
@@ -390,7 +390,7 @@ impl MemoryStore {
 
     #[allow(clippy::too_many_lines)]
     fn try_apply(&self, target: Target, ops: &[MemoryOp], add_only: bool) -> Result<Value, Value> {
-        let fail = |message: String| json!({"success": false, "error": message});
+        let fail = |message: String| super::fail(message);
         if ops.is_empty() {
             return Err(fail("operations must list at least one change.".into()));
         }

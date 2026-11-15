@@ -290,7 +290,7 @@ impl LearningTools {
     }
 
     fn run(&mut self, learn: &LearnRequest) -> Value {
-        let fail = |message: String| serde_json::json!({"success": false, "error": message});
+        let fail = |message: String| super::fail(message);
         match learn.tool {
             "memory" => self.memory(&learn.args),
             "skills_list" => self
@@ -377,7 +377,7 @@ impl LearningTools {
                 .learning
                 .memory()
                 .apply(target, &ops, self.learning.review),
-            Err(error) => serde_json::json!({"success": false, "error": error}),
+            Err(error) => super::fail(error),
         };
         if value["success"] == true {
             self.memory_failures = 0;
@@ -420,7 +420,7 @@ impl LearningTools {
             .collect();
         let ops = match ops {
             Ok(ops) => ops,
-            Err(error) => return serde_json::json!({"success": false, "error": error}),
+            Err(error) => return super::fail(error),
         };
         let roots: Vec<String> = self
             .learning

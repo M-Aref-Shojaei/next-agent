@@ -111,6 +111,8 @@ impl Transcript for SessionRecorder {
     }
 
     fn record(&mut self, messages: &[ChatMessage]) {
+        let ts = now();
+        let mut rows = Vec::with_capacity(messages.len());
         for message in messages {
             for call in &message.tool_calls {
                 self.tool_names
@@ -131,12 +133,14 @@ impl Transcript for SessionRecorder {
                     .tool_call_id
                     .as_ref()
                     .and_then(|id| self.tool_names.get(id).cloned()),
-                ts: now(),
+                ts,
                 ..MessageRow::default()
             };
-            if let Err(error) = self.store.message_append(&row) {
-                tracing::warn!(%error, "session store: message not recorded");
-            }
+            rows.push(row);
+        }
+        // One transaction per batch: the agent loop waits on this.
+        if let Err(error) = self.store.messages_append(&rows) {
+            tracing::warn!(%error, "session store: messages not recorded");
         }
     }
 
@@ -295,7 +299,19 @@ fn session_meta(session: &SessionRow) -> Value {
 }
 
 /// Follow `parent_session_id` up to the root (cycle-safe).
-fn lineage_root(store: &Store, session: &SessionRow) -> String {
+/// Lineage roots already resolved during one search call.
+type Roots = HashMap<String, String>;
+
+fn lineage_root(store: &Store, session: &SessionRow, memo: &mut Roots) -> String {
+    if let Some(root) = memo.get(&session.id) {
+        return root.clone();
+    }
+    let root = walk_lineage(store, session);
+    memo.insert(session.id.clone(), root.clone());
+    root
+}
+
+fn walk_lineage(store: &Store, session: &SessionRow) -> String {
     let mut current = session.clone();
     let mut seen = HashSet::new();
     while let Some(parent) = current.parent_session_id.clone() {
@@ -378,7 +394,7 @@ pub fn session_search(store: &Store, scope: &SearchScope<'_>, args: &Value) -> V
             value["success"] = json!(true);
             value
         }
-        Err(error) => json!({"success": false, "error": error}),
+        Err(error) => super::fail(error),
     }
 }
 
@@ -396,6 +412,7 @@ fn discover(
     query: &str,
     args: &Value,
 ) -> Result<Value, String> {
+    let mut memo = Roots::new();
     let limit = clamp(args.get("limit").and_then(Value::as_i64), 3, 1, 10);
     let sort = match args.get("sort").and_then(Value::as_str) {
         Some("newest") => SearchSort::Newest,
@@ -434,7 +451,7 @@ fn discover(
     let excluded_roots: HashSet<String> = excluded
         .iter()
         .filter_map(|id| store.session_get(id).ok().flatten())
-        .map(|row| lineage_root(store, &row))
+        .map(|row| lineage_root(store, &row, &mut memo))
         .collect();
     if let Some(current) = scope.current_session {
         excluded.push(current.to_string());
@@ -484,12 +501,12 @@ fn discover(
     let current_root = scope
         .current_session
         .and_then(|id| store.session_get(id).ok().flatten())
-        .map(|row| lineage_root(store, &row));
+        .map(|row| lineage_root(store, &row, &mut memo));
     let mut chosen: Vec<MessageHit> = Vec::new();
     let mut roots = HashSet::new();
     let mut hidden_same_lineage = 0;
     for hit in hits {
-        let root = lineage_root(store, &hit.session);
+        let root = lineage_root(store, &hit.session, &mut memo);
         if excluded_roots.contains(&root) {
             continue;
         }
@@ -518,24 +535,23 @@ fn discover(
             "snippet": hit.snippet,
         });
         if rank == 0 || full {
-            let all = store
-                .session_messages(&hit.session.id, false)
+            let head = store
+                .session_edge(&hit.session.id, false, BOOKEND)
+                .map_err(|e| e.to_string())?;
+            let tail = store
+                .session_edge(&hit.session.id, true, BOOKEND)
                 .map_err(|e| e.to_string())?;
             let window = store
                 .messages_around(&hit.session.id, hit.message.id, 5)
                 .map_err(|e| e.to_string())?;
             let ids: HashSet<i64> = window.iter().map(|m| m.id).collect();
-            let start: Vec<Value> = all
+            let start: Vec<Value> = head
                 .iter()
-                .take(BOOKEND)
                 .filter(|m| !ids.contains(&m.id))
                 .map(|m| message_json(m, BOOKEND_CHARS))
                 .collect();
-            let end: Vec<Value> = all
+            let end: Vec<Value> = tail
                 .iter()
-                .rev()
-                .take(BOOKEND)
-                .rev()
                 .filter(|m| !ids.contains(&m.id) && !start.iter().any(|s| s["id"] == m.id))
                 .map(|m| message_json(m, BOOKEND_CHARS))
                 .collect();
@@ -589,14 +605,10 @@ fn scroll(
             "Message {around} is not in session '{session_id}'."
         ));
     }
-    let first = store
-        .session_messages(&session.id, false)
+    let last = messages.last().map_or(around, |m| m.id);
+    let (before, after) = store
+        .messages_outside(&session.id, messages[0].id, last)
         .map_err(|e| e.to_string())?;
-    let before = first.iter().filter(|m| m.id < messages[0].id).count();
-    let after = first
-        .iter()
-        .filter(|m| messages.last().is_some_and(|l| m.id > l.id))
-        .count();
     let rendered: Vec<Value> = messages
         .iter()
         .map(|m| {
@@ -622,23 +634,28 @@ fn scroll(
 
 fn read(store: &Store, scope: &SearchScope<'_>, session_id: &str) -> Result<Value, String> {
     let session = own_session(store, scope, session_id)?;
-    let all = store
-        .session_messages(&session.id, false)
-        .map_err(|e| e.to_string())?;
-    let truncated = all.len() > READ_HEAD + READ_TAIL;
-    let shown: Vec<&MessageRow> = if truncated {
-        all.iter()
-            .take(READ_HEAD)
-            .chain(all.iter().skip(all.len() - READ_TAIL))
-            .collect()
+    let total = store.session_len(&session.id).map_err(|e| e.to_string())?;
+    let truncated = total > READ_HEAD + READ_TAIL;
+    let shown: Vec<MessageRow> = if truncated {
+        let mut head = store
+            .session_edge(&session.id, false, READ_HEAD)
+            .map_err(|e| e.to_string())?;
+        head.extend(
+            store
+                .session_edge(&session.id, true, READ_TAIL)
+                .map_err(|e| e.to_string())?,
+        );
+        head
     } else {
-        all.iter().collect()
+        store
+            .session_messages(&session.id, false)
+            .map_err(|e| e.to_string())?
     };
     let mut out = json!({
         "mode": "read",
         "session_id": session.id,
         "session_meta": session_meta(&session),
-        "message_count": all.len(),
+        "message_count": total,
         "messages": shown.iter().map(|m| message_json(m, READ_MAX_CONTENT)).collect::<Vec<_>>(),
     });
     if truncated {
@@ -659,9 +676,9 @@ fn browse(store: &Store, scope: &SearchScope<'_>, args: &Value) -> Result<Value,
         .take(limit)
         .map(|s| {
             let preview = store
-                .session_messages(&s.id, false)
+                .session_first(&s.id, "user")
                 .ok()
-                .and_then(|m| m.into_iter().find(|m| m.role == "user"))
+                .flatten()
                 .and_then(|m| m.content)
                 .map(|c| clip(&c, 200).0);
             json!({

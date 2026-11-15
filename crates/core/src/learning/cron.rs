@@ -477,7 +477,7 @@ pub fn catch_up_window(schedule: &Schedule, grace_minutes: Option<i64>, tz: &Tim
     let period = match schedule {
         Schedule::Interval { minutes } => Some(minutes * 60),
         Schedule::Cron { .. } => {
-            let now = jiff::Timestamp::now().as_second();
+            let now = crate::learning::sessions::now();
             next_after(schedule, now, tz).and_then(|a| next_after(schedule, a, tz).map(|b| b - a))
         }
         Schedule::Once { .. } => None,
@@ -577,31 +577,15 @@ fn new_id(seed: &str) -> String {
     crate::hash::sha256_hex(format!("{seed}:{nanos}:{n}").as_bytes())[..12].to_string()
 }
 
-/// Create a job.
-///
-/// # Errors
-/// Invalid spec (schedule, mode, time zone, …) or a database error.
-pub fn schedule_job(store: &Store, spec: &JobSpec, now: i64) -> Result<CronJobRow, String> {
-    let (schedule, _, first) = validate(spec, now)?;
-    let name = spec
-        .name
-        .clone()
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| {
-            let from_prompt: String = spec.prompt.trim().chars().take(50).collect();
-            if from_prompt.is_empty() {
-                spec.skills
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "cron job".into())
-            } else {
-                from_prompt
-            }
-        });
-    let row = CronJobRow {
-        id: new_id(&spec.workspace_id),
-        workspace_id: spec.workspace_id.clone(),
-        name,
+/// Copy a spec's fields onto a row (shared by create and edit).
+fn apply_spec(row: CronJobRow, spec: &JobSpec, schedule: &Schedule) -> CronJobRow {
+    let once = matches!(schedule, Schedule::Once { .. });
+    CronJobRow {
+        name: spec
+            .name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or(row.name.clone()),
         prompt: spec.prompt.trim().to_string(),
         schedule: spec.schedule.trim().to_string(),
         skills: json!(spec.skills).to_string(),
@@ -610,11 +594,37 @@ pub fn schedule_job(store: &Store, spec: &JobSpec, now: i64) -> Result<CronJobRo
         workdir: spec.workdir.clone().filter(|w| !w.is_empty()),
         timezone: spec.timezone.clone().filter(|t| !t.is_empty()),
         grace_minutes: spec.grace_minutes,
-        repeat_times: if matches!(schedule, Schedule::Once { .. }) {
-            Some(1)
-        } else {
-            spec.repeat
-        },
+        repeat_times: if once { Some(1) } else { spec.repeat },
+        ..row
+    }
+}
+
+fn get_job(store: &Store, id: &str) -> Result<CronJobRow, String> {
+    store
+        .cron_get(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("No job '{id}'."))
+}
+
+/// Create a job.
+///
+/// # Errors
+/// Invalid spec (schedule, mode, time zone, …) or a database error.
+pub fn schedule_job(store: &Store, spec: &JobSpec, now: i64) -> Result<CronJobRow, String> {
+    let (schedule, _, first) = validate(spec, now)?;
+    let default_name: String = spec.prompt.trim().chars().take(50).collect();
+    let default_name = if default_name.is_empty() {
+        spec.skills
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "cron job".into())
+    } else {
+        default_name
+    };
+    let fresh = CronJobRow {
+        id: new_id(&spec.workspace_id),
+        workspace_id: spec.workspace_id.clone(),
+        name: default_name,
         state: "scheduled".into(),
         next_run_at: Some(first),
         origin: if spec.origin.is_empty() {
@@ -625,6 +635,7 @@ pub fn schedule_job(store: &Store, spec: &JobSpec, now: i64) -> Result<CronJobRo
         created_at: now,
         ..CronJobRow::default()
     };
+    let row = apply_spec(fresh, spec, &schedule);
     store.cron_put(&row).map_err(|e| e.to_string())?;
     Ok(row)
 }
@@ -634,31 +645,11 @@ pub fn schedule_job(store: &Store, spec: &JobSpec, now: i64) -> Result<CronJobRo
 /// # Errors
 /// Unknown job, invalid spec, or a database error.
 pub fn update_job(store: &Store, id: &str, spec: &JobSpec, now: i64) -> Result<CronJobRow, String> {
-    let old = store
-        .cron_get(id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("No job '{id}'."))?;
+    let old = get_job(store, id)?;
     let (schedule, _, first) = validate(spec, now)?;
     let paused = old.state == "paused";
-    let row = CronJobRow {
-        name: spec
-            .name
-            .clone()
-            .filter(|n| !n.trim().is_empty())
-            .unwrap_or(old.name.clone()),
-        prompt: spec.prompt.trim().to_string(),
-        schedule: spec.schedule.trim().to_string(),
-        skills: json!(spec.skills).to_string(),
-        model_role: spec.model_role.clone().filter(|r| !r.is_empty()),
-        mode: spec.mode.clone().unwrap_or_else(|| "auto".into()),
-        workdir: spec.workdir.clone().filter(|w| !w.is_empty()),
-        timezone: spec.timezone.clone().filter(|t| !t.is_empty()),
-        grace_minutes: spec.grace_minutes,
-        repeat_times: if matches!(schedule, Schedule::Once { .. }) {
-            Some(1)
-        } else {
-            spec.repeat
-        },
+    let kept = CronJobRow {
+        // A one-shot rescheduled from scratch starts its count again.
         run_count: if matches!(schedule, Schedule::Once { .. }) {
             0
         } else {
@@ -672,6 +663,7 @@ pub fn update_job(store: &Store, id: &str, spec: &JobSpec, now: i64) -> Result<C
         next_run_at: if paused { None } else { Some(first) },
         ..old
     };
+    let row = apply_spec(kept, spec, &schedule);
     store.cron_put(&row).map_err(|e| e.to_string())?;
     Ok(row)
 }
@@ -698,10 +690,7 @@ pub fn cancel_job(store: &Store, id: &str) -> Result<bool, String> {
 /// # Errors
 /// Unknown job, a one-shot whose time has passed, or a database error.
 pub fn set_paused(store: &Store, id: &str, paused: bool, now: i64) -> Result<CronJobRow, String> {
-    let mut row = store
-        .cron_get(id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("No job '{id}'."))?;
+    let mut row = get_job(store, id)?;
     if paused {
         row.state = "paused".into();
         row.next_run_at = None;
@@ -732,7 +721,7 @@ pub struct DueRun {
 /// A database error while listing jobs (claims that fail are skipped).
 pub fn tick(store: &Store, now: i64) -> Result<Vec<DueRun>, String> {
     let mut due = Vec::new();
-    for job in store.cron_list(None).map_err(|e| e.to_string())? {
+    for job in store.cron_due(now).map_err(|e| e.to_string())? {
         let Some(slot) = job.next_run_at.filter(|_| job.state == "scheduled") else {
             continue;
         };
@@ -813,10 +802,7 @@ pub fn job_skills(job: &CronJobRow) -> Vec<String> {
 /// # Errors
 /// Unknown job or a database error.
 pub fn run_now(store: &Store, id: &str, now: i64) -> Result<DueRun, String> {
-    let job = store
-        .cron_get(id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("No job '{id}'."))?;
+    let job = get_job(store, id)?;
     Ok(DueRun {
         job,
         scheduled_for: now,

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cronInputOf, emptyCronInput, memoryUsage, relativeTime, sortSkills, splitList, usagePercent, type SkillInfo } from "../src/lib/learning.ts";
+import { cronInputOf, emptyCronInput, memoryUsage, relativeTime, sortSkills, usagePercent, type SkillInfo } from "../src/lib/learning.ts";
 
 test("memory usage matches the on-disk count (trimmed, deduplicated)", () => {
   const { entries, used } = memoryUsage(" a \n§\nb\n§\na\n§\n\n");
@@ -21,7 +21,6 @@ test("relative times", () => {
 });
 
 test("lists, skill order and cron forms", () => {
-  assert.deepEqual(splitList("deploy, , notes "), ["deploy", "notes"]);
   const skill = (name: string, state: SkillInfo["state"]): SkillInfo => ({ name, state, description: "", category: null, scope: "workspace", root: "/r", pinned: false, createdBy: null, useCount: 0, viewCount: 0, patchCount: 0, lastActivityAt: null });
   assert.deepEqual(sortSkills([skill("b", "archived"), skill("c", "active"), skill("a", "stale")]).map((s) => s.name), ["a", "c", "b"]);
   const blank = emptyCronInput("ws");
