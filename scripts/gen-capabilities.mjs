@@ -160,8 +160,7 @@ function capability(identifier, description, windows, commands) {
 }
 
 export function capabilities() {
-  const overlay = new Set(OVERLAY_COMMANDS);
-  const clash = NEXT_AGENT.filter((c) => overlay.has(c));
+  const clash = NEXT_AGENT.filter((c) => known.has(c));
   if (clash.length) throw new Error(`command names in both apps: ${clash.join(", ")}`);
   const files = {
     "default.json": capability(

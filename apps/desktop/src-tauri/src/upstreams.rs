@@ -68,9 +68,8 @@ fn save(path: &Path, state: &WatchState) {
     let Ok(text) = serde_json::to_string_pretty(state) else {
         return;
     };
-    let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, text).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    if let Err(error) = crate::boards::atomic_write(path, text.as_bytes()) {
+        eprintln!("[next-agent] upstream watch: {error}");
     }
 }
 

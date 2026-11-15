@@ -189,20 +189,21 @@ pub async fn check_all(
     previous: &[UpstreamReport],
     now: u64,
 ) -> (Vec<UpstreamReport>, Option<u64>) {
+    // The last report of the same upstream at the same pin.
+    let last_report = |w: &Watched| {
+        previous
+            .iter()
+            .find(|r| r.id == w.id && r.pinned == w.commit)
+    };
     let mut reports = Vec::new();
     for watched in list {
-        let old = previous
-            .iter()
-            .find(|r| r.id == watched.id && r.pinned == watched.commit);
+        let old = last_report(watched);
         match client.check(watched, now).await {
             Ok(report) => reports.push(report),
             Err(CheckError::RateLimited(until)) => {
                 // Keep what we had for this and the remaining upstreams.
                 for rest in list.iter().skip(reports.len()) {
-                    if let Some(old) = previous
-                        .iter()
-                        .find(|r| r.id == rest.id && r.pinned == rest.commit)
-                    {
+                    if let Some(old) = last_report(rest) {
                         reports.push(old.clone());
                     }
                 }

@@ -59,9 +59,20 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CONNECTIONS: usize = 64;
 
 /// Next Agent: relay limits (security review): the connections being served.
-fn connection_slots() -> &'static std::sync::Arc<tokio::sync::Semaphore> {
-    static SLOTS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
-    SLOTS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)))
+static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_CONNECTIONS);
+
+/// Next Agent: relay limits (security review): serves one accepted connection in a slot of its own, or
+/// refuses it when all are taken.
+fn serve(app: &AppHandle, relay: impl Relay + Send + 'static) {
+    let Ok(slot) = SLOTS.try_acquire() else {
+        log::line("too many relay connections at once; one refused");
+        return;
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        handle(app, relay).await;
+        drop(slot);
+    });
 }
 
 /// What the island can say about a permission request.
@@ -125,15 +136,7 @@ pub fn start(app: AppHandle) {
                 log::line("refused a relay connection from another user");
                 continue;
             }
-            let Ok(slot) = connection_slots().clone().try_acquire_owned() else {
-                log::line("too many relay connections at once; one refused");
-                continue;
-            };
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                handle(app, connected).await;
-                drop(slot);
-            });
+            serve(&app, connected);
         }
     });
 }
@@ -186,15 +189,7 @@ pub fn start(app: AppHandle) {
                 continue;
             }
             // Next Agent: relay limits (security review): not too many at once.
-            let Ok(slot) = connection_slots().clone().try_acquire_owned() else {
-                log::line("too many relay connections at once; one refused");
-                continue;
-            };
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                handle(app, stream).await;
-                drop(slot);
-            });
+            serve(&app, stream);
         }
     });
 }
@@ -204,10 +199,9 @@ pub fn start(app: AppHandle) {
 fn connected_client_is_us(server: &NamedPipeServer) -> bool {
     use std::os::windows::io::AsRawHandle;
     let Some(pid) = crate::platform::pipe_client_pid(server.as_raw_handle()) else { return false };
-    matches!(
-        (crate::platform::process_user_sid(pid), crate::platform::current_user_sid()),
-        (Some(theirs), Some(ours)) if theirs == ours
-    )
+    static OURS: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let ours = OURS.get_or_init(crate::platform::current_user_sid);
+    matches!((crate::platform::process_user_sid(pid), ours), (Some(theirs), Some(ours)) if &theirs == ours)
 }
 
 /// One accepted relay connection, whatever carries it.
@@ -515,7 +509,7 @@ async fn read_line(pipe: &mut impl Relay) -> Option<Vec<u8>> {
             Ok(0) => break,
             Ok(n) => {
                 buf.extend_from_slice(&chunk[..n]);
-                if buf.contains(&b'\n') {
+                if chunk[..n].contains(&b'\n') {
                     break;
                 }
                 if buf.len() > MAX_PAYLOAD {
@@ -633,11 +627,10 @@ mod tests {
 
     #[test]
     fn relay_connections_are_capped() {
-        let slots = connection_slots().clone();
-        let held: Vec<_> = (0..MAX_CONNECTIONS).filter_map(|_| slots.clone().try_acquire_owned().ok()).collect();
+        let held: Vec<_> = (0..MAX_CONNECTIONS).filter_map(|_| SLOTS.try_acquire().ok()).collect();
         assert_eq!(held.len(), MAX_CONNECTIONS);
-        assert!(slots.clone().try_acquire_owned().is_err());
+        assert!(SLOTS.try_acquire().is_err());
         drop(held);
-        assert!(slots.try_acquire_owned().is_ok());
+        assert!(SLOTS.try_acquire().is_ok());
     }
 }
