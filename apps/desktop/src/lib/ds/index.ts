@@ -38,6 +38,7 @@ export { default as TextField } from "./TextField.svelte";
 export { default as Tooltip } from "./Tooltip.svelte";
 
 export { compareValues, nextSort, sortRows, type SortDir, type TableColumn } from "./table.ts";
+export { currentTheme, resolveTheme, watchTheme, type ThemeName } from "./theme.ts";
 export { rovingIndex, type Orientation } from "./keyboard.ts";
 export {
   currentPlatform,

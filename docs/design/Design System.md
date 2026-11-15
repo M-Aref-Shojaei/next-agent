@@ -65,6 +65,7 @@ In CSS, use tokens only:
 
 - Light is the default; dark follows `prefers-color-scheme`.
 - `<html data-theme="light">` or `data-theme="dark"` forces a theme.
+- Code that cannot read CSS variables (Mermaid, canvas) asks `currentTheme()` from `lib/ds/theme.ts`: a forced `data-theme` wins over `prefers-color-scheme`. `watchTheme(cb)` fires when either changes. Mermaid diagrams re-render on a change.
 - `tokens.css` writes the dark values twice: once inside the media query and once for `[data-theme="dark"]`. The checker fails if the two blocks differ.
 
 ## Tokens
@@ -179,6 +180,7 @@ Pure helpers (tested in `apps/desktop/tests/ds.test.ts`):
 
 - `recordPress`, `pressedKey`, `formatKeys`, `shortcutParts` and `shortcutLabel` (`shortcut.ts`);
 - `rovingIndex` (`keyboard.ts`);
+- `resolveTheme` (`theme.ts`);
 - `sortRows`, `compareValues` and `nextSort` (`table.ts`).
 
 ## Do and don't

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { rovingIndex } from "../src/lib/ds/keyboard.ts";
 import { compareValues, nextSort, sortRows, type TableColumn } from "../src/lib/ds/table.ts";
+import { resolveTheme } from "../src/lib/ds/theme.ts";
 import { formatKeys, pressedKey, recordPress, shortcutLabel, shortcutParts, type KeyPress } from "../src/lib/ds/shortcut.ts";
 
 const press = (over: Partial<KeyPress>): KeyPress => ({
@@ -100,4 +101,11 @@ test("nextSort starts a new column ascending and flips the same one", () => {
   assert.deepEqual(nextSort("cost", "asc", "cost"), { key: "cost", dir: "desc" });
   assert.deepEqual(nextSort("cost", "desc", "cost"), { key: "cost", dir: "asc" });
   assert.deepEqual(nextSort("cost", "desc", "name"), { key: "name", dir: "asc" });
+});
+
+test("a forced data-theme wins over the OS setting", () => {
+  assert.equal(resolveTheme("dark", false), "dark");
+  assert.equal(resolveTheme("light", true), "light");
+  assert.equal(resolveTheme(undefined, true), "dark");
+  assert.equal(resolveTheme("", false), "light");
 });

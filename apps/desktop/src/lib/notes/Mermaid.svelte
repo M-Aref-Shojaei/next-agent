@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Banner } from "$lib/ds/index.ts";
+  import { Banner, currentTheme, watchTheme } from "$lib/ds/index.ts";
   // Mermaid (MIT) is loaded on first use. `securityLevel: "strict"` makes it sanitise the
   // diagram text and the SVG; the CSP (`default-src 'self'`) keeps anything remote out.
   let { code }: { code: string } = $props();
@@ -7,16 +7,19 @@
   let error = $state("");
   let seq = 0;
 
-  const dark = () => typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
+  // Follows a forced <html data-theme>, else the OS setting; a change re-renders the diagram.
+  let theme = $state(currentTheme());
+  $effect(() => watchTheme((next) => (theme = next)));
 
   $effect(() => {
     const source = code;
+    const mermaidTheme = theme === "dark" ? "dark" : "default";
     let live = true;
     const id = `mmd-${Date.now().toString(36)}-${++seq}`;
     void (async () => {
       try {
         const { default: mermaid } = await import("mermaid");
-        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark() ? "dark" : "default" });
+        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: mermaidTheme });
         const out = await mermaid.render(id, source);
         if (live) {
           svg = out.svg;
