@@ -16,7 +16,7 @@ export interface OBlock {
 export type Tree = readonly OBlock[];
 
 let counter = 0;
-export const newId = (): string => `b${++counter}`;
+const newId = (): string => `b${++counter}`;
 
 export function fromNodes(nodes: readonly BlockNode[]): OBlock[] {
   return nodes.map((n) => ({ id: newId(), content: n.content, children: fromNodes(n.children) }));

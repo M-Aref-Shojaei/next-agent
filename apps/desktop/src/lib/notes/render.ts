@@ -76,7 +76,7 @@ const FENCE = /^\s*(```|~~~)\s*([\w+-]*)/;
 const QUERY = /\{\{\s*query\s+(.*?)\s*\}\}/i;
 
 /** The first `{{query …}}` macro in a line: its text and the text around it. */
-export function queryIn(line: string): { text: string; before: string; after: string } | null {
+function queryIn(line: string): { text: string; before: string; after: string } | null {
   const m = QUERY.exec(line);
   const text = m?.[1]?.trim();
   return m && text ? { text, before: line.slice(0, m.index), after: line.slice(m.index + m[0].length) } : null;
