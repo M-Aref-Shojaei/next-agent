@@ -861,6 +861,148 @@ mod tests {
         assert_eq!(remaining, 0);
     }
 
+    #[test]
+    fn messages_outside_counts_each_side_of_the_window() {
+        let store = Store::open_in_memory().expect("open");
+        store
+            .session_start(&SessionRow {
+                id: "s1".into(),
+                source: "cli".into(),
+                started_at: 1,
+                ..SessionRow::default()
+            })
+            .expect("session");
+        for content in ["a", "b", "c", "d"] {
+            store
+                .message_append(&MessageRow {
+                    session_id: "s1".into(),
+                    role: "user".into(),
+                    content: Some(content.into()),
+                    ts: 1,
+                    ..MessageRow::default()
+                })
+                .expect("append");
+        }
+        // Ids are 1..=4: two below 3, one above 3.
+        assert_eq!(store.messages_outside("s1", 3, 3).expect("counts"), (2, 1));
+    }
+
+    #[test]
+    fn messages_outside_is_zero_for_a_session_without_messages() {
+        let store = Store::open_in_memory().expect("open");
+        assert_eq!(
+            store.messages_outside("missing", 10, 0).expect("counts"),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn session_first_returns_the_earliest_message_of_that_role() {
+        let store = Store::open_in_memory().expect("open");
+        store
+            .session_start(&SessionRow {
+                id: "s1".into(),
+                source: "cli".into(),
+                started_at: 1,
+                ..SessionRow::default()
+            })
+            .expect("session");
+        for (role, content) in [
+            ("user", "first"),
+            ("assistant", "reply"),
+            ("user", "second"),
+        ] {
+            store
+                .message_append(&MessageRow {
+                    session_id: "s1".into(),
+                    role: role.into(),
+                    content: Some(content.into()),
+                    ts: 1,
+                    ..MessageRow::default()
+                })
+                .expect("append");
+        }
+        let first = store
+            .session_first("s1", "user")
+            .expect("query")
+            .expect("a user message");
+        assert_eq!(first.content.as_deref(), Some("first"));
+        assert!(store.session_first("s1", "tool").expect("query").is_none());
+    }
+
+    #[test]
+    fn session_first_is_none_for_an_empty_session() {
+        let store = Store::open_in_memory().expect("open");
+        store
+            .session_start(&SessionRow {
+                id: "s1".into(),
+                source: "cli".into(),
+                started_at: 1,
+                ..SessionRow::default()
+            })
+            .expect("session");
+        assert!(store.session_first("s1", "user").expect("query").is_none());
+    }
+
+    #[test]
+    fn delete_combo_removes_the_row_and_reports_misses() {
+        let store = Store::open_in_memory().expect("open");
+        let combo = ComboRow {
+            id: "k1".into(),
+            name: "fast".into(),
+            kind: "llm".into(),
+            models: r#"["openai/gpt-4o-mini"]"#.into(),
+            strategy: None,
+            sticky_limit: None,
+            confidence_threshold: None,
+            weights: None,
+        };
+        store.upsert_combo(&combo).expect("combo");
+        assert!(store.delete_combo("k1").expect("delete"));
+        assert_eq!(store.list_combos().expect("list").len(), 0);
+        assert!(!store.delete_combo("k1").expect("delete again"));
+    }
+
+    #[test]
+    fn delete_combo_is_false_when_nothing_matches() {
+        let store = Store::open_in_memory().expect("open");
+        assert!(!store.delete_combo("missing").expect("delete"));
+    }
+
+    #[test]
+    fn cron_due_lists_scheduled_jobs_at_or_before_now() {
+        let store = Store::open_in_memory().expect("open");
+        let job = CronJobRow {
+            id: "j1".into(),
+            workspace_id: "ws".into(),
+            name: "n".into(),
+            prompt: "p".into(),
+            schedule: "every 1h".into(),
+            skills: "[]".into(),
+            mode: "auto".into(),
+            state: "scheduled".into(),
+            next_run_at: Some(100),
+            origin: "user".into(),
+            created_at: 1,
+            ..CronJobRow::default()
+        };
+        store.cron_put(&job).expect("put");
+        assert_eq!(store.cron_due(99).expect("early").len(), 0);
+        let due: Vec<String> = store
+            .cron_due(100)
+            .expect("due")
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        assert_eq!(due, vec!["j1".to_string()]);
+    }
+
+    #[test]
+    fn cron_due_is_empty_without_jobs() {
+        let store = Store::open_in_memory().expect("open");
+        assert_eq!(store.cron_due(i64::MAX).expect("due").len(), 0);
+    }
+
     fn rule(id: &str, scope: &str, workspace_id: Option<&str>) -> RuleRow {
         RuleRow {
             id: id.into(),
