@@ -290,7 +290,7 @@ test("an agent's permission request is declined, never shown as Claude Code's", 
   }
 });
 
-test("an Antigravity command Coucou puts on the card waits there on its own pill", () => {
+test("an Antigravity command Next Agent puts on the card waits there on its own pill", () => {
   State.focusId = CLAUDE;
   // The event itself comes first, as for any agent; then the card (pipe.rs).
   const payload = {

@@ -42,7 +42,7 @@ pub fn stdout(agent: &str, event: &str, decision: Option<&str>, question: Option
         if waits_on_pre_tool(agent, event) {
             let reply = match decision.map(str::trim) {
                 Some("allow" | "always") => r#"{"decision":"allow"}"#,
-                Some("deny") => r#"{"decision":"deny","reason":"Denied from Coucou"}"#,
+                Some("deny") => r#"{"decision":"deny","reason":"Denied from Next Agent"}"#,
                 _ => r#"{"decision":"ask"}"#,
             };
             return Some(reply.to_string());
@@ -104,7 +104,7 @@ pub fn decision_json(decision: &str, question: Option<&Value>) -> Option<String>
         // "always" still answers a plain allow; remembering it is the island's
         // business, not the agent's.
         "allow" | "always" => r#"{"behavior":"allow"}"#.to_string(),
-        "deny" => r#"{"behavior":"deny","message":"Denied from Coucou"}"#.to_string(),
+        "deny" => r#"{"behavior":"deny","message":"Denied from Next Agent"}"#.to_string(),
         _ => return None,
     };
     Some(format!(
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn each_agent_gets_its_own_reply_shape() {
         let allow = r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#;
-        let deny = r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Coucou"}}}"#;
+        let deny = r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Next Agent"}}}"#;
         for agent in ["", "codex", "claude-desktop", "opencode"] {
             assert_eq!(stdout(agent, "PermissionRequest", Some("allow"), None).unwrap(), allow);
             assert_eq!(stdout(agent, "PermissionRequest", Some("always"), None).unwrap(), allow);
@@ -231,7 +231,7 @@ mod tests {
         assert_eq!(stdout("antigravity", "PreToolUse", Some("allow"), None).unwrap(), r#"{"decision":"allow"}"#);
         assert_eq!(
             stdout("antigravity", "PreToolUse", Some("deny"), None).unwrap(),
-            r#"{"decision":"deny","reason":"Denied from Coucou"}"#
+            r#"{"decision":"deny","reason":"Denied from Next Agent"}"#
         );
         for not_a_click in ["ask", "pending", "", "maybe", r#"{"permissionDecision":"allow"}"#] {
             assert_eq!(stdout("antigravity", "PreToolUse", Some(not_a_click), None).unwrap(), r#"{"decision":"ask"}"#);

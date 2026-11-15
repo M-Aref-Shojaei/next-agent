@@ -184,7 +184,6 @@ pub fn app_bundle_path(pid: i32) -> Option<String> {
         .then_some(path)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

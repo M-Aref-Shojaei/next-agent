@@ -8,7 +8,7 @@
 
   onMount(() => {
     document.documentElement.lang = "en";
-    document.title = "Coucou";
+    document.title = "Next Agent";
     document.body.className = "settings-window hub-window";
     document.body.style.background = "#000";
     document.body.style.color = "#f5f6f8";

@@ -314,7 +314,7 @@ async fn wait_for_decision(
             let word = line.trim();
             if read.is_ok() && matches!(word, "allow" | "deny") {
                 if let Err(error) = service.approval_respond(&task_id, &approval_id, word) {
-                    eprintln!("[coucou] approval {approval_id}: {error}");
+                    eprintln!("[next-agent] overlay approval {approval_id}: {error}");
                 }
             }
         }

@@ -68,11 +68,11 @@
   </section>
 
   <section aria-labelledby="h-overlay">
-    <h2 id="h-overlay">Overlay / Coucou</h2>
+    <h2 id="h-overlay">Overlay</h2>
     <p class="muted">
-      The island at the top of the screen (around the notch on a MacBook) is Coucou, built in (MIT; ADR-0011).
+      The island at the top of the screen (around the notch on a MacBook) is built in (vendored MIT code, credited in NOTICE.md; ADR-0011).
       It shows Next Agent's tasks and their approvals, which you can answer there; Next Agent's permission
-      engine still decides. Its settings live in its own window, as in Coucou.
+      engine still decides. Its settings live in its own window.
     </p>
     <div class="row">
       <button type="button" onclick={() => openOverlay("general")}>Open overlay settings…</button>
@@ -80,7 +80,7 @@
       <button type="button" onclick={() => openOverlay("dictation")}>Dictation and Notetaker…</button>
     </div>
     <p class="muted">
-      Claude Code sessions reach the island only once you install Coucou's hooks under <em>Agents → Claude Code</em>: it
+      Claude Code sessions reach the island only once you install the overlay's hooks under <em>Agents → Claude Code</em>: it
       shows the exact change to <code>~/.claude/settings.json</code>, saves a dated backup, and writes nothing until you
       confirm. Off until then.
     </p>

@@ -1,11 +1,11 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/hook/src/main.rs @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
-//! coucou-hook — the relay Claude Code (and every other agent) runs on each hook
+//! next-agent-hook — the relay Claude Code (and every other agent) runs on each hook
 //! event.
 //!
 //! Reads the hook JSON on stdin, maps the agent's event and field names onto
 //! Claude Code's (normalize.rs), adds a little terminal context, and hands it to
-//! Coucou over the named pipe `\\.\pipe\coucou-<sid>` (Windows) or the Unix
-//! socket `$XDG_RUNTIME_DIR/coucou.sock` (Linux).
+//! Coucou over the named pipe `\\.\pipe\next-agent-<sid>` (Windows) or the Unix
+//! socket `$XDG_RUNTIME_DIR/next-agent.sock` (Linux).
 //!
 //! Hard rule (docs/CLAUDE.md): **never block the agent.**
 //! * If the pipe does not exist — Coucou is closed — we exit 0 immediately, with
@@ -23,9 +23,9 @@
 //!   (Approve commands from the notch) and then the click. 3 s for the first
 //!   line, 115 s for the click; anything else prints "ask" (reply.rs).
 //!
-//! Usage: `coucou-hook [--agent <name>] [<EventName>]` (the event name is also
+//! Usage: `next-agent-hook [--agent <name>] [<EventName>]` (the event name is also
 //! read from the JSON; `--agent` is absent for Claude Code), or
-//! `coucou-hook --statusline` as Claude Code's status line command (plan usage,
+//! `next-agent-hook --statusline` as Claude Code's status line command (plan usage,
 //! see statusline.rs): it passes the plan limits on and runs the status line the
 //! user had before, so that keeps working.
 

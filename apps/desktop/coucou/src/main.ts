@@ -89,7 +89,7 @@ async function main() {
         setPaused(false);
         island.alert("wardrobe");
         break;
-      // "Update Coucou to X…", only in the menu while a new version is out.
+      // "Update Next Agent to X…", only in the menu while a new version is out.
       case "update":
         setPaused(false);
         Updates.show();

@@ -133,7 +133,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         let manager = app.autolaunch();
         let result = if settings.autostart { manager.enable() } else { manager.disable() };
         if let Err(err) = result {
-            eprintln!("[coucou] autostart: {err}");
+            eprintln!("[next-agent] autostart: {err}");
         }
     }
     if screen_changed {
@@ -167,7 +167,7 @@ fn set_system_languages(app: AppHandle, languages: Vec<String>) {
 fn language_changed(app: &AppHandle) {
     tray::retitle(app);
     if let Some(window) = app.get_webview_window(HUB_LABEL) {
-        let _ = window.set_title("Coucou");
+        let _ = window.set_title("Next Agent");
     }
 }
 
@@ -767,7 +767,7 @@ fn create_settings_window(app: &AppHandle) {
     let url = settings_page_url(app);
     match WebviewWindowBuilder::new(app, HUB_LABEL, url)
         .additional_browser_args(BROWSER_ARGS)
-        .title("Coucou")
+        .title("Next Agent")
         .inner_size(1100.0, 720.0)
         .min_inner_size(820.0, 560.0)
         .resizable(true)
@@ -794,7 +794,7 @@ fn create_settings_window(app: &AppHandle) {
             });
             webview_memory::set_low(&win, true); // created hidden
         }
-        Err(err) => log::line(format!("Coucou window failed: {err}")),
+        Err(err) => log::line(format!("Next Agent window failed: {err}")),
     }
 }
 
@@ -832,7 +832,7 @@ pub fn show_hub(app: &AppHandle, page: Option<&str>) {
         // Creating it at startup can fail on some machines (WebView2
         // 0x80070578, #775): try again now, on the main thread, where
         // window creation can't deadlock a command.
-        log::line("Coucou window missing, creating it again");
+        log::line("Next Agent window missing, creating it again");
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
             create_settings_window(&handle);
@@ -889,6 +889,8 @@ pub struct Boot {
 /// Coucou's plugins and state on Next Agent's builder.
 pub fn builder(builder: tauri::Builder<tauri::Wry>) -> (tauri::Builder<tauri::Wry>, Boot) {
     platform::prepare_environment();
+    // Next Agent: renamed from Coucou (owner request): the old folder moves first.
+    platform::migrate_legacy_dir();
     let loaded = settings::load();
     i18n::set_picked(&loaded.language);
     let gate = Arc::new(PollGate::new());
@@ -1114,6 +1116,7 @@ coucou_commands![
             voice::voice_say_native,
             update::update_status,
             update::update_set_consent,
+            update::update_set_source, // Next Agent: the update source is the owner's repository (owner request)
             update::update_check,
             update::update_shown,
             update::update_show,
@@ -1129,7 +1132,7 @@ coucou_commands![
 /// (tauri.linux.conf.json on Linux), under Next Agent's label and route.
 fn create_island_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     let builder = WebviewWindowBuilder::new(app, island::WINDOW_LABEL, WebviewUrl::App("coucou/island".into()))
-        .title("Coucou")
+        .title("Next Agent")
         .inner_size(240.0, 6.0)
         .resizable(false)
         .decorations(false)
@@ -1196,7 +1199,7 @@ pub fn setup(app: &mut tauri::App, boot: Boot) -> Result<(), Box<dyn std::error:
     gate.set_active(true);
     island::spawn_cursor_poll(handle.clone(), gate.clone());
 
-    log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
+    log::line(format!("--- Next Agent {} started ---", env!("CARGO_PKG_VERSION")));
     hooks::ensure_hook_exe(&handle);
     pipe::start(handle.clone());
     phone_link::start_if_enabled(&handle);

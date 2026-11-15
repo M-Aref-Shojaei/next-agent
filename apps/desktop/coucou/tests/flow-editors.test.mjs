@@ -33,7 +33,7 @@ const error = page => page.querySelector(".hub-warn");
 async function fixture(t, render, initial = {}) {
   calls.length = 0;
   const data = {
-    words: { words: ["Coucou"], replacements: [] },
+    words: { words: ["Next Agent"], replacements: [] },
     snippets: [{ id: "one", trigger: "signature", text: "Original signature" }],
     styles: [{ id: "mail", name: "Mail", style: "polished" }],
     ...initial,
@@ -73,7 +73,7 @@ test("dictionary writes wait for disk, prevent duplicate submits and retain inpu
   await flush();
   assert.equal(sent("flow_set_words").length, 1);
   assert.equal(input.value, "Parakeet");
-  assert.deepEqual(f.data.words.words, ["Coucou"]);
+  assert.deepEqual(f.data.words.words, ["Next Agent"]);
   reject(new Error("Dictionary destination is read-only"));
   await flush();
   assert.equal(add.disabled, false);
@@ -84,7 +84,7 @@ test("dictionary writes wait for disk, prevent duplicate submits and retain inpu
   f.write(async () => {});
   add.fire("click");
   await flush();
-  assert.deepEqual(f.data.words.words, ["Coucou", "Parakeet"]);
+  assert.deepEqual(f.data.words.words, ["Next Agent", "Parakeet"]);
   assert.equal(input.value, "");
   assert.equal(error(f.page).hidden, true);
 });
@@ -94,7 +94,7 @@ test("dictionary deletion and replacement failures keep the saved values and unf
   f.write(async () => { throw new Error("Disk full"); });
   button(f.page, "Delete").fire("click");
   await flush();
-  assert.match(f.page.querySelector(".hub-chips").textContent, /Coucou/);
+  assert.match(f.page.querySelector(".hub-chips").textContent, /Next Agent/);
   const [, from, to] = f.page.find("input");
   from.value = "cloud code";
   to.value = "Claude Code";

@@ -1924,10 +1924,10 @@ fn only_the_right_window_may_call_a_command_that_changes_something() {
     // Next Agent: Coucou's windows carry a `coucou-` prefix in Next Agent's app.
     assert!(caller_allowed("coucou-settings", Caller::Settings));
     assert!(caller_allowed("coucou-island", Caller::Island));
-    for other in ["coucou-island", "coucou-mochi", "settings", "", "Coucou-settings", "coucou-settings ", "main", "coucou-settings2"] {
+    for other in ["coucou-island", "coucou-mochi", "settings", "", "Next Agent-settings", "coucou-settings ", "main", "coucou-settings2"] {
         assert!(!caller_allowed(other, Caller::Settings), "{other:?} must not act as the settings window");
     }
-    for other in ["coucou-settings", "coucou-mochi", "island", "", "Coucou-island", "coucou-island ", "main"] {
+    for other in ["coucou-settings", "coucou-mochi", "island", "", "Next Agent-island", "coucou-island ", "main"] {
         assert!(!caller_allowed(other, Caller::Island), "{other:?} must not act as the island");
     }
 }

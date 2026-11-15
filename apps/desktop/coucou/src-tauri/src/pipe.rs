@@ -1,8 +1,8 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/src-tauri/src/pipe.rs @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
-// Relay server for coucou-hook.
+// Relay server for next-agent-hook.
 //
-// Windows: the named pipe `\\.\pipe\coucou-<sid>`, one instance per connection.
-// Linux: the Unix socket `$XDG_RUNTIME_DIR/coucou.sock`. Every hook event is
+// Windows: the named pipe `\\.\pipe\next-agent-<sid>`, one instance per connection.
+// Linux: the Unix socket `$XDG_RUNTIME_DIR/next-agent.sock`. Every hook event is
 // forwarded to the island as a `hook` event. `PermissionRequest` keeps its
 // connection open: it waits for the island's decision and writes it back on the
 // same connection, which is how approving from the island works. Antigravity's
@@ -11,7 +11,7 @@
 // (agy_pre_tool below, agy_approvals.rs).
 //
 // Claude Code is never blocked by us. Three things guarantee it:
-//   * coucou-hook gives the connection 300 ms and exits cleanly if we are closed;
+//   * next-agent-hook gives the connection 300 ms and exits cleanly if we are closed;
 //   * we only wait for a human once the island has *confirmed* the card is on
 //     screen, so a paused island or a webview that is not listening costs a few
 //     hundred milliseconds, not two minutes;
@@ -21,7 +21,7 @@
 // What we write back is the bare word `allow` or `deny` — or, when the request
 // was Claude Code asking a question, `{"answers":{…}}` with what was picked on
 // the island. Turning either into the documented hookSpecificOutput JSON is
-// coucou-hook's job, so the wire format Claude Code expects lives in exactly
+// next-agent-hook's job, so the wire format Claude Code expects lives in exactly
 // one place.
 
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ use crate::island::WINDOW_LABEL;
 use crate::log;
 use crate::session_window;
 
-/// Slightly under coucou-hook's own 110 s wait, so we always answer first.
+/// Slightly under next-agent-hook's own 110 s wait, so we always answer first.
 const DECISION_TIMEOUT: Duration = Duration::from_secs(108);
 /// How long the island gets to say "the card is up". This is the whole of B4:
 /// without it, an island that is paused, hidden behind a crashed webview or
@@ -66,12 +66,12 @@ pub struct Pending(pub Mutex<HashMap<String, mpsc::Sender<Reply>>>);
 
 static COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// `\\.\pipe\coucou-<sid>` — must match coucou-hook's `pipe_path()` exactly.
+/// `\\.\pipe\next-agent-<sid>` — must match next-agent-hook's `pipe_path()` exactly.
 #[cfg(windows)]
 pub fn pipe_name() -> String {
     let key = crate::platform::current_user_sid()
         .unwrap_or_else(|| std::env::var("USERNAME").unwrap_or_else(|_| "user".into()));
-    format!(r"\\.\pipe\coucou-{key}")
+    format!(r"\\.\pipe\next-agent-{key}")
 }
 
 #[cfg(windows)]
@@ -126,7 +126,7 @@ pub fn start(app: AppHandle) {
         // first_pipe_instance on Windows, we refuse to serve on top of it.
         if path.exists() {
             if std::os::unix::net::UnixStream::connect(&path).is_ok() {
-                log::line("another Coucou already serves the relay socket");
+                log::line("another Next Agent already serves the relay socket");
                 return;
             }
             let _ = std::fs::remove_file(&path);
@@ -270,7 +270,7 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
     };
     app.state::<Pending>().0.lock().unwrap().remove(&id);
 
-    // No decision: say nothing at all. coucou-hook then writes nothing to stdout
+    // No decision: say nothing at all. next-agent-hook then writes nothing to stdout
     // and Claude Code asks in the terminal, exactly as if Coucou were closed.
     // The island is told, so a card that came up late (or is still up after the
     // long wait) goes instead of holding the view with nobody to answer (#857).
@@ -479,7 +479,7 @@ pub fn decline(app: &AppHandle, request_id: &str) {
 }
 
 /// Called by the island's Allow / Deny buttons. Only ever a bare word: turning
-/// it into Claude Code's JSON is coucou-hook's job.
+/// it into Claude Code's JSON is next-agent-hook's job.
 pub fn answer(app: &AppHandle, request_id: &str, decision: &str) {
     let word = match decision {
         "allow" | "always" => "allow",
@@ -492,7 +492,7 @@ pub fn answer(app: &AppHandle, request_id: &str, decision: &str) {
 // ── Next Agent: its own tasks on the same input path ─────────────────────────
 
 /// Next Agent's own task events come in here, on the same path as a
-/// coucou-hook connection: an in-memory stream that `handle` reads exactly
+/// next-agent-hook connection: an in-memory stream that `handle` reads exactly
 /// like a relay's. Next Agent writes one hook-shaped line on the stream it
 /// gets back and, for a `PermissionRequest`, reads the decision line (`allow`
 /// or `deny`) from it. Dropping it is the relay going away: a card still up

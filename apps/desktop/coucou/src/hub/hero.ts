@@ -302,7 +302,7 @@ class Walker {
   }
 }
 
-/** The page's Mochis on the band's floor, in the right part of `canvas`. */
+/** The page's Next Agents on the band's floor, in the right part of `canvas`. */
 export function troupe(canvas: HTMLCanvasElement, cast: MochiSpec[], width: number) {
   const walkers = cast.map((spec) => new Walker(spec));
   let pointer: { x: number; y: number } | null = null;

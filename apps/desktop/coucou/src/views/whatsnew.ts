@@ -1,7 +1,7 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/src/views/whatsnew.ts @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
 // What's new after an update (whats-new/controller.ts decides when): first
 // what this version brings — an icon, a title and a line per item — then
-// "Your Coucou so far", the numbers this computer kept, and Buy Mochi a
+// "Your Next Agent so far", the numbers this computer kept, and Buy Mochi a
 // coffee. Same left inset as the other cards, Mochi on the left.
 
 import { h, clear, svg } from "./dom";
@@ -64,7 +64,7 @@ export function buildWhatsNew(): ViewHost {
     }
     const page = releasePage(Updates.status.platform, release.version);
     stack.append(
-      h("div", { class: "title one-line", text: t("You're on Coucou {version}", { version: release.version }) }),
+      h("div", { class: "title one-line", text: t("You're on Next Agent {version}", { version: release.version }) }),
       grid,
       h("div", { class: "actions" },
         btn(t("Next"), "primary", () => WhatsNew.next()),
@@ -84,12 +84,12 @@ export function buildWhatsNew(): ViewHost {
         ),
       ));
     }
-    stack.append(h("div", { class: "title one-line", text: t("Your Coucou so far") }));
+    stack.append(h("div", { class: "title one-line", text: t("Your Next Agent so far") }));
     if (WhatsNew.stats.length > 0) stack.append(chips);
     stack.append(
-      h("div", { class: "sub whatsnew-thanks", text: t("Coucou is free and open source. If it saves you time, you can buy Mochi a coffee.") }),
+      h("div", { class: "sub whatsnew-thanks", text: t("Next Agent is free and open source. If it saves you time, you can buy Next Agent a coffee.") }),
       h("div", { class: "actions" },
-        btn(`☕ ${t("Buy Mochi a coffee")}`, "primary", () => WhatsNew.openCoffee(COFFEE_URL)),
+        btn(`☕ ${t("Buy Next Agent a coffee")}`, "primary", () => WhatsNew.openCoffee(COFFEE_URL)),
         btn(t("OK"), "secondary", () => WhatsNew.done()),
       ),
     );

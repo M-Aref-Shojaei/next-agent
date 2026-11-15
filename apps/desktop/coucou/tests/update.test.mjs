@@ -107,7 +107,7 @@ test("nothing opens over a waiting permission, and nothing is marked shown", () 
   assert.deepEqual(sent("update_shown"), []);
 });
 
-test("an announcement opens the card with Mochi surprised; Later snoozes it", () => {
+test("an announcement opens the card with Next Agent surprised; Later snoozes it", () => {
   emit("update-status", OUT);
   assert.equal(Updates.status.latest.version, "0.6.0");
   emit("update-offer", "announce");
@@ -129,7 +129,7 @@ test("an announcement with no version known yet, or while the chat is open, wait
   assert.deepEqual(shown, []);
 });
 
-test("the tray's Update Coucou to X… opens the card without marking anything", () => {
+test("the tray's Update Next Agent to X… opens the card without marking anything", () => {
   emit("update-status", OUT);
   State.mode = "expanded";
   State.view = "prompt";

@@ -4,12 +4,12 @@
 //
 // Launch: the user's terminal opens in the project with `claude` and the
 // prompt. The prompt is never spliced into a command line:
-// - Linux: it travels in COUCOU_PROMPT, set on the terminal's process, and the
-//   user's login shell runs `claude "$COUCOU_PROMPT"` (as the Mac's script).
+// - Linux: it travels in NEXT_AGENT_PROMPT, set on the terminal's process, and the
+//   user's login shell runs `claude "$NEXT_AGENT_PROMPT"` (as the Mac's script).
 // - Windows: Windows Terminal starts its tabs with a fresh environment, not
 //   wt.exe's (microsoft/terminal#11094), so an environment variable set on
 //   wt.exe never reaches the tab. The prompt goes into a file of ours in the
-//   temp folder instead; PowerShell reads it into $env:COUCOU_PROMPT, deletes
+//   temp folder instead; PowerShell reads it into $env:NEXT_AGENT_PROMPT, deletes
 //   it, and runs claude with that variable. Only the file's path, which we
 //   made, is in the command line.
 // The session then shows in the island like any other, through the hooks.
@@ -61,11 +61,11 @@ pub fn sh_quote(s: &str) -> String {
 }
 
 /// What the terminal runs: the user's login shell (so `claude` is found as in
-/// any terminal), Claude Code with the prompt from COUCOU_PROMPT, then the
+/// any terminal), Claude Code with the prompt from NEXT_AGENT_PROMPT, then the
 /// shell again in the project once Claude Code quits.
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
 pub fn shell_command(shell: &str, has_prompt: bool) -> Vec<String> {
-    let run = if has_prompt { r#"claude "$COUCOU_PROMPT""# } else { "claude" };
+    let run = if has_prompt { r#"claude "$NEXT_AGENT_PROMPT""# } else { "claude" };
     vec![shell.to_string(), "-lic".to_string(), format!("{run}; exec {} -l", sh_quote(shell))]
 }
 
@@ -95,7 +95,7 @@ pub fn linux_candidates(env_terminal: Option<&str>) -> Vec<String> {
 /// The arguments that make `terminal` open a window in `dir` running `command`.
 /// Unknown terminals get the common `-e` (as x-terminal-emulator must take).
 /// konsole and wezterm are asked for a process of their own, so the window
-/// gets this environment (COUCOU_PROMPT) and not the one of a running copy.
+/// gets this environment (NEXT_AGENT_PROMPT) and not the one of a running copy.
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
 pub fn linux_terminal_args(terminal: &str, dir: &str, command: &[String]) -> Vec<String> {
     let name = Path::new(terminal).file_name().and_then(|n| n.to_str()).unwrap_or(terminal);
@@ -118,7 +118,7 @@ pub fn linux_terminal_args(terminal: &str, dir: &str, command: &[String]) -> Vec
 pub fn linux_spawn(terminal: &str, shell: &str, folder: &str, prompt: &str) -> Spawn {
     let prompt = clean_prompt(prompt);
     let command = shell_command(shell, !prompt.is_empty());
-    let env = if prompt.is_empty() { Vec::new() } else { vec![("COUCOU_PROMPT".to_string(), prompt)] };
+    let env = if prompt.is_empty() { Vec::new() } else { vec![("NEXT_AGENT_PROMPT".to_string(), prompt)] };
     Spawn { program: terminal.to_string(), args: linux_terminal_args(terminal, folder, &command), env, dir: folder.to_string() }
 }
 
@@ -139,7 +139,7 @@ pub fn windows_prompt(prompt: &str) -> String {
     clean_prompt(prompt).replace('"', "'")
 }
 
-/// What PowerShell runs. With a prompt: read the file into COUCOU_PROMPT,
+/// What PowerShell runs. With a prompt: read the file into NEXT_AGENT_PROMPT,
 /// delete it, start Claude Code with it. `Get-Command -CommandType
 /// Application` takes claude.exe or claude.cmd, never npm's claude.ps1, which
 /// the default execution policy refuses to run. No double quote and nothing
@@ -152,8 +152,8 @@ pub fn powershell_script(prompt_file: Option<&str>) -> String {
         Some(file) => {
             let f = ps_quote(file);
             format!(
-                "$env:COUCOU_PROMPT = Get-Content -LiteralPath {f} -Raw -Encoding UTF8; \
-                 Remove-Item -LiteralPath {f}; {claude} $env:COUCOU_PROMPT"
+                "$env:NEXT_AGENT_PROMPT = Get-Content -LiteralPath {f} -Raw -Encoding UTF8; \
+                 Remove-Item -LiteralPath {f}; {claude} $env:NEXT_AGENT_PROMPT"
             )
         }
     }
@@ -313,9 +313,9 @@ fn mac_quote(s: &str) -> String {
 #[cfg(target_os = "macos")]
 fn mac_script(prompt: &str, folder: &str) -> String {
     let trimmed = prompt.trim();
-    let run = if trimmed.is_empty() { "claude" } else { "claude \"$COUCOU_PROMPT\"" };
+    let run = if trimmed.is_empty() { "claude" } else { "claude \"$NEXT_AGENT_PROMPT\"" };
     format!(
-        "#!/bin/sh\nrm -f \"$0\"\ncd {} || exit 1\nexport COUCOU_PROMPT={}\nexec \"${{SHELL:-/bin/zsh}}\" -lic {}\n",
+        "#!/bin/sh\nrm -f \"$0\"\ncd {} || exit 1\nexport NEXT_AGENT_PROMPT={}\nexec \"${{SHELL:-/bin/zsh}}\" -lic {}\n",
         mac_quote(folder),
         mac_quote(trimmed),
         mac_quote(&format!("{run}; exec $SHELL -l"))
@@ -448,7 +448,7 @@ mod tests {
     fn the_shell_runs_claude_with_the_variable_never_the_prompt() {
         assert_eq!(
             shell_command("/bin/zsh", true),
-            s(&["/bin/zsh", "-lic", r#"claude "$COUCOU_PROMPT"; exec /bin/zsh -l"#])
+            s(&["/bin/zsh", "-lic", r#"claude "$NEXT_AGENT_PROMPT"; exec /bin/zsh -l"#])
         );
         assert_eq!(shell_command("/usr/bin/fish", false), s(&["/usr/bin/fish", "-lic", "claude; exec /usr/bin/fish -l"]));
     }
@@ -490,9 +490,9 @@ mod tests {
         let spawn = linux_spawn("/usr/bin/kitty", "/bin/zsh", "/home/me/p", nasty);
         assert_eq!(spawn.program, "/usr/bin/kitty");
         assert_eq!(spawn.dir, "/home/me/p");
-        assert_eq!(spawn.env, vec![("COUCOU_PROMPT".to_string(), nasty.to_string())]);
+        assert_eq!(spawn.env, vec![("NEXT_AGENT_PROMPT".to_string(), nasty.to_string())]);
         assert!(spawn.args.iter().all(|a| !a.contains("login") && !a.contains("rm -rf")), "{:?}", spawn.args);
-        assert_eq!(spawn.args.last().unwrap(), r#"claude "$COUCOU_PROMPT"; exec /bin/zsh -l"#);
+        assert_eq!(spawn.args.last().unwrap(), r#"claude "$NEXT_AGENT_PROMPT"; exec /bin/zsh -l"#);
 
         let empty = linux_spawn("kitty", "/bin/zsh", "/home/me/p", "  \n ");
         assert!(empty.env.is_empty());
@@ -512,9 +512,9 @@ mod tests {
         let script = powershell_script(Some(r"C:\Temp\coucou-prompt-ab.txt"));
         assert_eq!(
             script,
-            "$env:COUCOU_PROMPT = Get-Content -LiteralPath 'C:\\Temp\\coucou-prompt-ab.txt' -Raw -Encoding UTF8; \
+            "$env:NEXT_AGENT_PROMPT = Get-Content -LiteralPath 'C:\\Temp\\coucou-prompt-ab.txt' -Raw -Encoding UTF8; \
              Remove-Item -LiteralPath 'C:\\Temp\\coucou-prompt-ab.txt'; \
-             & (Get-Command claude -CommandType Application -TotalCount 1) $env:COUCOU_PROMPT"
+             & (Get-Command claude -CommandType Application -TotalCount 1) $env:NEXT_AGENT_PROMPT"
         );
         // wt.exe re-joins its arguments in quotes: none may be inside.
         assert!(!script.contains('"'));

@@ -25,7 +25,7 @@ const MAC = JSON.parse(readFileSync(join(WINDOWS, "src/i18n/strings.json"), "utf
 const EXTRA = JSON.parse(readFileSync(join(WINDOWS, "src/i18n/extra.json"), "utf8"));
 // Next Agent: these tests read Coucou's Mac app (NotchBuddy/), which Next Agent
 // does not vendor (only the Tauri app, ADR-0011); they are skipped without it.
-const WITHOUT_MAC = !existsSync(join(WINDOWS, "../NotchBuddy")) && "needs Coucou's Mac app (NotchBuddy/), not vendored";
+const WITHOUT_MAC = !existsSync(join(WINDOWS, "../NotchBuddy")) && "needs Next Agent's Mac app (NotchBuddy/), not vendored";
 const OTHERS = LANGUAGE_CODES.filter((l) => l !== "en");
 
 /** Runs `fn` in `lang`, then puts English back for the other tests. */
@@ -53,7 +53,7 @@ test("English is the key itself, other languages come from either table", () => 
 test("a string nobody translated falls back to its English text", () => {
   inLanguage("ru", () => {
     assert.equal(t("Some brand new sentence."), "Some brand new sentence.");
-    assert.equal(t("Hello {name}", { name: "Mochi" }), "Hello Mochi");
+    assert.equal(t("Hello {name}", { name: "Next Agent" }), "Hello Next Agent");
   });
 });
 
@@ -105,7 +105,7 @@ test("labels() tables and dates read in the current language", () => {
 
 // ── Choosing the language ─────────────────────────────────────────────────────
 
-test("System follows the system's language when Coucou has it, else English", () => {
+test("System follows the system's language when Next Agent has it, else English", () => {
   assert.equal(resolveLanguage("", ["fr-FR", "en-US"]), "fr");
   assert.equal(resolveLanguage("", ["it-IT", "es-MX"]), "es");
   assert.equal(resolveLanguage("", ["pt-PT"]), "pt-BR");
@@ -212,7 +212,7 @@ test("Turkish translates both tables, interpolates and falls back to English", (
     assert.equal(t("Open the chat"), "Sohbeti aç");
     assert.equal(t("Uploading {name}", { name: "öğrenci.pdf" }), "öğrenci.pdf yükleniyor");
     assert.equal(t("Some brand new sentence."), "Some brand new sentence.");
-    assert.equal(t("Hello {name}", { name: "Mochi" }), "Hello Mochi");
+    assert.equal(t("Hello {name}", { name: "Next Agent" }), "Hello Next Agent");
     assert.equal(dayMonth(9, 9), "9 Eki");
     assert.equal(isRtl(), false);
   });

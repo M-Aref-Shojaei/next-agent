@@ -1,6 +1,6 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/src/mochi/outfits.ts (drawWardrobeIcon, roundRect) @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
 //
-// Next Agent: Coucou's outfits.ts draws Mochi's costumes (the hats, ears and
+// Next Agent: Coucou's outfits.ts draws Next Agent's costumes (the hats, ears and
 // the pumpkin), which are part of the Mochi character, outside Coucou's MIT
 // licence (its LICENSE-ASSETS.md); they are not copied. What the rest of the
 // code calls from here stays: the wardrobe button's picture, now the orb

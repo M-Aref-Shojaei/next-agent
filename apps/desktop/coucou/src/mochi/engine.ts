@@ -791,7 +791,7 @@ export class BotEngine {
    *
    * Next Agent: the character is the gradient orb (orb.ts), in the place,
    * size and motion Coucou gives Mochi — the same centre, offsets, tilt,
-   * squash and roll — and in the state's colour. Mochi's body, face, hands,
+   * squash and roll — and in the state's colour. Next Agent's body, face, hands,
    * blush and outfits are not drawn (they are not covered by Coucou's MIT
    * licence); the badge and the particles are upstream's.
    */

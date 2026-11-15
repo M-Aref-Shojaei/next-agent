@@ -247,7 +247,8 @@ fn class_of(conn: &RustConnection, window: u32) -> Option<(String, String)> {
     let reply = conn.get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256).ok()?.reply().ok()?;
     let parts: Vec<&[u8]> = reply.value.split(|&b| b == 0).filter(|p| !p.is_empty()).collect();
     let class = String::from_utf8_lossy(parts.last()?).to_string();
-    if class.is_empty() || class.eq_ignore_ascii_case("coucou") {
+    // Next Agent: renamed from Coucou (owner request): our own window class is Next Agent's now.
+    if class.is_empty() || class.eq_ignore_ascii_case("coucou") || class.eq_ignore_ascii_case("next-agent-desktop") {
         return None;
     }
     Some((class.to_lowercase(), super::display_name(&class)))

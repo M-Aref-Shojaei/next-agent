@@ -71,7 +71,7 @@ pub fn sync(app: &AppHandle) {
             std::thread::Builder::new().name("coucou-voice".into()).spawn(move || run(app2, stop2)).ok();
             *running = Some(Running { stop });
             speech::preload();
-            crate::log::line("voice: « OK Coucou » listening");
+            crate::log::line("voice: « OK Next Agent » listening");
         }
         (false, true) => {
             if let Some(r) = running.take() {
@@ -81,7 +81,7 @@ pub fn sync(app: &AppHandle) {
             if !dictation && !crate::notes::is_recording(app) {
                 speech::unload();
             }
-            crate::log::line("voice: « OK Coucou » off");
+            crate::log::line("voice: « OK Next Agent » off");
         }
         _ => {}
     }
@@ -178,7 +178,7 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             let question = match &mut mode {
                 Mode::Wake => match wake::after_wake(&heard) {
                     Some(rest) => {
-                        crate::log::line("voice: « OK Coucou » heard");
+                        crate::log::line("voice: « OK Next Agent » heard");
                         hide_at = None;
                         if crate::flow::text::word_count(&rest) >= 2 {
                             Some(rest)
@@ -209,7 +209,7 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
                 show(&app, Some(VoiceView {
                     phase: "speaking".into(),
                     heard: question,
-                    answer: if done { "✓".into() } else { crate::i18n::t("Coucou couldn't answer: check your Claude key in Notch → Chat.") },
+                    answer: if done { "✓".into() } else { crate::i18n::t("Next Agent couldn't answer: check your Claude key in Notch → Chat.") },
                 }));
                 hide_at = Some(Instant::now() + Duration::from_secs(5));
                 continue;
@@ -570,13 +570,13 @@ mod tests {
     }
 }
 
-/// With the models downloaded: `COUCOU_TEST_WAKE_WAV=… cargo test -- --ignored wake_in`.
+/// With the models downloaded: `NEXT_AGENT_TEST_WAKE_WAV=… cargo test -- --ignored wake_in`.
 #[cfg(test)]
 mod with_models {
     #[test]
     #[ignore]
     fn hears_the_wake_phrase_in_a_recording() {
-        let path = std::env::var("COUCOU_TEST_WAKE_WAV").expect("COUCOU_TEST_WAKE_WAV");
+        let path = std::env::var("NEXT_AGENT_TEST_WAKE_WAV").expect("NEXT_AGENT_TEST_WAKE_WAV");
         let bytes = std::fs::read(&path).unwrap();
         let rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
         let pcm: Vec<f32> = bytes[44..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();

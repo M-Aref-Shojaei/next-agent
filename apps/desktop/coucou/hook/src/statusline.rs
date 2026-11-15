@@ -1,5 +1,5 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/hook/src/statusline.rs @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
-//! `coucou-hook --statusline`: Claude Code's status line command, for the plan
+//! `next-agent-hook --statusline`: Claude Code's status line command, for the plan
 //! usage pill.
 //!
 //! Claude Code hands its status line command the session's JSON on stdin, and

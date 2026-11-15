@@ -80,7 +80,7 @@ pub fn pre_tool_timeout(home: &Path) -> Option<u64> {
         .iter()
         .filter_map(|g| g.get("hooks").and_then(Value::as_array))
         .flatten()
-        .find(|h| h.get("command").and_then(Value::as_str).is_some_and(|c| c.contains("coucou-hook")))
+        .find(|h| h.get("command").and_then(Value::as_str).is_some_and(|c| c.contains("next-agent-hook")))
         // Antigravity's default when no timeout is written is 30 s.
         .map(|h| h.get("timeout").and_then(Value::as_f64).map_or(30, |t| t.max(0.0) as u64))
 }
@@ -116,7 +116,7 @@ pub fn agy_approvals_set_enabled(
     enabled: bool,
 ) -> Result<AgyApprovalsStatus, String> {
     if window.label() != crate::HUB_LABEL {
-        return Err("only the Coucou window may change this".into());
+        return Err("only the Next Agent window may change this".into());
     }
     let updated = {
         let mut current = shared.settings.lock().unwrap();
@@ -158,7 +158,7 @@ mod tests {
 
     fn hooks(timeout: Option<u64>) -> String {
         let t = timeout.map(|t| format!(r#","timeout":{t}"#)).unwrap_or_default();
-        format!(r#"{{"coucou":{{"PreToolUse":[{{"matcher":"*","hooks":[{{"type":"command","command":"/x/coucou-hook --agent antigravity PreToolUse"{t}}}]}}]}}}}"#)
+        format!(r#"{{"coucou":{{"PreToolUse":[{{"matcher":"*","hooks":[{{"type":"command","command":"/x/next-agent-hook --agent antigravity PreToolUse"{t}}}]}}]}}}}"#)
     }
 
     fn run(command: &str) -> Value {

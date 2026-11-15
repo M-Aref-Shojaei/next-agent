@@ -16,6 +16,8 @@ export type UpdateCheck = "none" | "checking" | "upToDate" | "unreachable";
 export interface UpdateStatus {
   /** null: not asked yet. true: Coucou may look at GitHub on its own. */
   consent: boolean | null;
+  /** Next Agent: the update source is the owner's repository (owner request): the GitHub "owner/repo" looked at; "" = off. */
+  source: string;
   /** The version running. */
   current: string;
   /** The newest release of this platform, only while it is newer than `current`. */
@@ -32,6 +34,7 @@ export type UpdateOffer = "ask" | "announce" | "show";
 
 export const NO_UPDATE: UpdateStatus = {
   consent: null,
+  source: "",
   current: "",
   latest: null,
   canInstall: false,
@@ -67,7 +70,7 @@ export function percent(fraction: number): number {
   return Math.round(Math.max(0, Math.min(1, fraction)) * 100);
 }
 
-/** The line under "Coucou X is out": the first "What's new" bullet, then "You have Y". */
+/** The line under "Next Agent X is out": the first "What's new" bullet, then "You have Y". */
 export function headerLine(headline: string | null | undefined, youHave: string): string {
   const h = headline?.trim();
   return h ? `${h}  ·  ${youHave}` : youHave;

@@ -32,8 +32,33 @@ export function updateRows(toggle: Toggle, version: string): HTMLElement[] {
   const feedback = h("span", { class: "hint" });
   const footer = h("span", { class: "hint", style: "flex:1 1 0;min-width:0" });
   const current = h("span", { class: "hint" });
+  // Next Agent: the update source is the owner's repository (owner request): where to look, empty by default (and then nothing is checked).
+  const source = h("input", {
+    type: "text",
+    placeholder: t("GitHub owner/repo"),
+    autocomplete: "off",
+    spellcheck: "false",
+    style: "flex:1 1 auto;min-width:0",
+  }) as HTMLInputElement;
+  const sourceNote = h("span", { class: "hint" });
+  const saveSource = h("button", {
+    text: t("Save"),
+    onclick: async () => {
+      try {
+        status = await Bridge.updateSetSource(source.value.trim());
+        sourceNote.textContent = "";
+      } catch {
+        sourceNote.textContent = t("Not a GitHub owner/repo");
+      }
+      draw();
+    },
+  }) as HTMLButtonElement;
 
   function draw() {
+    const off = !status.source;
+    if (document.activeElement !== source) source.value = status.source;
+    if (off && !sourceNote.textContent) sourceNote.textContent = t("Empty: update checking is off.");
+    if (!off && sourceNote.textContent === t("Empty: update checking is off.")) sourceNote.textContent = "";
     sw.classList.toggle("on", status.consent === true);
     sw.setAttribute("aria-pressed", String(status.consent === true));
     const r = status.latest;
@@ -43,14 +68,14 @@ export function updateRows(toggle: Toggle, version: string): HTMLElement[] {
         ? t("Install {version}", { version: r.version })
         : t("Get {version} on GitHub", { version: r.version });
     }
-    check.disabled = status.check === "checking" || isBusy(status.phase);
+    check.disabled = off || status.check === "checking" || isBusy(status.phase);
     feedback.textContent =
-      status.check === "upToDate" ? t("Coucou is up to date")
+      status.check === "upToDate" ? t("Next Agent is up to date")
         : status.check === "unreachable" ? t("Couldn't reach GitHub")
           : "";
     footer.textContent = status.platform === "linux"
-      ? t("Coucou looks at its own releases on GitHub a few times a day and tells you when one is out. Update it the way you installed it: AppImage, .deb, .rpm or your package manager.")
-      : t("Coucou looks at its own releases on GitHub a few times a day. An update is installed only after your click, once its SHA-256 matches the one GitHub publishes.");
+      ? t("Next Agent looks at its own releases on GitHub a few times a day and tells you when one is out. Update it the way you installed it: AppImage, .deb, .rpm or your package manager.")
+      : t("Next Agent looks at its own releases on GitHub a few times a day. An update is installed only after your click, once its SHA-256 matches the one GitHub publishes.");
     current.textContent = t("You have {version}", { version: status.current || version });
   }
 
@@ -64,6 +89,11 @@ export function updateRows(toggle: Toggle, version: string): HTMLElement[] {
   draw();
 
   return [
+    h("div", { class: "row" },
+      h("label", { text: t("Update source") }),
+      source, saveSource,
+    ),
+    h("div", { class: "row" }, h("label", {}), sourceNote),
     h("div", { class: "row" },
       h("label", { text: t("Updates") }),
       sw,

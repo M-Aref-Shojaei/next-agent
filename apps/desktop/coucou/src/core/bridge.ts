@@ -19,7 +19,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   try {
     return await invoke<T>(cmd, args);
   } catch (err) {
-    console.error(`[coucou] ${cmd} failed`, err);
+    console.error(`[next-agent] ${cmd} failed`, err);
     return null;
   }
 }
@@ -55,7 +55,7 @@ export interface PhoneRelayStatus {
   url: string;
   hasAccess: boolean;
   state: PhoneRelayState;
-  /** The relay settings are shown: for testers (COUCOU_RELAY_SETTINGS=1), or when a relay is already on. */
+  /** The relay settings are shown: for testers (NEXT_AGENT_RELAY_SETTINGS=1), or when a relay is already on. */
   shown: boolean;
 }
 
@@ -285,7 +285,7 @@ export const Bridge = {
 
   openSettingsWindow: () => call<void>("open_settings_window"),
 
-  /** Writes to %LOCALAPPDATA%\Coucou\coucou.log, next to the Rust lines. */
+  /** Writes to %LOCALAPPDATA%\Coucou\next-agent.log, next to the Rust lines. */
   log: (message: string) => call<void>("log_line", { message }),
 
   // ── Claude Code hooks ─────────────────────────────────────────────────────
@@ -477,6 +477,8 @@ export const Bridge = {
   updateSetConsent: (allowed: boolean) => call<void>("update_set_consent", { allowed }),
   /** "Check now": one look at GitHub, the toggle on or off. */
   updateCheck: () => call<UpdateStatus>("update_check"),
+  /** Next Agent: the update source is the owner's repository (owner request): "owner/repo", or "" to turn checking off. */
+  updateSetSource: (source: string) => callOrThrow<UpdateStatus>("update_set_source", { source }),
   /** The island opened the card Rust offered ("ask" or "announce"). */
   updateShown: (kind: "ask" | "announce") => call<void>("update_shown", { kind }),
   /** Settings → Install X: opens the island's update card. */
@@ -525,7 +527,7 @@ export async function emitToWindow(label: string, event: string, payload?: unkno
   try {
     await emitTo(label, event, payload);
   } catch (err) {
-    console.error(`[coucou] emit ${event} failed`, err);
+    console.error(`[next-agent] emit ${event} failed`, err);
   }
 }
 
@@ -620,7 +622,7 @@ export interface HookPreview {
 
 /** Same as `call`, but surfaces the error so the UI can show what went wrong. */
 async function callOrThrow<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (!IS_TAURI) throw new Error("not running inside Coucou");
+  if (!IS_TAURI) throw new Error("not running inside Next Agent");
   return invoke<T>(cmd, args);
 }
 

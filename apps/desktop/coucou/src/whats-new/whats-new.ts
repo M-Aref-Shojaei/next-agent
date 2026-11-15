@@ -106,7 +106,7 @@ export function decideOnLaunch(f: LaunchFacts): LaunchDecision {
   return { show: cmp > 0 && f.hasEntry, record: true };
 }
 
-// ── "Your Coucou so far" ──────────────────────────────────────────────────────
+// ── "Your Next Agent so far" ──────────────────────────────────────────────────────
 
 export type StatKind = "agentSessions" | "agentTime" | "linesAdded" | "approvals" | "words" | "saved" | "calls";
 

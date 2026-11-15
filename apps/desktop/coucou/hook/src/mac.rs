@@ -15,14 +15,15 @@ use std::time::{Duration, Instant};
 
 use crate::CONNECT_TIMEOUT;
 
-/// `~/Library/Application Support/dev.nextagent.desktop/coucou/coucou.sock`.
+/// `~/Library/Application Support/dev.nextagent.desktop/overlay/relay.sock`.
+/// Next Agent: renamed from Coucou (owner request): was `…/coucou/coucou.sock`.
 /// Must match `platform::relay_socket_path()` in the app exactly.
 fn socket_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())?;
-    let dir = home.join("Library/Application Support/dev.nextagent.desktop/coucou");
-    is_private_dir(&dir).then(|| dir.join("coucou.sock"))
+    let dir = home.join("Library/Application Support/dev.nextagent.desktop/overlay");
+    is_private_dir(&dir).then(|| dir.join("relay.sock"))
 }
 
 fn my_uid() -> u32 {
@@ -95,14 +96,14 @@ mod tests {
     fn the_socket_path_fits_in_sun_path() {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
         let path =
-            home.join("Library/Application Support/dev.nextagent.desktop/coucou/coucou.sock");
+            home.join("Library/Application Support/dev.nextagent.desktop/overlay/relay.sock");
         assert!(path.as_os_str().len() < 104);
     }
 
     #[test]
     fn a_folder_open_to_others_is_not_private() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("coucou-hook-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("next-agent-hook-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(!is_private_dir(&dir));

@@ -9,7 +9,8 @@ license = "MIT"
 publish = false
 
 [[bin]]
-name = "coucou-hook"
+# Next Agent: renamed from Coucou (owner request): the binary was coucou-hook.
+name = "next-agent-hook"
 path = "src/main.rs"
 
 [dependencies]

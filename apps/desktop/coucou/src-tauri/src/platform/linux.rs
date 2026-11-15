@@ -25,7 +25,7 @@ use tauri::{AppHandle, WebviewWindow};
 use super::{home_dir, LocalTime};
 
 /// File name of the Claude Code relay.
-pub const HOOK_EXE: &str = "coucou-hook";
+pub const HOOK_EXE: &str = "next-agent-hook";
 
 /// Environment variable holding the home directory.
 pub const HOME_VAR: &str = "HOME";
@@ -41,17 +41,21 @@ fn xdg(var: &str, fallback: &str) -> PathBuf {
         .unwrap_or_else(|| home_dir().join(fallback))
 }
 
-/// ~/.config/coucou — preferences.
+/// ~/.config/dev.nextagent.desktop/overlay — preferences.
+/// Next Agent: renamed from Coucou (owner request): was ~/.config/coucou, which stays Coucou's own app's.
 pub fn config_dir() -> PathBuf {
-    xdg("XDG_CONFIG_HOME", ".config").join("coucou")
+    xdg("XDG_CONFIG_HOME", ".config").join("dev.nextagent.desktop").join("overlay")
 }
 
-/// ~/.local/share/coucou — where coucou-hook, the inbox and the log live. The
+/// ~/.local/share/coucou — where next-agent-hook, the inbox and the log live. The
 /// relay has to sit at a stable path: an AppImage is mounted somewhere new on
 /// every launch.
 pub fn local_dir() -> PathBuf {
-    xdg("XDG_DATA_HOME", ".local/share").join("coucou")
+    xdg("XDG_DATA_HOME", ".local/share").join("dev.nextagent.desktop").join("overlay") // Next Agent: renamed from Coucou (owner request)
 }
+
+/// Next Agent: renamed from Coucou (owner request): nothing to move on Linux (the old folders are Coucou's own app's).
+pub fn migrate_legacy_dir() {}
 
 /// Where a saved image goes, best first: the XDG pictures folder named in
 /// ~/.config/user-dirs.dirs, then ~/Pictures, ~/Downloads and the home folder.
@@ -100,7 +104,7 @@ pub fn prepare_environment() {
     if std::env::var_os("APPIMAGE").is_none() || std::env::var_os("GST_REGISTRY").is_some() {
         return;
     }
-    let cache = xdg("XDG_CACHE_HOME", ".cache").join("coucou");
+    let cache = xdg("XDG_CACHE_HOME", ".cache").join("dev.nextagent.desktop").join("overlay"); // Next Agent: renamed from Coucou (owner request)
     if std::fs::create_dir_all(&cache).is_ok() {
         std::env::set_var("GST_REGISTRY", cache.join("gstreamer-registry.bin"));
     }
@@ -110,13 +114,13 @@ pub fn prepare_environment() {
 /// to go, so the island lands in the middle of the screen. Through XWayland it
 /// can be placed, and a Dock window survives "show desktop" (Super+D).
 /// An inherited GDK_BACKEND=wayland is overridden too: editors and terminals
-/// pass theirs down to every child. COUCOU_X11=0 keeps the Wayland window.
+/// pass theirs down to every child. NEXT_AGENT_X11=0 keeps the Wayland window.
 fn prefer_x11_on_gnome() {
     let env = |k: &str| std::env::var(k).unwrap_or_default();
     if should_prefer_x11(
         &env("XDG_SESSION_TYPE"),
         &env("XDG_CURRENT_DESKTOP"),
-        &env("COUCOU_X11"),
+        &env("NEXT_AGENT_X11"),
         &env("DISPLAY"),
     ) {
         std::env::set_var("GDK_BACKEND", "x11");
@@ -203,8 +207,8 @@ fn is_private_dir(dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Where coucou-hook finds us: `$XDG_RUNTIME_DIR/coucou.sock`, or
-/// `/run/user/<uid>/coucou.sock` when the variable is missing. A directory
+/// Where next-agent-hook finds us: `$XDG_RUNTIME_DIR/next-agent.sock`, or
+/// `/run/user/<uid>/next-agent.sock` when the variable is missing. A directory
 /// that is not ours and private means no relay at all — never a fallback to a
 /// shared place like /tmp. Must match `socket_path()` in hook/src/unix.rs
 /// exactly.
@@ -213,7 +217,7 @@ pub fn relay_socket_path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })));
-    is_private_dir(&dir).then(|| dir.join("coucou.sock"))
+    is_private_dir(&dir).then(|| dir.join("next-agent.sock"))
 }
 
 // ── Who we are ────────────────────────────────────────────────────────────────
@@ -466,9 +470,9 @@ mod layer {
     }
 }
 
-/// COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
+/// NEXT_AGENT_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
 fn layer_shell_wanted() -> bool {
-    std::env::var("COUCOU_LAYER_SHELL").map(|v| v != "0").unwrap_or(true)
+    std::env::var("NEXT_AGENT_LAYER_SHELL").map(|v| v != "0").unwrap_or(true)
 }
 
 /// True once the island window is a layer-shell surface.
@@ -492,7 +496,7 @@ pub fn unblock_webview_drops(_app: &AppHandle) {}
 /// the keyboard. Must run before the window is first shown: a layer surface
 /// cannot be made out of a window the compositor already knows.
 ///
-/// Without layer-shell (GNOME, X11, or COUCOU_LAYER_SHELL=0) the window stays
+/// Without layer-shell (GNOME, X11, or NEXT_AGENT_LAYER_SHELL=0) the window stays
 /// an ordinary always-on-top window that refuses focus; where it lands is then
 /// up to the window manager.
 pub fn make_non_activating(win: &WebviewWindow) {
@@ -505,7 +509,7 @@ pub fn make_non_activating(win: &WebviewWindow) {
     let supported = unsafe { layer::gtk_layer_is_supported() } != 0;
     if !wanted || !supported || gw.is_realized() {
         let why = if !wanted {
-            "COUCOU_LAYER_SHELL=0"
+            "NEXT_AGENT_LAYER_SHELL=0"
         } else if supported {
             "window already shown"
         } else {
@@ -516,8 +520,8 @@ pub fn make_non_activating(win: &WebviewWindow) {
         if !gw.is_realized() {
             // On X11 a Dock is kept above everything and is the only kind of
             // window, besides the desktop, that "show desktop" leaves alone.
-            // COUCOU_DOCK=0 falls back to a utility window.
-            let dock = std::env::var("COUCOU_DOCK").map(|v| v != "0").unwrap_or(true);
+            // NEXT_AGENT_DOCK=0 falls back to a utility window.
+            let dock = std::env::var("NEXT_AGENT_DOCK").map(|v| v != "0").unwrap_or(true);
             gw.set_type_hint(if dock {
                 gtk::gdk::WindowTypeHint::Dock
             } else {
@@ -763,7 +767,7 @@ pub fn prepare_desktop_window(win: &WebviewWindow, mode: super::DesktopMode) -> 
     match mode {
         super::DesktopMode::Layer => {
             if gw.is_realized() {
-                crate::log::line("desktop Mochi: window already shown, no layer surface");
+                crate::log::line("desktop Next Agent: window already shown, no layer surface");
                 return false;
             }
             gw.set_titlebar(None::<&gtk::Widget>);

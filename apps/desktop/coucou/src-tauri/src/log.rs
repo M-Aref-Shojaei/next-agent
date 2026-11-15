@@ -1,6 +1,6 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/src-tauri/src/log.rs @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
-// Small append-only log at %LOCALAPPDATA%\Coucou\coucou.log (Windows) or
-// ~/.local/share/coucou/coucou.log (Linux) — the equivalent of nbLog() in
+// Small append-only log at %LOCALAPPDATA%\Coucou\next-agent.log (Windows) or
+// ~/.local/share/coucou/next-agent.log (Linux) — the equivalent of nbLog() in
 // HookServer.swift. Nothing leaves the machine.
 
 use std::io::Write;
@@ -17,7 +17,7 @@ pub fn line(message: impl AsRef<str>) {
     if platform::ensure_private_dir(&dir).is_err() {
         return;
     }
-    let path = dir.join("coucou.log");
+    let path = dir.join("next-agent.log");
     // Keep it from growing forever: start fresh past ~1 MB.
     if std::fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(false) {
         let _ = std::fs::remove_file(&path);

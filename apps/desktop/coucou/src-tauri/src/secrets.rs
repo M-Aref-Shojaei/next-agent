@@ -7,7 +7,48 @@ use std::sync::{LazyLock, Mutex};
 
 use keyring::Entry;
 
-const SERVICE: &str = "fr.louisraille.coucou";
+// Next Agent: renamed from Coucou (owner request): was "fr.louisraille.coucou" (see `migrate_legacy`).
+const SERVICE: &str = "dev.nextagent.desktop.overlay";
+
+/// Coucou's service name, which the Mac build used before the rename.
+#[cfg(target_os = "macos")]
+const LEGACY_SERVICE: &str = "fr.louisraille.coucou";
+
+/// Next Agent: renamed from Coucou (owner request): moves the entries the Mac build stored under Coucou's service
+/// name to Next Agent's, once (a marker file in the private config folder),
+/// and deletes WhatsApp's old entries. Only on a Mac: on Windows and Linux that
+/// service name is Coucou's own app's, whose entries are not ours to move.
+#[cfg(target_os = "macos")]
+fn migrate_legacy() {
+    let marker = crate::settings::config_dir().join(".keychain-migrated");
+    if marker.exists() {
+        return;
+    }
+    let mut all_moved = true;
+    for key in KNOWN_KEYS.iter().chain(INTERNAL_KEYS) {
+        let (Ok(old), Ok(new)) = (Entry::new(LEGACY_SERVICE, key), Entry::new(SERVICE, key)) else { continue };
+        let Ok(value) = old.get_password() else { continue };
+        let moved = match new.get_password() {
+            // Already set under the new name: the new one wins.
+            Ok(_) => true,
+            Err(_) => new.set_password(&value).is_ok() && new.get_password().ok().as_deref() == Some(value.as_str()),
+        };
+        if moved {
+            let _ = old.delete_credential();
+        } else {
+            all_moved = false;
+        }
+    }
+    // Next Agent: removed WhatsApp/Spotify (owner request): its old entries go.
+    for key in ["whatsapp-url", "whatsapp-api-key", "whatsapp-webhook-secret"] {
+        if let Ok(old) = Entry::new(LEGACY_SERVICE, key) {
+            let _ = old.delete_credential();
+        }
+    }
+    if all_moved && crate::platform::ensure_private_dir(&crate::settings::config_dir()).is_ok() {
+        let _ = std::fs::write(&marker, b"");
+    }
+}
 
 /// Every key Coucou may store. Anything outside this list is refused.
 pub const KNOWN_KEYS: &[&str] = &[
@@ -97,6 +138,9 @@ pub fn present(key: &str) -> bool {
 /// Looks every key up once, off the main thread, so the settings open on known answers.
 pub fn warm_up() {
     std::thread::spawn(|| {
+        // Next Agent: renamed from Coucou (owner request): before the first lookup.
+        #[cfg(target_os = "macos")]
+        migrate_legacy();
         for key in KNOWN_KEYS {
             let _ = get(key);
         }
@@ -184,7 +228,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_certificate_sized_secret_round_trips_through_credential_manager() {
-        let entry = keyring::Entry::new("fr.louisraille.coucou.test", "phone-link-size-check").unwrap();
+        let entry = keyring::Entry::new("dev.nextagent.desktop.overlay.test", "phone-link-size-check").unwrap();
         let big: String = (0..1_200).map(|i| char::from(b"0123456789abcdef"[i % 16])).collect();
         entry.set_password(&big).expect("Credential Manager refused a certificate-sized secret");
         let back = entry.get_password().expect("could not read it back");
