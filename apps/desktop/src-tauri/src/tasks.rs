@@ -671,39 +671,10 @@ impl AppService {
             });
         };
 
-        let mut diff_stats = Vec::new();
-        let mut worktree = plan.worktree.clone();
-        if let Some(wt) = &plan.worktree {
-            let checkpoint = GitCli.checkpoint(wt, &format!("next-agent: checkpoint {task_id}"));
-            match checkpoint.and_then(|_| GitCli.diff(wt)) {
-                Ok(diff) if diff.is_empty() => {
-                    // Nothing to review: drop the worktree so it doesn't linger.
-                    let _ = GitCli.discard(wt);
-                    worktree = None;
-                    notice(
-                        "info",
-                        "No file changes; the task worktree was removed.".into(),
-                    );
-                }
-                Ok(diff) => {
-                    diff_stats = diff
-                        .files
-                        .iter()
-                        .map(|f| FileStat {
-                            path: f.path.clone(),
-                            added: f.additions,
-                            removed: f.deletions,
-                        })
-                        .collect();
-                    sink(StreamMessage::Review {
-                        task_id: task_id.clone(),
-                        branch: wt.branch.clone(),
-                        files: diff_dto(&diff),
-                    });
-                }
-                Err(e) => notice("error", format!("Could not read the task's changes: {e}")),
-            }
-        }
+        let (worktree, diff_stats) = match &plan.worktree {
+            Some(wt) => Self::review_worktree(&task_id, wt, sink),
+            None => (None, Vec::new()),
+        };
 
         let started = events.first().map_or_else(String::new, |e| e.ts.clone());
         let finished_at = events.last().map_or_else(String::new, |e| e.ts.clone());
@@ -750,6 +721,56 @@ impl AppService {
                 "Set a vault folder in Settings to keep task records.".into(),
             ),
             Err(e) => notice("error", format!("Could not write the task record: {e}")),
+        }
+    }
+
+    /// Checkpoint and diff a task's worktree for review. Returns the worktree
+    /// to keep (`None` when it had no changes and was removed) and the diff
+    /// stats for the record.
+    fn review_worktree(
+        task_id: &str,
+        wt: &TaskWorktree,
+        sink: &Sink,
+    ) -> (Option<TaskWorktree>, Vec<FileStat>) {
+        let notice = |tone: &'static str, text: String| {
+            sink(StreamMessage::Notice {
+                task_id: task_id.to_string(),
+                tone,
+                text,
+            });
+        };
+        let checkpoint = GitCli.checkpoint(wt, &format!("next-agent: checkpoint {task_id}"));
+        match checkpoint.and_then(|_| GitCli.diff(wt)) {
+            Ok(diff) if diff.is_empty() => {
+                // Nothing to review: drop the worktree so it doesn't linger.
+                let _ = GitCli.discard(wt);
+                notice(
+                    "info",
+                    "No file changes; the task worktree was removed.".into(),
+                );
+                (None, Vec::new())
+            }
+            Ok(diff) => {
+                let diff_stats = diff
+                    .files
+                    .iter()
+                    .map(|f| FileStat {
+                        path: f.path.clone(),
+                        added: f.additions,
+                        removed: f.deletions,
+                    })
+                    .collect();
+                sink(StreamMessage::Review {
+                    task_id: task_id.to_string(),
+                    branch: wt.branch.clone(),
+                    files: diff_dto(&diff),
+                });
+                (Some(wt.clone()), diff_stats)
+            }
+            Err(e) => {
+                notice("error", format!("Could not read the task's changes: {e}"));
+                (Some(wt.clone()), Vec::new())
+            }
         }
     }
 
