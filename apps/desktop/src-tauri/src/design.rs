@@ -294,9 +294,24 @@ fn write_doc(dir: &Path, name: &str, text: &str) -> Result<(), String> {
     if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(format!("{} is a symlink", path.display()));
     }
-    let tmp = dir.join(format!(".{name}.next-agent-tmp"));
-    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    // A fresh, unpredictable temp name opened with `create_new` (O_EXCL):
+    // it never follows a planted symlink or reuses an existing file.
+    let tmp = dir.join(format!(
+        ".{name}.{}.next-agent-tmp",
+        new_id(&std::process::id().to_string(), 0)
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| e.to_string())?;
+    let written = std::io::Write::write_all(&mut file, text.as_bytes());
+    drop(file);
+    if let Err(e) = written.and_then(|()| std::fs::rename(&tmp, &path)) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    Ok(())
 }
 
 impl AppService {
@@ -946,22 +961,23 @@ pub fn dev_command(root: &Path, port: u16) -> Result<(String, Vec<String>), Stri
         "no package.json: start the dev server yourself and enter its URL".to_string()
     })?;
     let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    if json
-        .pointer("/scripts/dev")
-        .and_then(|v| v.as_str())
-        .is_none()
-    {
+    let Some(script) = json.pointer("/scripts/dev").and_then(|v| v.as_str()) else {
         return Err(
             "package.json has no \"dev\" script: start the dev server yourself and enter its URL"
                 .into(),
         );
-    }
+    };
     let pm = package_manager(root);
     let mut args = vec!["run".to_string(), "dev".to_string()];
     if pm == "npm" {
         args.push("--".into());
     }
     args.extend(["--port".to_string(), port.to_string()]);
+    // Vite would silently move to another port if ours were taken; another
+    // local process could then be served into the preview.
+    if script.contains("vite") {
+        args.push("--strictPort".into());
+    }
     Ok((pm.to_string(), args))
 }
 
@@ -1620,11 +1636,11 @@ mod tests {
         .expect("w");
         assert_eq!(
             dev_command(dir.path(), 5000).expect("npm").1,
-            vec!["run", "dev", "--", "--port", "5000"]
+            vec!["run", "dev", "--", "--port", "5000", "--strictPort"]
         );
         std::fs::write(dir.path().join("pnpm-lock.yaml"), "").expect("w");
         let (pm, args) = dev_command(dir.path(), 5000).expect("pnpm");
-        assert_eq!((pm.as_str(), args.len()), ("pnpm", 4));
+        assert_eq!((pm.as_str(), args.len()), ("pnpm", 5));
         assert_eq!(
             strip_ansi("\u{1b}[32mready\u{1b}[0m in 3ms"),
             "ready in 3ms"

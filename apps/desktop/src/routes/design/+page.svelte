@@ -230,9 +230,16 @@
   }
 
   // ---- edit app actions ----
+  /** Running the project's own `dev` script runs repository code: ask first. */
+  let confirmDev = $state(false);
   async function startPreview(event?: SubmitEvent) {
     event?.preventDefault();
     if (!ws) return;
+    if (!previewUrl.trim() && !confirmDev) {
+      confirmDev = true;
+      return;
+    }
+    confirmDev = false;
     starting = true;
     problem = "";
     try {
@@ -538,6 +545,15 @@
               <select id="preview-frame" bind:value={previewFrame}>{#each Object.entries(FRAMES) as [id, f] (id)}<option value={id}>{f.label}</option>{/each}</select>
             {/if}
           </form>
+          {#if confirmDev}
+            <div class="confirm" role="alertdialog" aria-labelledby="dev-q">
+              <p id="dev-q">Run this workspace's <code>dev</code> script from its package.json? It runs the project's own code on this computer, outside the agent's permission checks. Only do this for projects you trust; otherwise start the dev server yourself and enter its URL.</p>
+              <div class="row">
+                <button class="primary" onclick={() => startPreview()}>Run dev script</button>
+                <button onclick={() => (confirmDev = false)}>Cancel</button>
+              </div>
+            </div>
+          {/if}
           {#if preview}
             <p class="muted small">Proxying {preview.target}{#if preview.command} · started <code>{preview.command}</code>{/if}. Enter selects the focused element, Escape clears.</p>
             <DesignFrame frame={previewFrame} title="Live app preview" sandbox={preview.sandbox} src={preview.url} bind:iframe />

@@ -79,13 +79,13 @@ studio iframe (sandbox APP_SANDBOX)
 
 | Concern | Control |
 |---|---|
-| Generated HTML | `sandbox=""`: no scripts, forms, popups, navigation or same-origin. A CSP `<meta>` (`default-src 'none'`) is injected first in `<head>`, so there is no network. `<meta refresh>`, `<base>` and prefetch links are stripped. Lint flags network use and scripts. |
+| Generated HTML | `sandbox=""`: no scripts, forms, popups, navigation or same-origin. Every document starts with our own `<head>`: the no-network CSP `<meta>` (`default-src 'none'`), then the tokens, whose `</style` is escaped in any case. The author's markup comes after it. Every author `<meta http-equiv>`, `<base>`, doctype and prefetch link is stripped, with quoted `>` handled. Lint flags network use and scripts. |
 | Live app frame | `allow-scripts allow-same-origin allow-forms` on the **proxy's** origin, never the studio's. No popups or top-level navigation. |
 | App CSP | Only `frame-src 'self' http://127.0.0.1:*` was added. A test pins it. |
 | Proxy | Listens on 127.0.0.1 only and connects only to its pinned loopback target. It refuses requests whose `Host` is not its own (DNS rebinding), and refuses `CONNECT` and absolute-form requests. Redirects to the dev server are rewritten as relative. |
 | Bridge messages | Both directions check `event.source` and the exact origin. The studio origin is validated before it is put into the script. Every message shape is validated (`readBridgeMessage`). |
 | Code writes | Location and value checks run in Rust (`check_property`, `check_value`: no quotes, braces, `;`, `<>`, `url(`). Writes happen only in a task worktree, through the broker and permission engine, and are merged after review. |
-| Design files | Fixed names only. Symlinks are refused, files are capped at 256 KB, and writes are atomic. |
+| Design files | Fixed names only. Symlinks are refused, files are capped at 256 KB, and writes are atomic through an unpredictable temp file opened with `create_new`, which never follows a planted symlink. |
 
 ## Not done yet
 
@@ -96,3 +96,8 @@ studio iframe (sandbox APP_SANDBOX)
   - Angular, Solid and Astro components are not instrumented.
 - **Dev server:** it is stopped when the preview stops or the app exits normally. A crash of the app can leave it running.
 - **Previews:** directions don't run scripts, so interactive states are shown statically.
+- **Open security items (low, from the Wave 2 review):**
+  - Any local web page can send requests to the preview proxy's port: the Host check stops DNS rebinding but not plain cross-site requests, and the proxy drops `X-Frame-Options` for everyone. Fix: a per-session secret path or cookie that the studio's iframe URL carries.
+  - The proxy has no connection cap, and its WebSocket tunnel has no idle timeout.
+  - The `dev` script runs with the app's full environment. It needs an explicit confirmation in the UI and passes `--strictPort` to Vite, but it is not sandboxed (residual risk R1 in the permission-engine notes).
+  - `frame-src http://127.0.0.1:*` lets a frame reach any local port. The direction frames strip every `<meta http-equiv>` and `<base>` and run no scripts, but a link the user clicks inside a direction can still navigate that frame to a local port.

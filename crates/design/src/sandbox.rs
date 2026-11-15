@@ -60,10 +60,26 @@ impl FrameKind {
     }
 }
 
+/// End of the tag starting at `start` (just past its `>`), skipping quoted
+/// attribute values so a `>` inside a value doesn't end it early.
+fn tag_end(lower: &str, start: usize) -> usize {
+    let mut quote: Option<char> = None;
+    for (i, ch) in lower[start..].char_indices() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (None, '"' | '\'') => quote = Some(ch),
+            (None, '>') => return start + i + 1,
+            _ => {}
+        }
+    }
+    lower.len()
+}
+
 /// Remove elements that could navigate or reach out even inside the
-/// sandbox: `<meta http-equiv="refresh">`, `<base>`, `<link rel=prefetch|
-/// preconnect|dns-prefetch|preload>`. (Scripts stay in the text but never
-/// run: the frame has no `allow-scripts`.)
+/// sandbox: every `<meta http-equiv>` (refresh, and author CSPs, which ours
+/// already overrides), `<base>`, `<link rel=prefetch|preconnect|…>`, and the
+/// author's doctype. (Scripts stay in the text but never run: the frame has
+/// no `allow-scripts`.)
 fn strip_reaching_tags(html: &str) -> String {
     let lower = html.to_ascii_lowercase();
     let mut out = String::with_capacity(html.len());
@@ -71,17 +87,15 @@ fn strip_reaching_tags(html: &str) -> String {
     while let Some(pos) = lower[i..].find('<') {
         let start = i + pos;
         out.push_str(&html[i..start]);
-        let end = lower[start..]
-            .find('>')
-            .map_or(lower.len(), |e| start + e + 1);
+        let end = tag_end(&lower, start);
         let tag = &lower[start..end];
         let name: String = tag[1..]
             .chars()
-            .take_while(char::is_ascii_alphanumeric)
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '!')
             .collect();
         let drop = match name.as_str() {
-            "base" => true,
-            "meta" => tag.contains("http-equiv") && tag.contains("refresh"),
+            "base" | "!doctype" => true,
+            "meta" => tag.contains("http-equiv"),
             "link" => [
                 "prefetch",
                 "preconnect",
@@ -103,31 +117,32 @@ fn strip_reaching_tags(html: &str) -> String {
     out
 }
 
-/// Wrap a direction's HTML for `srcdoc`: the CSP `<meta>` and the project's
-/// `tokens.css` go first in `<head>` (a CSP meta only governs what follows
-/// it, and several policies intersect, so the author can only tighten it).
-/// A fragment is wrapped in a full document.
+/// Wrap a direction's HTML for `srcdoc`. The document always starts with
+/// our own `<head>`: the no-network CSP `<meta>` first, then the project's
+/// `tokens.css`. The author's markup follows; the HTML parser merges its
+/// `<html>`/`<head>` content, so nothing it contains can load before the
+/// policy exists or move the policy out of the head.
 #[must_use]
 pub fn sandbox_document(html: &str, tokens_css: &str) -> String {
     let html = strip_reaching_tags(html);
-    let tokens = tokens_css.replace("</style", "<\\/style");
-    let preamble = format!(
-        "<meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{DIRECTION_CSP}\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style data-next-agent-tokens>{tokens}</style>"
-    );
-    let lower = html.to_ascii_lowercase();
-    let head_open = lower
-        .find("<head")
-        .and_then(|i| lower[i..].find('>').map(|e| i + e + 1));
-    if let Some(at) = head_open {
-        return format!("{}{preamble}{}", &html[..at], &html[at..]);
+    let tokens = escape_style_end(tokens_css);
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{DIRECTION_CSP}\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style data-next-agent-tokens>{tokens}</style></head>{html}"
+    )
+}
+
+/// Neutralise `</style` in any letter case so CSS can't close its element.
+fn escape_style_end(css: &str) -> String {
+    let lower = css.to_ascii_lowercase();
+    let mut out = String::with_capacity(css.len());
+    let mut i = 0;
+    while let Some(pos) = lower[i..].find("</style") {
+        out.push_str(&css[i..i + pos]);
+        out.push_str("<\\/");
+        i += pos + 2;
     }
-    if let Some(at) = lower
-        .find("<html")
-        .and_then(|i| lower[i..].find('>').map(|e| i + e + 1))
-    {
-        return format!("{}<head>{preamble}</head>{}", &html[..at], &html[at..]);
-    }
-    format!("<!doctype html><html><head>{preamble}</head><body>{html}</body></html>")
+    out.push_str(&css[i..]);
+    out
 }
 
 #[cfg(test)]
@@ -153,29 +168,39 @@ mod tests {
     #[test]
     fn csp_goes_first_in_head() {
         let doc = sandbox_document("<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src *\"><title>t</title></head><body>x</body></html>", ":root{--a:#fff}");
-        let ours = doc.find(DIRECTION_CSP).expect("csp");
-        let theirs = doc.find("default-src *").expect("author");
-        assert!(ours < theirs);
+        assert!(doc.starts_with("<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\""));
+        assert!(
+            !doc.contains("default-src *"),
+            "author http-equiv metas are dropped"
+        );
+        assert_eq!(doc.matches("<!doctype").count(), 1);
         assert!(doc.contains("<style data-next-agent-tokens>:root{--a:#fff}</style>"));
     }
 
     #[test]
     fn fragments_are_wrapped_and_tokens_cannot_break_out() {
-        let doc = sandbox_document("<p>hi</p>", "</style><script>alert(1)</script>");
+        let doc = sandbox_document("<p>hi</p>", "</STYLE><script>alert(1)</script>");
         assert!(doc.starts_with("<!doctype html><html><head><meta charset"));
-        assert!(doc.ends_with("<body><p>hi</p></body></html>"));
-        assert!(!doc.contains("</style><script>"));
-        let no_head = sandbox_document("<html><body>x</body></html>", "");
-        assert!(no_head.starts_with("<html><head><meta charset"));
+        assert!(doc.ends_with("</head><p>hi</p>"));
+        assert!(!doc.to_ascii_lowercase().contains("</style><script>"));
+        // A `<header>` fragment must not be mistaken for `<head>`.
+        let header = sandbox_document("<header><img src=\"https://x/\"></header>", "");
+        let csp = header.find(DIRECTION_CSP).expect("csp");
+        assert!(csp < header.find("<header").expect("header"));
+        assert!(header[..header.find("</head>").expect("head end")].contains(DIRECTION_CSP));
     }
 
     #[test]
     fn strips_navigation_and_prefetch_tags() {
         let doc = sandbox_document(
-            "<head><meta http-equiv=\"refresh\" content=\"0;url=http://127.0.0.1:8080\"><base href=\"http://x/\"><link rel=\"preconnect\" href=\"https://x\"><link rel=\"stylesheet\" href=\"a.css\"></head>",
+            "<head><meta http-equiv=\"refresh\" content=\"0;url=http://127.0.0.1:8080\"><meta content=\"0;url=http://127.0.0.1:631/x>\" http-equiv=\"refresh\"><base href=\"http://x/\"><link rel=\"preconnect\" href=\"https://x\"><link rel=\"stylesheet\" href=\"a.css\"></head>",
             "",
         );
         assert!(!doc.contains("refresh") && !doc.contains("<base") && !doc.contains("preconnect"));
+        assert!(
+            !doc.contains("631"),
+            "a quoted `>` doesn't end the tag early"
+        );
         assert!(
             doc.contains("rel=\"stylesheet\""),
             "kept (blocked by CSP, flagged by lint)"
