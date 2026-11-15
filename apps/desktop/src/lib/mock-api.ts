@@ -343,7 +343,6 @@ export const mockApi: Api = {
     cacheEntries = 0;
     return removed;
   },
-  async overlayOpen() {},
   async onTaskStream() {
     return () => {};
   },
@@ -616,3 +615,181 @@ export const mockApi: Api = {
   },
   ...designMockApi,
 };
+
+// ── The overlay's settings (lib/overlay-settings.ts), outside Tauri ──────────
+// A small in-memory stand-in for the overlay's commands, so Settings → Overlay
+// renders and its controls move in plain vite dev. Writes only change memory.
+
+type Args = Record<string, unknown> | undefined;
+const overlayState = {
+  settings: {
+    soundEnabled: true, soundVolume: 0.12, autoCloseInterval: 15, openOnHover: false, alertsFromAllPills: false,
+    showClock: false, closedIsland: "mochi", absenceInterval: 180,
+    activeIntegrations: ["integration_resend", "integration_n8n", "integration_vercel", "integration_github"],
+    mainPill: "integration_claude", screen: "primary", autostart: false, hooksInstalled: false, model: "claude-opus-5",
+    showPlanInNotch: false, showPlanInCompactIsland: false, planRelayInstalled: false, showCodexPlanInNotch: false,
+    chatProvider: "anthropic", chatModels: {}, chatSubscriptions: {}, ollamaUrl: "", lmstudioUrl: "", customUrl: "",
+    shortcuts: {}, mochiOutfit: "auto", pillColors: {}, language: "", phoneLink: false,
+  } as Record<string, unknown>,
+  secrets: new Set<string>(["github-token"]),
+  hooks: { installed: false, planRelayInstalled: false },
+  agents: [
+    { id: "codex", name: "Codex", installed: false, path: "~/.codex/hooks.json", hookReady: true, approvals: true, note: "Restart Codex to pick them up." },
+    { id: "gemini", name: "Gemini CLI", installed: true, path: "~/.gemini/settings.json", hookReady: true, approvals: false, note: "" },
+    { id: "antigravity", name: "Antigravity", installed: true, path: "~/.antigravity/hooks.json", hookReady: true, approvals: false, note: "" },
+  ],
+  agy: { enabled: false, hooksReady: true },
+  phone: { enabled: false, details: false, answers: false, diffs: false, usage: false, recap: false, chat: false, services: [] as string[], models: [] as string[] },
+  update: {
+    consent: true as boolean | null, source: "", current: "0.1.0", latest: null, canInstall: false,
+    phase: { kind: "idle" }, check: "none", platform: "linux",
+  } as Record<string, unknown>,
+  recap: true,
+  flow: {
+    prefs: {
+      enabled: false, key: "right_ctrl", keyCombo: [], edge: "bottom", hidePill: false, mic: "", keepDays: 30, cleanup: false,
+      defaultStyle: "natural", summaryEngine: "claude", openAtLaunch: true, voice: false, voiceOutput: "system", voiceGender: "female",
+      muteOthers: true, oneTapHandsFree: false,
+    } as Record<string, unknown>,
+    models: { parakeet: { state: "missing" } as Record<string, unknown>, downloadMb: 700 },
+  },
+  styles: [{ id: "slack", name: "Slack", style: "natural" }],
+};
+const SAMPLE_DIFF = ' {\n   "hooks": {\n+    "PreToolUse": [{ "hooks": [{ "command": "next-agent-hook" }] }],\n     "Stop": []\n   }\n }';
+const hookPreview = (install: boolean) => ({
+  diff: install ? SAMPLE_DIFF : SAMPLE_DIFF.replace("+", "-"),
+  backup: "~/.claude/settings.json.next-agent-2026-11-15.bak",
+  settingsPath: "~/.claude/settings.json",
+  path: "~/.claude/settings.json",
+  fingerprint: "mock",
+});
+const flowStatus = () => ({
+  ...overlayState.flow, keys: "ok", hasClaudeKey: overlayState.secrets.has("anthropic-api-key"),
+  mics: [{ name: "Built-in Microphone", default: true }], platform: "linux", autostarted: false,
+});
+const phoneStatus = () => ({
+  enabled: overlayState.phone.enabled, running: overlayState.phone.enabled, port: 47615, host: "192.168.1.20",
+  name: "This computer", clients: 0, error: null, relayState: "off",
+});
+const pairing = () => ({
+  link: "coucou://pair?mock", host: "192.168.1.20", port: 47615, name: "This computer", relay: null,
+  qrSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><path d="M0 0h2v2H0zM2 2h2v2H2z"/></svg>',
+});
+const relayOff = (hasAccess = false) => ({ enabled: false, url: "", hasAccess, state: "off", shown: false });
+const flag = (key: "details" | "answers" | "diffs" | "usage" | "recap") => ({
+  [`phone_${key}_status`]: () => ({ enabled: overlayState.phone[key] }),
+  [`phone_${key}_set_enabled`]: (a: Args) => ({ enabled: (overlayState.phone[key] = Boolean(a?.enabled)) }),
+});
+
+const overlayCommands: Record<string, (a: Args) => unknown> = {
+  boot: () => ({
+    settings: { ...overlayState.settings, hooksInstalled: overlayState.hooks.installed, planRelayInstalled: overlayState.hooks.planRelayInstalled },
+    screen: { x: 0, y: 0, width: 1440, height: 900, scale: 2 }, version: "0.1.0", hookPath: "", cursorPoll: true,
+  }),
+  save_settings: (a) => void (overlayState.settings = { ...(a?.settings as object) }),
+  list_monitors: () => [{ key: "at:0,0|Built-in Retina Display", label: "Built-in Retina Display" }],
+  custom_sounds: () => [],
+  reveal_sounds_folder: () => undefined,
+  reload_sounds: () => undefined,
+  open_url: () => undefined,
+  recap_prefs: () => ({ enabled: overlayState.recap, hideProjects: false }),
+  recap_set_enabled: (a) => void (overlayState.recap = Boolean(a?.enabled)),
+  recap_clear: () => undefined,
+  update_status: () => ({ ...overlayState.update }),
+  update_set_consent: (a) => void (overlayState.update.consent = Boolean(a?.allowed)),
+  update_check: () => ({ ...overlayState.update, check: overlayState.update.source ? "upToDate" : "none" }),
+  update_set_source: (a) => {
+    const source = String(a?.source ?? "");
+    if (source && !/^[\w.-]+\/[\w.-]+$/.test(source)) throw "not a GitHub owner/repo";
+    overlayState.update.source = source;
+    return { ...overlayState.update };
+  },
+  update_show: () => undefined,
+  update_open_page: () => undefined,
+  hooks_status: () => ({
+    ...overlayState.hooks, settingsPath: "~/.claude/settings.json",
+    hookPath: "~/Library/Application Support/dev.nextagent.desktop/next-agent-hook", hookReady: true,
+  }),
+  agent_hooks_status: () => ({ agent_gemini: true }),
+  hooks_preview: (a) => hookPreview(Boolean(a?.install)),
+  hooks_apply: (a) => {
+    overlayState.hooks.installed = Boolean(a?.install);
+    return "~/.claude/settings.json.next-agent-2026-11-15.bak";
+  },
+  agent_hooks_list: () => overlayState.agents.map((x) => ({ ...x })),
+  agent_hooks_preview: (a) => hookPreview(Boolean(a?.install)),
+  agent_hooks_apply: (a) => {
+    const agent = overlayState.agents.find((x) => x.id === a?.agent);
+    if (agent) agent.installed = Boolean(a?.install);
+    return "";
+  },
+  agy_approvals_status: () => ({ ...overlayState.agy }),
+  agy_approvals_set_enabled: (a) => ({ ...(overlayState.agy = { ...overlayState.agy, enabled: Boolean(a?.enabled) }) }),
+  status_line_preview: (a) => hookPreview(Boolean(a?.install)),
+  status_line_apply: (a) => {
+    overlayState.hooks.planRelayInstalled = Boolean(a?.install);
+    return "";
+  },
+  secret_present: (a) => overlayState.secrets.has(String(a?.key)),
+  secret_set: (a) => {
+    if (a?.value) overlayState.secrets.add(String(a.key));
+    else overlayState.secrets.delete(String(a?.key));
+  },
+  secret_clear: (a) => void overlayState.secrets.delete(String(a?.key)),
+  claude_ready: () => overlayState.secrets.has("anthropic-api-key"),
+  claude_api_models: () => [{ id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" }, { id: "claude-opus-5-5", label: "Claude Opus 5.5" }],
+  chat_models: () => [{ id: "gpt-5", label: "GPT-5" }],
+  subscription_status: () => [
+    {
+      provider: "anthropic", tool: "Claude Code", installed: true, signIn: "claude", installUrl: "https://claude.com/claude-code", subscriptionOnly: false,
+      on: Boolean((overlayState.settings.chatSubscriptions as Record<string, boolean>).anthropic),
+    },
+    { provider: "openai", tool: "Codex CLI", installed: false, on: false, signIn: "codex login", installUrl: "https://developers.openai.com/codex", subscriptionOnly: false },
+  ],
+  subscription_set: (a) => {
+    overlayState.settings.chatSubscriptions = { ...(overlayState.settings.chatSubscriptions as object), [String(a?.provider)]: Boolean(a?.on) };
+    return overlayCommands.subscription_status(undefined);
+  },
+  local_set_key: () => undefined,
+  local_connect: (a) => {
+    throw `Nothing answers at ${String(a?.url) || "the usual address"}.`;
+  },
+  shortcuts_status: () => ({ actions: [], blocked: null, command: "next-agent --shortcut", portal: null }),
+  shortcuts_suspend: () => undefined,
+  phone_link_status: phoneStatus,
+  phone_link_set_enabled: (a) => {
+    overlayState.phone.enabled = Boolean(a?.enabled);
+    return phoneStatus();
+  },
+  phone_link_pairing: pairing,
+  phone_link_new_pairing: pairing,
+  ...flag("details"),
+  ...flag("answers"),
+  ...flag("diffs"),
+  ...flag("usage"),
+  ...flag("recap"),
+  phone_services_status: () => ({ services: [...overlayState.phone.services] }),
+  phone_services_set: (a) => ({ services: (overlayState.phone.services = [...((a?.services as string[]) ?? [])]) }),
+  phone_relay_status: () => relayOff(),
+  phone_relay_set: () => relayOff(),
+  phone_relay_set_access: () => relayOff(true),
+  phone_chat_status: () => ({ enabled: overlayState.phone.chat, models: [...overlayState.phone.models] }),
+  phone_chat_set_enabled: (a) => ({ enabled: (overlayState.phone.chat = Boolean(a?.enabled)), models: [...overlayState.phone.models] }),
+  phone_chat_set_models: (a) => ({ enabled: overlayState.phone.chat, models: (overlayState.phone.models = [...((a?.models as string[]) ?? [])]) }),
+  flow_status: flowStatus,
+  flow_set_prefs: (a) => void (overlayState.flow.prefs = { ...(a?.prefs as object) }),
+  flow_clear: () => undefined,
+  flow_styles: () => overlayState.styles.map((s) => ({ ...s })),
+  flow_set_styles: (a) => void (overlayState.styles = [...((a?.styles as typeof overlayState.styles) ?? [])]),
+  flow_running_apps: () => [{ id: "code", name: "Visual Studio Code" }, { id: "mail", name: "Mail" }],
+  flow_paste_again: () => undefined,
+  flow_models_download: () => void (overlayState.flow.models.parakeet = { state: "ready" }),
+  flow_models_remove: () => void (overlayState.flow.models.parakeet = { state: "missing" }),
+};
+
+/** One overlay command, answered from memory. Unknown commands fail, like a missing Tauri command. */
+export async function overlayMock(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
+  const handler = overlayCommands[cmd];
+  if (!handler) throw new Error(`no mock for ${cmd}`);
+  return handler(args);
+}
