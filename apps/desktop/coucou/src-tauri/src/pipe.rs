@@ -141,6 +141,14 @@ pub fn start(app: AppHandle) {
     });
 }
 
+/// Next Agent: whether a relay peer is known to be another user. An unreadable
+/// peer (it already hung up) is not: the socket's 0600 mode inside a private
+/// 0700 directory (`relay_socket_path`) already keeps other users out.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn is_other_user<E>(peer: Result<u32, E>, uid: u32) -> bool {
+    matches!(peer, Ok(peer) if peer != uid)
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))] // Next Agent: macOS too (platform/macos.rs)
 pub fn start(app: AppHandle) {
     use std::os::unix::fs::PermissionsExt;
@@ -184,7 +192,13 @@ pub fn start(app: AppHandle) {
                 }
             };
             // Only the relay run by our own user may drive the island.
-            if !matches!(stream.peer_cred(), Ok(c) if c.uid() == uid) {
+            // Next Agent: the relay writes its event and hangs up at once, and on
+            // macOS the peer's credentials can no longer be read after that
+            // (getpeereid fails), so every fire-and-forget hook was refused.
+            // Refuse a peer that is known to be someone else; an unreadable one
+            // passes, because the socket is 0600 inside our 0700 runtime
+            // directory, so only this user could have connected.
+            if is_other_user(stream.peer_cred().map(|c| c.uid()), uid) {
                 log::line("refused a relay connection from another user");
                 continue;
             }
@@ -576,6 +590,14 @@ pub fn answer_question(app: &AppHandle, request_id: &str, answers: &HashMap<Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_known_other_user_is_refused() {
+        assert!(!super::is_other_user::<()>(Ok(501), 501));
+        assert!(super::is_other_user::<()>(Ok(0), 501));
+        // The relay already hung up: the 0600 socket in a 0700 folder vouches for it.
+        assert!(!super::is_other_user(Err("ENOTCONN"), 501));
+    }
+
     use super::*;
 
     impl Relay for tokio::io::DuplexStream {}
