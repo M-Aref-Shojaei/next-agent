@@ -27,6 +27,45 @@ pub const PRODUCT_NAME: &str = "Next Agent";
 /// Identifier used by the OS for app data directories.
 pub const APP_IDENTIFIER: &str = "dev.nextagent.desktop";
 
+/// Create and manage the app's services, then start their background work.
+///
+/// # Errors
+/// Returns an error if the data directory or a service cannot be created.
+fn manage_services(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = app.path().app_data_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    let service = Arc::new(AppService::new(dir.join("next-agent.db"))?);
+    app.manage(Arc::clone(&service));
+    let notes = Arc::new(notes::NotesService::new(dir.join("graph-index")));
+    let handle = app.handle().clone();
+    notes.set_listener(Arc::new(move |files| {
+        let _ = handle.emit("graph-changed", files);
+    }));
+    app.manage(notes);
+    app.manage(design::DesignState::default());
+    app.manage(coucou::Adapter::start(
+        app.handle().clone(),
+        Arc::clone(&service),
+    ));
+    // Settings → Upstreams: a daily, report-only look at upstream GitHub repos.
+    app.manage(upstreams::start(app.handle(), &dir));
+    learning::start_scheduler(app.handle().clone(), Arc::clone(&service));
+    // Chat channels (Telegram): tokens from the keychain, tasks
+    // through the normal pipeline, approvals here or in the overlay.
+    let emitter = app.handle().clone();
+    let channels = channels::ChannelService::new(
+        Arc::clone(&service),
+        Arc::new(move |name, payload| {
+            let _ = emitter.emit(name, payload);
+        }),
+    )
+    .map_err(std::io::Error::other)?;
+    app.manage(Arc::clone(&channels));
+    tauri::async_runtime::spawn(async move { channels.start_all().await });
+    tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
+    Ok(())
+}
+
 /// Start the desktop app.
 ///
 /// # Panics
@@ -38,37 +77,7 @@ pub fn run() {
     let (builder, boot) = coucou_lib::builder(tauri::Builder::default());
     builder
         .setup(move |app| {
-            let dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&dir)?;
-            let service = Arc::new(AppService::new(dir.join("next-agent.db"))?);
-            app.manage(Arc::clone(&service));
-            let notes = Arc::new(notes::NotesService::new(dir.join("graph-index")));
-            let handle = app.handle().clone();
-            notes.set_listener(Arc::new(move |files| {
-                let _ = handle.emit("graph-changed", files);
-            }));
-            app.manage(notes);
-            app.manage(design::DesignState::default());
-            app.manage(coucou::Adapter::start(
-                app.handle().clone(),
-                Arc::clone(&service),
-            ));
-            // Settings → Upstreams: a daily, report-only look at upstream GitHub repos.
-            app.manage(upstreams::start(app.handle(), &dir));
-            learning::start_scheduler(app.handle().clone(), Arc::clone(&service));
-            // Chat channels (Telegram): tokens from the keychain, tasks
-            // through the normal pipeline, approvals here or in the overlay.
-            let emitter = app.handle().clone();
-            let channels = channels::ChannelService::new(
-                Arc::clone(&service),
-                Arc::new(move |name, payload| {
-                    let _ = emitter.emit(name, payload);
-                }),
-            )
-            .map_err(std::io::Error::other)?;
-            app.manage(Arc::clone(&channels));
-            tauri::async_runtime::spawn(async move { channels.start_all().await });
-            tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
+            manage_services(app)?;
             coucou_lib::setup(app, boot)?;
             Ok(())
         })
