@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { api, type BoardDoc, type BoardMeta } from "$lib/api.ts";
+  import { errorText } from "$lib/errors.ts";
+  import { Banner, Button, Dialog, EmptyState, List, ListRow, Select, TextArea, TextField } from "$lib/ds/index.ts";
   import BoardCanvas from "$lib/components/BoardCanvas.svelte";
   import { judgeSave } from "$lib/boards/guard.ts";
   import { createAutosaver, type Autosaver, type SaveStatus } from "$lib/boards/autosave.ts";
@@ -8,6 +10,8 @@
   import { STICKY_PRESETS, sticky } from "$lib/boards/stickies.ts";
   import { placeAt, reId, type Skeleton } from "$lib/boards/skeleton.ts";
   import type { ExcalidrawImperativeAPI } from "$lib/boards/excalidraw.ts";
+
+  const TEMPLATE_OPTIONS = TEMPLATES.map((t) => ({ value: t.id, label: t.name }));
 
   type Engine = typeof import("$lib/boards/excalidraw.ts");
   type Snap = { json: string; liveCount: number };
@@ -45,7 +49,7 @@
   /** Bumped whenever a canvas unmounts, so a late onReady from a dead canvas is ignored. */
   let generation = 0;
 
-  const fail = (e: unknown) => (problem = String(e instanceof Error ? e.message : e));
+  const fail = (e: unknown) => (problem = errorText(e));
 
   async function loadEngine(): Promise<Engine> {
     engine ??= await import("$lib/boards/excalidraw.ts");
@@ -190,12 +194,16 @@
 
   async function addSticky(color: string) {
     if (!boardApi) return;
-    const e = await loadEngine();
-    stickyCount += 1;
-    const c = e.viewportCentre(boardApi);
-    const jitter = ((stickyCount - 1) % 5) * 24;
-    await e.insertSkeletons(boardApi, [sticky(color, "Idea", c.x - 90 + jitter, c.y - 90 + jitter)]);
-    scheduleSave();
+    try {
+      const e = await loadEngine();
+      stickyCount += 1;
+      const c = e.viewportCentre(boardApi);
+      const jitter = ((stickyCount - 1) % 5) * 24;
+      await e.insertSkeletons(boardApi, [sticky(color, "Idea", c.x - 90 + jitter, c.y - 90 + jitter)]);
+      scheduleSave();
+    } catch (e) {
+      fail(e);
+    }
   }
 
   async function addFrame() {
@@ -348,84 +356,73 @@
       <p class="muted">Set a vault folder in <a href="/settings">Settings</a> to keep boards in your vault.</p>
     {:else if hasVault}
       <form onsubmit={create} class="new">
-        <label class="sr-only" for="board-name">New board name</label>
-        <input id="board-name" placeholder="New board name" bind:value={newName} required />
-        <label class="sr-only" for="board-template">Template</label>
-        <select id="board-template" bind:value={templateId}>
-          {#each TEMPLATES as t (t.id)}<option value={t.id} title={t.description}>{t.name}</option>{/each}
-        </select>
-        <button type="submit" class="primary">Create</button>
+        <TextField id="board-name" label="New board name" hideLabel placeholder="New board name" bind:value={newName} required />
+        <Select id="board-template" label="Template" hideLabel bind:value={templateId} options={TEMPLATE_OPTIONS} />
+        <Button type="submit" variant="primary">Create</Button>
       </form>
-      <ul aria-label="Board list">
+      <List label="Board list" bordered={false}>
         {#each boards as b (b.name)}
-          <li>
-            <button aria-current={doc?.name === b.name} onclick={() => open(b.name)} title={b.name}>{b.name}</button>
-          </li>
+          <ListRow title={b.name} selected={doc?.name === b.name} onclick={() => open(b.name)} />
         {:else}
-          <li class="muted">No boards yet</li>
+          <p class="muted">No boards yet</p>
         {/each}
-      </ul>
+      </List>
     {/if}
   </aside>
 
   <section class="stage" aria-label="Board editor">
-    {#if problem}<div class="problem" role="alert">{problem}</div>{/if}
-    {#if notice}<div class="notice" role="status">{notice}</div>{/if}
+    {#if problem}<Banner tone="danger" ondismiss={() => (problem = "")}>{problem}</Banner>{/if}
+    {#if notice}<Banner tone="info">{notice}</Banner>{/if}
     {#if doc}
       <div class="toolbar" role="toolbar" aria-label="Board tools">
         {#if renaming}
           <form onsubmit={rename} class="inline">
-            <label class="sr-only" for="rename">Board name</label>
-            <input id="rename" bind:value={renameTo} required />
-            <button type="submit" class="primary">Rename</button>
-            <button type="button" onclick={() => (renaming = false)}>Cancel</button>
+            <TextField id="rename" label="Board name" hideLabel size="sm" bind:value={renameTo} required />
+            <Button type="submit" size="sm" variant="primary">Rename</Button>
+            <Button size="sm" onclick={() => (renaming = false)}>Cancel</Button>
           </form>
         {:else}
           <strong class="title">{doc.name}</strong>
-          <button onclick={() => { renaming = true; renameTo = doc?.name ?? ""; }} aria-label="Rename board">Rename</button>
+          <Button size="sm" onclick={() => { renaming = true; renameTo = doc?.name ?? ""; }} aria-label="Rename board">Rename</Button>
         {/if}
         <span class="sep" aria-hidden="true"></span>
         <span class="group" role="group" aria-label="Sticky notes">
           {#each STICKY_PRESETS as p (p.id)}
-            <button class="swatch" style:background={p.color} aria-label={`Add ${p.label.toLowerCase()} sticky note`} title={`${p.label} sticky note (Alt+N adds yellow)`} onclick={() => addSticky(p.color)}></button>
+            <button type="button" class="swatch" style:background={p.color} aria-label={`Add ${p.label.toLowerCase()} sticky note`} title={`${p.label} sticky note (Alt+N adds yellow)`} onclick={() => addSticky(p.color)}></button>
           {/each}
         </span>
-        <button onclick={addFrame} aria-label="Add frame">Frame</button>
-        <button onclick={() => (mermaidOpen = !mermaidOpen)} aria-expanded={mermaidOpen} aria-label="Import Mermaid diagram" title="Alt+M">Mermaid</button>
+        <Button size="sm" onclick={addFrame} aria-label="Add frame">Frame</Button>
+        <Button size="sm" onclick={() => (mermaidOpen = !mermaidOpen)} aria-expanded={mermaidOpen} aria-label="Import Mermaid diagram" title="Alt+M">Mermaid</Button>
         <span class="sep" aria-hidden="true"></span>
-        <button disabled={busy} onclick={() => exportAs("png")} aria-label="Export PNG to vault assets">PNG</button>
-        <button disabled={busy} onclick={() => exportAs("svg")} aria-label="Export SVG to vault assets">SVG</button>
-        <button onclick={() => copy("png")} aria-label="Copy as PNG to clipboard">Copy PNG</button>
-        <button onclick={() => copy("svg")} aria-label="Copy as SVG to clipboard">Copy SVG</button>
+        <Button size="sm" disabled={busy} onclick={() => exportAs("png")} aria-label="Export PNG to vault assets">PNG</Button>
+        <Button size="sm" disabled={busy} onclick={() => exportAs("svg")} aria-label="Export SVG to vault assets">SVG</Button>
+        <Button size="sm" onclick={() => copy("png")} aria-label="Copy as PNG to clipboard">Copy PNG</Button>
+        <Button size="sm" onclick={() => copy("svg")} aria-label="Copy as SVG to clipboard">Copy SVG</Button>
         <span class="sep" aria-hidden="true"></span>
-        {#if confirmDelete}
-          <button class="danger" onclick={remove} aria-label="Confirm: move board to trash">Move to trash?</button>
-          <button onclick={() => (confirmDelete = false)}>Keep</button>
-        {:else}
-          <button class="danger" onclick={() => (confirmDelete = true)} aria-label="Delete board (moves to trash)">Delete</button>
-        {/if}
+        <Button size="sm" variant="danger" onclick={() => (confirmDelete = true)} aria-label="Delete board (moves to trash)">Delete</Button>
         <span class="status" role="status" aria-live="polite">{statusText}</span>
       </div>
       {#if emptyHeld}
-        <div class="problem" role="alert">
+        <Banner tone="warn">
           The board is empty, so autosave is paused to protect what is saved on disk.
-          <button class="danger" onclick={saveEmpty}>Save empty board</button>
-        </div>
+          {#snippet actions()}<Button size="sm" variant="danger" onclick={saveEmpty}>Save empty board</Button>{/snippet}
+        </Banner>
       {/if}
       {#if conflict}
-        <div class="problem" role="alert">
+        <Banner tone="danger">
           {conflict === "deleted" ? "This board was deleted or moved on disk while it was open." : "This board changed on disk while it was open."}
-          <button onclick={reloadFromDisk}>Reload from disk</button>
-          <button class="danger" onclick={overwriteDisk}>Keep mine (overwrite)</button>
-        </div>
+          {#snippet actions()}
+            <Button size="sm" onclick={reloadFromDisk}>Reload from disk</Button>
+            <Button size="sm" variant="danger" onclick={overwriteDisk}>Keep mine (overwrite)</Button>
+          {/snippet}
+        </Banner>
       {/if}
       {#if mermaidOpen}
         <form class="mermaid" onsubmit={importMermaid}>
-          <label for="mermaid-text">Mermaid diagram text</label>
-          <textarea id="mermaid-text" rows="6" bind:value={mermaidText} spellcheck="false"></textarea>
+          <TextArea id="mermaid-text" label="Mermaid diagram text" rows={6} mono bind:value={mermaidText} spellcheck={false} />
           <div class="row">
-            <button type="submit" class="primary" disabled={busy}>Add to board</button>
-            <button type="button" onclick={() => (mermaidOpen = false)}>Close</button>
+            <Button type="submit" variant="primary" disabled={busy}>Add to board</Button>
+            <Button onclick={() => (mermaidOpen = false)}>Close</Button>
           </div>
         </form>
       {/if}
@@ -435,38 +432,44 @@
         {/key}
       </div>
     {:else if hasVault}
-      <div class="empty">
-        <h1>Design board</h1>
-        <p class="muted">Pick a board on the left or create one from a template. Boards are saved in your vault as <code>boards/&lt;name&gt;.excalidraw</code>.</p>
-      </div>
+      <EmptyState
+        title="Design board"
+        description="Pick a board on the left or create one from a template. Boards are saved in your vault as boards/<name>.excalidraw."
+      />
     {/if}
   </section>
 </div>
 
+<Dialog
+  bind:open={confirmDelete}
+  title="Move board to trash?"
+  description={doc ? `"${doc.name}" moves to the vault trash.` : ""}
+  confirmLabel="Move to trash"
+  cancelLabel="Keep"
+  tone="danger"
+  onconfirm={remove}
+/>
+
 <style>
   .page { display: grid; grid-template-columns: 220px 1fr; flex: 1; min-height: 0; }
-  .list { border-right: 1px solid var(--border); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
-  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-  .new { display: grid; gap: 6px; }
-  select { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
-  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-  li button { width: 100%; text-align: left; border-color: transparent; background: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  li button[aria-current="true"] { background: var(--panel); border-color: var(--border); font-weight: 600; }
+  .list { border-right: var(--border-width) solid var(--color-border); padding: var(--space-3); overflow: auto; display: flex; flex-direction: column; gap: var(--space-2); }
+  h2 { font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: var(--letter-spacing-caps); color: var(--color-text-secondary); }
+  .new { display: grid; gap: var(--space-1-5); }
   .stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1-5); padding: var(--space-1-5) var(--space-3); border-bottom: var(--border-width) solid var(--color-border); }
   .title { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
-  .group { display: inline-flex; gap: 4px; }
-  .swatch { width: 24px; height: 24px; padding: 0; border-radius: 4px; border: 1px solid var(--border); }
-  .inline { display: flex; gap: 6px; align-items: center; }
-  .inline input { width: 180px; }
-  .status { margin-left: auto; color: var(--muted); font-size: 12px; min-width: 90px; text-align: right; }
+  .sep { width: var(--border-width); align-self: stretch; background: var(--color-border); margin: 0 var(--space-1); }
+  .group { display: inline-flex; gap: var(--space-1); }
+  .swatch { width: var(--control-height-sm); height: var(--control-height-sm); padding: 0; border-radius: var(--radius-sm); border: var(--border-width) solid var(--color-border-strong); }
+  .swatch:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+  .inline { display: flex; gap: var(--space-1-5); align-items: center; }
+  .status { margin-left: auto; color: var(--color-text-secondary); font-size: var(--font-size-sm); min-width: 90px; text-align: right; }
   .canvas { flex: 1; min-height: 0; position: relative; }
-  .problem { background: var(--danger); color: #fff; padding: 6px 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .problem button { color: var(--text); }
-  .notice { background: var(--panel); border-bottom: 1px solid var(--border); padding: 6px 12px; }
-  .mermaid { display: grid; gap: 6px; padding: 10px; border-bottom: 1px solid var(--border); }
-  .mermaid textarea { font-family: ui-monospace, Menlo, monospace; }
-  .row { display: flex; gap: 6px; }
-  .empty { padding: 32px; max-width: 520px; display: grid; gap: 8px; }
+  .mermaid { display: grid; gap: var(--space-1-5); padding: var(--space-3); border-bottom: var(--border-width) solid var(--color-border); }
+  .row { display: flex; gap: var(--space-1-5); }
+  @media (max-width: 640px) {
+    .page { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    .list { border-right: 0; border-bottom: var(--border-width) solid var(--color-border); max-height: 40vh; }
+    .status { margin-left: 0; text-align: left; }
+  }
 </style>

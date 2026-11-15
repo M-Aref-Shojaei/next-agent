@@ -3,13 +3,16 @@
   import { onDestroy, untrack } from "svelte";
   import { app } from "$lib/app.svelte.ts";
   import { api, type BoardMeta } from "$lib/api.ts";
+  import { errorText } from "$lib/errors.ts";
   import DesignFrame from "$lib/components/DesignFrame.svelte";
+  import DirectionCard from "$lib/components/design/DirectionCard.svelte";
+  import SystemPanel from "$lib/components/design/SystemPanel.svelte";
+  import { Banner, Button, Checkbox, Dialog, EmptyState, List, ListRow, SegmentedControl, Select, TextArea, TextField, type Option } from "$lib/ds/index.ts";
   import {
     DIRECTION_SANDBOX,
     FRAMES,
     FRAMEWORKS,
     STYLE_FIELDS,
-    averageScore,
     batchHeads,
     fieldValues,
     lineage,
@@ -30,11 +33,26 @@
     type SourceView,
   } from "$lib/design.ts";
 
+  const MODES: Option<"explore" | "edit">[] = [
+    { value: "explore", label: "Explore" },
+    { value: "edit", label: "Edit app" },
+  ];
+  const EDITOR_TABS: Option<"md" | "css">[] = [
+    { value: "md", label: "DESIGN.md" },
+    { value: "css", label: "tokens.css" },
+  ];
+  const FRAME_OPTIONS: Option<FrameKind>[] = (Object.entries(FRAMES) as [FrameKind, { label: string }][]).map(([value, f]) => ({ value, label: f.label }));
+  const COUNT_OPTIONS: Option[] = ["3", "4", "5"].map((c) => ({ value: c, label: c }));
+  const FRAMEWORK_OPTIONS: Option<Framework | "">[] = [{ value: "", label: "Project's framework" }, ...FRAMEWORKS.map((f) => ({ value: f.id, label: f.label }))];
+  /** A style field's choices, plus its current value when that is not one of them. */
+  const fieldOptions = (options: readonly string[], current: string | undefined): Option[] =>
+    [...(current !== undefined && !options.includes(current) ? [current] : []), ...options].map((o) => ({ value: o, label: o || "—" }));
+
   const ws = $derived(app.activeWorkspace);
   let tab = $state<"explore" | "edit">("explore");
   let problem = $state("");
   let notices = $state<string[]>([]);
-  const fail = (e: unknown) => (problem = String(e instanceof Error ? e.message : e));
+  const fail = (e: unknown) => (problem = errorText(e));
 
   // ---- design system ----
   let files = $state<DesignFiles | null>(null);
@@ -48,7 +66,7 @@
   // ---- explore ----
   let prompt = $state("");
   let frame = $state<FrameKind>("web");
-  let count = $state(3);
+  let count = $state("3");
   let board = $state("");
   let boards = $state<BoardMeta[]>([]);
   let critique = $state(true);
@@ -70,8 +88,6 @@
   const batches = $derived(
     [...new Map(history.map((d) => [d.batchId, d])).values()].map((d) => ({ id: d.batchId, prompt: d.prompt, frame: d.frame })),
   );
-  const colorTokens = $derived(files?.tokens.filter((t) => t.kind === "color") ?? []);
-  const otherTokens = $derived(files?.tokens.filter((t) => t.kind !== "color" && t.kind !== "other") ?? []);
 
   // ---- edit app ----
   let previewUrl = $state("");
@@ -166,7 +182,7 @@
     problem = "";
     progress = null;
     try {
-      const batch = await api.designGenerate(ws.id, prompt, frame, count, board || null, critique, (p) => (progress = p));
+      const batch = await api.designGenerate(ws.id, prompt, frame, Number(count), board || null, critique, (p) => (progress = p));
       model = batch.model;
       notices = batch.notices;
       history = [...batch.directions, ...history];
@@ -360,8 +376,6 @@
   onDestroy(() => {
     void stopPreview();
   });
-
-  const swatch = (v: string) => (/^(#|rgb|hsl|oklch|oklab|lab|lch|hwb)/i.test(v.trim()) ? v : "transparent");
 </script>
 
 <svelte:window onmessage={onMessage} />
@@ -370,132 +384,73 @@
   <header class="bar">
     <h1>Design</h1>
     {#if ws}<span class="muted ws" title={ws.path}>{ws.name}</span>{/if}
-    <div role="tablist" aria-label="Studio mode" class="modes">
-      <button role="tab" id="tab-explore" aria-selected={tab === "explore"} aria-controls="studio-main" onclick={() => (tab = "explore")}>Explore</button>
-      <button role="tab" id="tab-edit" aria-selected={tab === "edit"} aria-controls="studio-main" onclick={() => (tab = "edit")}>Edit app</button>
-    </div>
+    <SegmentedControl label="Studio mode" size="sm" options={MODES} bind:value={tab} />
     <span class="model" title={model?.reason ?? "The design model role (Settings → Providers)"}>
       Model: {model ? model.label : "design role"}
     </span>
   </header>
 
-  {#if problem}<div class="problem" role="alert">{problem} <button onclick={() => (problem = "")} aria-label="Dismiss error">×</button></div>{/if}
-  {#each notices as n (n)}<p class="notice" role="status">{n}</p>{/each}
+  {#if problem}<Banner tone="danger" ondismiss={() => (problem = "")}>{problem}</Banner>{/if}
+  {#each notices as n (n)}<Banner tone="info">{n}</Banner>{/each}
 
   {#if !ws}
-    <p class="empty">Open a workspace in the sidebar to design for it.</p>
+    <EmptyState title="No workspace open" description="Open a workspace in the sidebar to design for it." />
   {:else}
     <div class="cols">
-      <!-- Design system -->
-      <aside class="system" aria-labelledby="ds-title">
-        <h2 id="ds-title">Design system</h2>
-        {#if files}
-          <p class="muted small">
-            <code>{files.designPath}</code> · <code>{files.tokensPath}</code><br />
-            {files.saved ? "Saved in the workspace" : "Draft from the project's CSS (not saved)"}
-          </p>
-          <div class="row">
-            <button onclick={() => generateSystem(false)} disabled={systemBusy}>Generate from project</button>
-            <button onclick={startEditing} disabled={systemBusy}>Edit files</button>
-          </div>
-          {#if confirmReplace}
-            <div class="confirm" role="alertdialog" aria-labelledby="replace-q">
-              <p id="replace-q">Replace the saved DESIGN.md and tokens.css with a fresh read of the project's CSS?</p>
-              <div class="row">
-                <button class="danger" onclick={() => generateSystem(true)}>Replace</button>
-                <button onclick={() => (confirmReplace = false)}>Cancel</button>
-              </div>
-            </div>
-          {/if}
-          <h3>Colour</h3>
-          <ul class="swatches">
-            {#each colorTokens as t (t.name)}
-              <li title="{t.name}: {t.value}{t.dark ? ` / dark ${t.dark}` : ''}">
-                <span class="chip" aria-hidden="true"><i style="background: {swatch(t.value)}"></i>{#if t.dark}<i style="background: {swatch(t.dark)}"></i>{/if}</span>
-                <code>{t.name}</code>
-              </li>
-            {:else}
-              <li class="muted">No colour tokens</li>
-            {/each}
-          </ul>
-          {#if otherTokens.length}
-            <h3>Type, space, shape</h3>
-            <ul class="tokens">
-              {#each otherTokens as t (t.name)}
-                <li><code>{t.name}</code> <span class="muted">{t.value}</span>{#if t.derived}<span class="tag" title="Derived from literal values in the CSS">derived</span>{/if}</li>
-              {/each}
-            </ul>
-          {/if}
-        {:else}
-          <p class="muted">Reading the project…</p>
-        {/if}
-      </aside>
+      <SystemPanel {files} busy={systemBusy} bind:confirmReplace ongenerate={generateSystem} onedit={startEditing} />
 
       <!-- Main column -->
-      <div class="main" id="studio-main" role="tabpanel" aria-labelledby={tab === "explore" ? "tab-explore" : "tab-edit"}>
+      <div class="main" id="studio-main">
         {#if editing}
           <div class="editor">
             <div class="row between">
-              <div role="tablist" aria-label="Design file" class="modes">
-                <button role="tab" aria-selected={editorTab === "md"} onclick={() => (editorTab = "md")}>DESIGN.md</button>
-                <button role="tab" aria-selected={editorTab === "css"} onclick={() => (editorTab = "css")}>tokens.css</button>
-              </div>
+              <SegmentedControl label="Design file" size="sm" options={EDITOR_TABS} bind:value={editorTab} />
               <div class="row">
-                <button onclick={() => (editing = false)}>Cancel</button>
-                <button class="primary" onclick={saveSystem} disabled={systemBusy}>Save both</button>
+                <Button onclick={() => (editing = false)}>Cancel</Button>
+                <Button variant="primary" onclick={saveSystem} disabled={systemBusy}>Save both</Button>
               </div>
             </div>
             {#if editorTab === "md"}
-              <label class="sr-only" for="ds-md">DESIGN.md</label>
-              <textarea id="ds-md" class="code" spellcheck="false" bind:value={draftMd}></textarea>
+              <TextArea id="ds-md" label="DESIGN.md" hideLabel class="code" mono spellcheck={false} bind:value={draftMd} />
             {:else}
-              <label class="sr-only" for="ds-css">tokens.css</label>
-              <textarea id="ds-css" class="code" spellcheck="false" bind:value={draftCss}></textarea>
+              <TextArea id="ds-css" label="tokens.css" hideLabel class="code" mono spellcheck={false} bind:value={draftCss} />
             {/if}
           </div>
         {:else if tab === "explore"}
           <form class="composer" onsubmit={generate} aria-label="Generate directions">
-            <label for="design-prompt">What should we design?</label>
-            <textarea id="design-prompt" rows="3" bind:value={prompt} onkeydown={promptKeys} placeholder="A settings screen for team members and roles… (⌘/Ctrl+Enter to generate)"></textarea>
+            <TextArea id="design-prompt" label="What should we design?" rows={3} bind:value={prompt} onkeydown={promptKeys} placeholder="A settings screen for team members and roles… (⌘/Ctrl+Enter to generate)" />
             <div class="row wrap">
-              <fieldset class="seg">
-                <legend class="sr-only">Frame</legend>
-                {#each Object.entries(FRAMES) as [id, f] (id)}
-                  <label class:on={frame === id}><input type="radio" name="frame" value={id} bind:group={frame} />{f.label}</label>
-                {/each}
-              </fieldset>
-              <label class="inline">Directions
-                <select bind:value={count}>{#each [3, 4, 5] as c (c)}<option value={c}>{c}</option>{/each}</select>
-              </label>
-              <label class="inline">Sketch
-                <select bind:value={board} disabled={!boards.length} title={boards.length ? "Follow a Design board's layout" : "No boards (set a vault and draw one in Boards)"}>
-                  <option value="">None</option>
-                  {#each boards as b (b.name)}<option value={b.name}>{b.name}</option>{/each}
-                </select>
-              </label>
-              <label class="inline"><input type="checkbox" bind:checked={critique} /> Self-critique</label>
-              <button class="primary" type="submit" disabled={!prompt.trim() || generating}>{generating ? "Generating…" : "Generate"}</button>
+              <SegmentedControl label="Frame" size="sm" options={FRAME_OPTIONS} bind:value={frame} />
+              <Select label="Directions" size="sm" bind:value={count} options={COUNT_OPTIONS} />
+              <Select
+                label="Sketch"
+                size="sm"
+                bind:value={board}
+                options={[{ value: "", label: "None" }, ...boards.map((b) => ({ value: b.name, label: b.name }))]}
+                disabled={!boards.length}
+                title={boards.length ? "Follow a Design board's layout" : "No boards (set a vault and draw one in Boards)"}
+              />
+              <Checkbox label="Self-critique" bind:checked={critique} />
+              <Button variant="primary" type="submit" disabled={!prompt.trim() || generating}>{generating ? "Generating…" : "Generate"}</Button>
             </div>
             <p class="muted small" aria-live="polite">{progressLabel(progress)}</p>
           </form>
 
           {#if batches.length > 1}
-            <label class="inline small">Earlier requests
-              <select value={batchId} onchange={(e) => { batchId = (e.currentTarget as HTMLSelectElement).value; openId = null; }}>
-                {#each batches as b (b.id)}<option value={b.id}>{b.prompt.slice(0, 60)} · {FRAMES[b.frame].label}</option>{/each}
-              </select>
-            </label>
+            <Select
+              label="Earlier requests"
+              size="sm"
+              value={batchId ?? ""}
+              options={batches.map((b) => ({ value: b.id, label: `${b.prompt.slice(0, 60)} · ${FRAMES[b.frame].label}` }))}
+              onchange={(e) => { batchId = e.currentTarget.value; openId = null; }}
+            />
           {/if}
 
           {#if open}
             <div class="focus">
               <div class="row between">
-                <button onclick={() => (openId = null)}>← All directions</button>
-                <div class="versions" role="group" aria-label="Versions">
-                  {#each versions as v, i (v.id)}
-                    <button aria-pressed={v.id === open.id} onclick={() => (openId = v.id)} title={v.note || "Original"}>v{i + 1}</button>
-                  {/each}
-                </div>
+                <Button onclick={() => (openId = null)}>← All directions</Button>
+                <SegmentedControl label="Versions" size="sm" options={versions.map((v, i) => ({ value: v.id, label: `v${i + 1}` }))} value={open.id} onchange={(id) => (openId = id)} />
               </div>
               <h2>{open.title}</h2>
               {#if open.rationale}<p class="muted">{open.rationale}</p>{/if}
@@ -503,57 +458,25 @@
             </div>
           {:else if heads.length}
             <ul class="grid" aria-label="Directions">
-              {#each heads as d (d.id)}
-                {@const score = averageScore(d.critique)}
-                {@const p0 = d.lint.filter((f) => f.severity === "p0").length}
-                <li class="card" class:chosen={d.chosen}>
-                  <DesignFrame frame={d.frame} title="Thumbnail: {d.title}" sandbox={DIRECTION_SANDBOX} srcdoc={d.srcdoc} thumb />
-                  <div class="meta">
-                    <h3>{d.title}</h3>
-                    {#if d.rationale}<p class="muted small">{d.rationale}</p>{/if}
-                    {#if d.critique}
-                      <div class="scores" title={d.critique.notes}>
-                        <span class="score">{score}/5{#if d.critique.revised} · revised{/if}</span>
-                        {#each d.critique.scores as [dim, s] (dim)}
-                          <span class="dim" title="{dim}: {s}/5"><span class="sr-only">{dim} {s} of 5</span><i style="height: {s * 20}%" class:low={s < 3}></i></span>
-                        {/each}
-                      </div>
-                    {/if}
-                    {#if d.lint.length}
-                      <details class="lint"><summary>{p0 ? `${p0} issue${p0 > 1 ? "s" : ""}` : `${d.lint.length} note${d.lint.length > 1 ? "s" : ""}`}</summary>
-                        <ul>{#each d.lint as f (f.rule)}<li><b>{f.severity.toUpperCase()}</b> {f.message}</li>{/each}</ul>
-                      </details>
-                    {/if}
-                    <button class="primary" onclick={() => pick(d)}>Pick this direction</button>
-                  </div>
-                </li>
-              {/each}
+              {#each heads as d (d.id)}<DirectionCard {d} onpick={pick} />{/each}
             </ul>
           {:else}
-            <p class="empty">Describe a screen and generate 3–5 on-brand directions. Each one renders in a sandbox with no network or scripts, and is self-critiqued before you see it.</p>
+            <EmptyState
+              title="Describe a screen"
+              description="Generate 3–5 on-brand directions. Each one renders in a sandbox with no network or scripts, and is self-critiqued before you see it."
+            />
           {/if}
         {:else}
           <form class="toolbar" onsubmit={startPreview} aria-label="Live preview">
-            <label class="sr-only" for="preview-url">Dev server URL</label>
-            <input id="preview-url" bind:value={previewUrl} placeholder="http://localhost:5173 (leave empty to start the workspace's dev server)" />
-            <button class="primary" type="submit" disabled={starting}>{starting ? "Starting…" : preview ? "Restart" : "Start"}</button>
+            <TextField id="preview-url" label="Dev server URL" hideLabel mono bind:value={previewUrl} placeholder="http://localhost:5173 (leave empty to start the workspace's dev server)" />
+            <Button variant="primary" type="submit" disabled={starting}>{starting ? "Starting…" : preview ? "Restart" : "Start"}</Button>
             {#if preview}
-              <button type="button" onclick={reload}>Reload</button>
-              <button type="button" onclick={stopPreview}>Stop</button>
-              <button type="button" aria-pressed={selecting} onclick={() => (selecting = !selecting)} title="Click elements in the preview to inspect them">Select elements</button>
-              <label class="sr-only" for="preview-frame">Frame</label>
-              <select id="preview-frame" bind:value={previewFrame}>{#each Object.entries(FRAMES) as [id, f] (id)}<option value={id}>{f.label}</option>{/each}</select>
+              <Button onclick={reload}>Reload</Button>
+              <Button onclick={stopPreview}>Stop</Button>
+              <Button variant={selecting ? "primary" : "secondary"} aria-pressed={selecting} onclick={() => (selecting = !selecting)} title="Click elements in the preview to inspect them">Select elements</Button>
+              <Select id="preview-frame" label="Frame" hideLabel bind:value={previewFrame} options={FRAME_OPTIONS} />
             {/if}
           </form>
-          {#if confirmDev}
-            <div class="confirm" role="alertdialog" aria-labelledby="dev-q">
-              <p id="dev-q">Run this workspace's <code>dev</code> script from its package.json? It runs the project's own code on this computer, outside the agent's permission checks. Only do this for projects you trust; otherwise start the dev server yourself and enter its URL.</p>
-              <div class="row">
-                <button class="primary" onclick={() => startPreview()}>Run dev script</button>
-                <button onclick={() => (confirmDev = false)}>Cancel</button>
-              </div>
-            </div>
-          {/if}
           {#if preview}
             <p class="muted small">Proxying {preview.target}{#if preview.command} · started <code>{preview.command}</code>{/if}. Enter selects the focused element, Escape clears.</p>
             <DesignFrame frame={previewFrame} title="Live app preview" sandbox={preview.sandbox} src={preview.url} bind:iframe />
@@ -561,7 +484,10 @@
               <details class="log"><summary>Dev server output</summary><pre>{log.join("\n")}</pre></details>
             {/if}
           {:else}
-            <p class="empty">Run the real app here, click an element to jump to its source, and change its style or layout. Changes preview instantly, then land in the code as a task in a worktree that you review and merge in Tasks.</p>
+            <EmptyState
+              title="Edit the running app"
+              description="Run the real app here, click an element to jump to its source, and change its style or layout. Changes preview instantly, then land in the code as a task in a worktree that you review and merge in Tasks."
+            />
           {/if}
         {/if}
       </div>
@@ -579,20 +505,15 @@
               {/each}
             </ol>
             <form class="ask" onsubmit={refine}>
-              <label class="sr-only" for="refine">Ask for a change</label>
-              <textarea id="refine" rows="2" bind:value={chat} placeholder="Tighter header, larger type…" onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); (e.currentTarget as HTMLTextAreaElement).form?.requestSubmit(); } }}></textarea>
-              <button class="primary" type="submit" disabled={!chat.trim() || refining}>{refining ? "Updating…" : "Send"}</button>
+              <TextArea id="refine" label="Ask for a change" hideLabel rows={2} bind:value={chat} placeholder="Tighter header, larger type…" onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); (e.currentTarget as HTMLTextAreaElement).form?.requestSubmit(); } }} />
+              <Button variant="primary" type="submit" disabled={!chat.trim() || refining}>{refining ? "Updating…" : "Send"}</Button>
             </form>
             <h2>Hand off</h2>
             <div class="row wrap">
-              <label class="sr-only" for="framework">Framework</label>
-              <select id="framework" bind:value={framework}>
-                <option value="">Project's framework</option>
-                {#each FRAMEWORKS as f (f.id)}<option value={f.id}>{f.label}</option>{/each}
-              </select>
-              <button onclick={() => handOff("convert")} disabled={handing}>Convert to code</button>
+              <Select id="framework" label="Framework" hideLabel bind:value={framework} options={FRAMEWORK_OPTIONS} />
+              <Button onclick={() => handOff("convert")} disabled={handing}>Convert to code</Button>
             </div>
-            <button class="primary block" onclick={() => handOff("implement")} disabled={handing}>Implement this</button>
+            <Button variant="primary" block onclick={() => handOff("implement")} disabled={handing}>Implement this</Button>
             <p class="muted small">Both run as tasks in a worktree. Review the diff and merge in Tasks.</p>
           {:else}
             <p class="muted">Pick a direction to refine it by chat, convert it to the project's framework, or hand it to the coding agent.</p>
@@ -604,126 +525,92 @@
             <pre class="source" aria-label="Source around line {source.line}">{#each source.lines as l, i (i)}<span class:hit={source.firstLine + i === source.line}><b>{source.firstLine + i}</b>{l}
 </span>{/each}</pre>
           {/if}
-          <div class="row"><button onclick={() => post("parent")}>Select parent</button><button onclick={() => { post("deselect"); clearSelection(); }}>Clear</button></div>
+          <div class="row"><Button size="sm" onclick={() => post("parent")}>Select parent</Button><Button size="sm" onclick={() => { post("deselect"); clearSelection(); }}>Clear</Button></div>
           {#each ["Layout", "Spacing", "Type", "Fill"] as group (group)}
             <fieldset class="fields">
               <legend>{group}</legend>
               {#each STYLE_FIELDS.filter((f) => f.group === group) as f (f.key)}
                 <label for="f-{f.key}">{f.label}</label>
                 {#if f.options}
-                  <select id="f-{f.key}" bind:value={values[f.key]} onchange={previewStyles}>
-                    {#if !f.options.includes(values[f.key] ?? "")}<option value={values[f.key]}>{values[f.key]}</option>{/if}
-                    {#each f.options as o (o)}<option value={o}>{o || "—"}</option>{/each}
-                  </select>
+                  <Select id="f-{f.key}" size="sm" bind:value={values[f.key]} options={fieldOptions(f.options, values[f.key])} onchange={previewStyles} />
                 {:else}
-                  <input id="f-{f.key}" list="tok-{f.key}" bind:value={values[f.key]} oninput={previewStyles} aria-invalid={!safeValue(values[f.key] ?? "")} />
+                  <TextField id="f-{f.key}" size="sm" list="tok-{f.key}" bind:value={values[f.key]} oninput={previewStyles} error={safeValue(values[f.key] ?? "") ? undefined : "Not allowed in a style value"} />
                   {#if files}<datalist id="tok-{f.key}">{#each tokenOptions(f, files.tokens) as o (o)}<option value={o}></option>{/each}</datalist>{/if}
                 {/if}
               {/each}
             </fieldset>
           {/each}
-          {#if unsafe.length}<p class="warn small" role="alert">Not allowed in a style value: quotes, ; {"{}"} &lt;&gt; \ or url().</p>{/if}
+          {#if unsafe.length}<Banner tone="danger">Not allowed in a style value: quotes, ; {"{}"} &lt;&gt; \ or url().</Banner>{/if}
           <div class="row">
-            <button onclick={resetStyles} disabled={!changes.length}>Reset preview</button>
-            <button class="primary" onclick={writeToCode} disabled={!changes.length || unsafe.length > 0 || writing || !source}>{writing ? "Starting task…" : `Write ${changes.length || ""} change${changes.length === 1 ? "" : "s"} to code`}</button>
+            <Button size="sm" onclick={resetStyles} disabled={!changes.length}>Reset preview</Button>
+            <Button size="sm" variant="primary" onclick={writeToCode} disabled={!changes.length || unsafe.length > 0 || writing || !source}>{writing ? "Starting task…" : `Write ${changes.length || ""} change${changes.length === 1 ? "" : "s"} to code`}</Button>
           </div>
-          {#if editNote}<p class="warn small">{editNote}</p>{/if}
+          {#if editNote}<Banner tone="warn">{editNote}</Banner>{/if}
         {:else}
           <h2>Inspector</h2>
           <p class="muted">{preview ? "Click an element in the preview." : "Start the preview first."}</p>
-          {#if editNote}<p class="warn small">{editNote}</p>{/if}
+          {#if editNote}<Banner tone="warn">{editNote}</Banner>{/if}
         {/if}
 
         {#if tasks.length}
           <h2>Tasks from the studio</h2>
-          <ul class="tasks">
+          <List label="Tasks from the studio" bordered={false}>
             {#each tasks as t (t.taskId)}
-              <li><span>{t.title}</span><button onclick={() => review(t.taskId)}>Review diff</button></li>
+              <ListRow title={t.title}>
+                {#snippet actions()}<Button size="sm" onclick={() => review(t.taskId)}>Review diff</Button>{/snippet}
+              </ListRow>
             {/each}
-          </ul>
+          </List>
         {/if}
       </aside>
     </div>
   {/if}
 </div>
 
+<Dialog
+  bind:open={confirmDev}
+  title="Run this workspace's dev script?"
+  description="This runs the dev script from the workspace's package.json: the project's own code, on this computer, outside the agent's permission checks. Only do this for projects you trust; otherwise start the dev server yourself and enter its URL."
+  confirmLabel="Run dev script"
+  onconfirm={() => startPreview()}
+/>
+
 <style>
   .studio { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-  .bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
-  .bar h1 { font-size: 16px; }
-  .ws { font-size: 12px; }
-  .modes { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-  .modes button { border: 0; border-radius: 0; background: transparent; }
-  .modes button[aria-selected="true"] { background: var(--accent); color: #fff; }
-  .model { margin-left: auto; font-size: 12px; color: var(--muted); }
-  .problem { background: var(--danger); color: #fff; padding: 6px 12px; display: flex; justify-content: space-between; gap: 8px; }
-  .problem button { background: transparent; color: #fff; border-color: transparent; }
-  .notice { margin: 0; padding: 6px 12px; background: var(--sidebar); border-bottom: 1px solid var(--border); font-size: 12px; }
-  .empty { color: var(--muted); padding: 24px; max-width: 60ch; }
+  .bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-bottom: var(--border-width) solid var(--color-border); background: var(--color-surface); }
+  .bar h1 { font-size: var(--font-size-lg); }
+  .ws { font-size: var(--font-size-sm); }
+  .model { margin-left: auto; font-size: var(--font-size-sm); color: var(--color-text-secondary); }
   .cols { display: grid; grid-template-columns: 240px minmax(0, 1fr) 300px; flex: 1; min-height: 0; }
-  .system, .side { overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); }
-  .system { border-right: 1px solid var(--border); }
-  .side { border-left: 1px solid var(--border); }
-  .main { overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-  h2 { font-size: 13px; } h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 6px; }
-  .small { font-size: 12px; margin: 0; }
-  .row { display: flex; gap: 6px; align-items: center; }
+  .side { overflow: auto; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); background: var(--color-surface); border-left: var(--border-width) solid var(--color-border); }
+  .main { overflow: auto; padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+  h2 { font-size: var(--font-size-md); }
+  .small { font-size: var(--font-size-sm); margin: 0; }
+  .row { display: flex; gap: var(--space-1-5); align-items: center; }
   .row.wrap { flex-wrap: wrap; }
   .between { justify-content: space-between; }
-  .inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
-  .block { width: 100%; }
-  select { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
-  .swatches { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-  .swatches li { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-  .chip { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
-  .chip i { width: 14px; height: 18px; display: block; }
-  .tokens { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 12px; }
-  .tag { margin-left: 4px; font-size: 10px; border: 1px solid var(--border); border-radius: 999px; padding: 0 5px; color: var(--muted); }
-  .confirm { border: 1px solid var(--warn); border-radius: 6px; padding: 8px; font-size: 12px; }
-  .confirm p { margin: 0 0 6px; }
-  .composer { display: grid; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
-  .composer > label { font-weight: 600; }
-  textarea { resize: vertical; }
-  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; padding: 0; margin: 0; overflow: hidden; }
-  .seg label { padding: 4px 10px; cursor: pointer; font-size: 12px; position: relative; }
-  .seg label.on { background: var(--accent); color: #fff; }
-  .seg input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
-  .seg label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
-  .grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-  .card { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
-  .card.chosen { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-  .meta { display: grid; gap: 6px; }
-  .meta h3 { font-size: 14px; text-transform: none; letter-spacing: 0; color: var(--text); margin: 0; }
-  .scores { display: flex; align-items: flex-end; gap: 3px; height: 22px; }
-  .score { font-size: 12px; margin-right: 6px; align-self: center; }
-  .dim { width: 6px; height: 100%; background: var(--sidebar); border-radius: 2px; display: flex; align-items: flex-end; overflow: hidden; }
-  .dim i { width: 100%; background: var(--ok); display: block; }
-  .dim i.low { background: var(--warn); }
-  .lint { font-size: 12px; } .lint ul { margin: 4px 0 0; padding-left: 16px; }
-  .focus { display: grid; gap: 8px; }
-  .versions { display: inline-flex; gap: 4px; }
-  .versions button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .editor { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
-  .code { flex: 1; min-height: 420px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-  .toolbar { display: flex; gap: 6px; align-items: center; }
-  .toolbar input { flex: 1; }
-  .toolbar button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .log pre { max-height: 180px; overflow: auto; font-size: 11px; background: var(--sidebar); padding: 8px; border-radius: 6px; }
-  .chat { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-  .chat .you { justify-self: end; background: var(--accent); color: #fff; border-radius: 10px 10px 2px 10px; padding: 4px 10px; max-width: 90%; }
-  .chat .model-reply { background: var(--sidebar); border-radius: 10px 10px 10px 2px; padding: 4px 10px; max-width: 90%; font-size: 13px; }
-  .ask { display: grid; gap: 6px; }
-  .source { font-size: 11px; background: var(--sidebar); border-radius: 6px; padding: 6px 0; overflow: auto; max-height: 220px; margin: 0; }
-  .source span { display: block; padding: 0 8px; white-space: pre; }
-  .source span.hit { background: color-mix(in srgb, var(--accent) 18%, transparent); }
-  .source b { display: inline-block; width: 3ch; color: var(--muted); font-weight: 400; margin-right: 8px; text-align: right; }
-  .fields { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin: 0; display: grid; grid-template-columns: 90px 1fr; gap: 4px 8px; align-items: center; font-size: 12px; }
-  .fields legend { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 0 4px; }
-  .fields input, .fields select { padding: 2px 6px; font-size: 12px; }
-  .fields input[aria-invalid="true"] { border-color: var(--danger); }
-  .warn { color: var(--warn); }
-  .tasks { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 12px; }
-  .tasks li { display: flex; justify-content: space-between; gap: 6px; align-items: center; }
-  .tasks span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .composer { display: grid; gap: var(--space-2); background: var(--color-surface); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-3); }
+  .grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-3); }
+  .focus { display: grid; gap: var(--space-2); }
+  .editor { display: flex; flex-direction: column; gap: var(--space-2); flex: 1; min-height: 0; }
+  .editor :global(.code) { flex: 1; min-height: 420px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: var(--space-1-5); align-items: center; }
+  .toolbar > :global(:first-child) { flex: 1; min-width: 200px; }
+  .log pre { max-height: 180px; overflow: auto; font-size: var(--font-size-xs); background: var(--color-surface-sunken); padding: var(--space-2); border-radius: var(--radius-md); }
+  .chat { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1-5); }
+  .chat .you { justify-self: end; background: var(--color-accent); color: var(--color-on-accent); border-radius: var(--radius-lg) var(--radius-lg) var(--radius-xs) var(--radius-lg); padding: var(--space-1) var(--space-3); max-width: 90%; }
+  .chat .model-reply { background: var(--color-surface-sunken); border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--radius-xs); padding: var(--space-1) var(--space-3); max-width: 90%; font-size: var(--font-size-md); }
+  .ask { display: grid; gap: var(--space-1-5); }
+  .source { font-size: var(--font-size-xs); background: var(--color-surface-sunken); border-radius: var(--radius-md); padding: var(--space-1-5) 0; overflow: auto; max-height: 220px; margin: 0; }
+  .source span { display: block; padding: 0 var(--space-2); white-space: pre; }
+  .source span.hit { background: var(--color-accent-subtle); }
+  .source b { display: inline-block; width: 3ch; color: var(--color-text-secondary); font-weight: var(--font-weight-regular); margin-right: var(--space-2); text-align: right; }
+  .fields { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-1-5) var(--space-2); margin: 0; display: grid; grid-template-columns: 90px 1fr; gap: var(--space-1) var(--space-2); align-items: center; font-size: var(--font-size-sm); }
+  .fields legend { font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: var(--letter-spacing-caps); color: var(--color-text-secondary); padding: 0 var(--space-1); }
   @media (max-width: 1100px) { .cols { grid-template-columns: 200px minmax(0, 1fr) 260px; } }
+  @media (max-width: 760px) {
+    .cols { grid-template-columns: 1fr; flex: none; }
+    .side { border-left: 0; border-top: var(--border-width) solid var(--color-border); }
+    .model { margin-left: 0; }
+  }
 </style>

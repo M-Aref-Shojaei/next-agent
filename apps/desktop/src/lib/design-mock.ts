@@ -1,6 +1,7 @@
 // Browser-only stand-in for the Design Studio commands (vite dev, screenshots).
 // The real flows (critique, worktree tasks, preview proxy) live in Rust.
 import type { Api } from "./api.ts";
+import { mockPageCss } from "./design-preview-data.ts";
 import type { DesignDirection, DesignFiles, DesignToken, FrameKind } from "./design.ts";
 
 type DesignApi = Pick<
@@ -63,13 +64,7 @@ function html(title: string, radius: string, gap: string): string {
     .map((c) => `<section class="card"><h2>${c}</h2><p>Short, specific description.</p><button>Open</button></section>`)
     .join("");
   return `<!doctype html><html><head><style>${files.tokensCss}
-body{margin:0;font-family:system-ui;background:var(--bg);color:var(--text)}
-header{display:flex;justify-content:space-between;align-items:center;padding:${gap};border-bottom:1px solid var(--border);background:var(--panel)}
-h1{margin:0;font-size:22px}main{padding:${gap};display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:${gap}}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:${radius};padding:${gap};display:grid;gap:8px}
-.card h2{margin:0;font-size:15px}p{margin:0;color:var(--muted)}
-button{font:inherit;border:1px solid var(--border);border-radius:${radius};background:var(--panel);color:var(--text);padding:6px 12px;justify-self:start}
-.primary{background:var(--accent);border-color:var(--accent);color:#fff}</style></head>
+${mockPageCss(radius, gap)}</style></head>
 <body><header><h1>${title.replace(/</g, "&lt;")}</h1><button class="primary">New</button></header><main>${cards}</main></body></html>`;
 }
 

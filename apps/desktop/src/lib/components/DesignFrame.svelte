@@ -3,6 +3,7 @@
   // to fit its container. Directions pass `srcdoc` (sandbox ""), the live
   // app passes `src` (the loopback proxy, APP_SANDBOX).
   import { FRAMES, fitScale, type FrameKind } from "$lib/design.ts";
+  import { PREVIEW_CANVAS } from "$lib/design-preview-data.ts";
 
   let {
     frame,
@@ -44,7 +45,7 @@
         {/if}
       </div>
     {/if}
-    <div class="screen" style="width: {size.width * scale}px; height: {size.height * scale}px">
+    <div class="screen" style="width: {size.width * scale}px; height: {size.height * scale}px" style:background={PREVIEW_CANVAS}>
       <iframe
         bind:this={iframe}
         {title}
@@ -53,6 +54,7 @@
         sandbox={sandbox}
         referrerpolicy="no-referrer"
         style="width: {size.width}px; height: {size.height}px; transform: scale({scale})"
+        style:background={PREVIEW_CANVAS}
         {onload}
       ></iframe>
     </div>
@@ -61,20 +63,20 @@
 
 <style>
   .wrap { width: 100%; display: flex; justify-content: center; min-width: 0; }
-  .device { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); overflow: hidden; box-shadow: 0 1px 2px rgb(0 0 0 / 0.06); }
-  .device.mobile { border-radius: 28px; padding: 0 12px 12px; background: var(--sidebar); }
-  .device.thumb { border-radius: 6px; box-shadow: none; }
-  .device.thumb.mobile { border-radius: 14px; padding: 6px; }
-  .bar { height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--sidebar); font-size: 11px; color: var(--muted); }
+  .device { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); overflow: hidden; box-shadow: var(--shadow-sm); }
+  .device.mobile { border-radius: var(--radius-xl); padding: 0 var(--space-3) var(--space-3); background: var(--color-surface-sunken); }
+  .device.thumb { border-radius: var(--radius-md); box-shadow: none; }
+  .device.thumb.mobile { border-radius: var(--radius-lg); padding: var(--space-1-5); }
+  .bar { height: 26px; display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); border-bottom: var(--border-width) solid var(--color-border); background: var(--color-surface-sunken); font-size: var(--font-size-xs); color: var(--color-text-secondary); }
   .mobile .bar { border: 0; justify-content: center; background: transparent; }
-  .notch { width: 72px; height: 6px; border-radius: 3px; background: var(--border); }
-  .dots { display: inline-flex; gap: 5px; }
-  .dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--border); display: block; }
+  .notch { width: 72px; height: var(--space-1-5); border-radius: var(--radius-xs); background: var(--color-border); }
+  .dots { display: inline-flex; gap: var(--space-1-5); }
+  .dots i { width: 9px; height: 9px; border-radius: var(--radius-full); background: var(--color-border-strong); display: block; }
   .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .url { flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 1px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .screen { overflow: hidden; position: relative; background: #fff; }
-  .mobile .screen { border-radius: 18px; }
-  .thumb.mobile .screen { border-radius: 10px; }
-  iframe { border: 0; transform-origin: 0 0; display: block; background: #fff; }
+  .url { flex: 1; background: var(--color-surface); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-full); padding: var(--space-0-5) var(--space-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .screen { overflow: hidden; position: relative; }
+  .mobile .screen { border-radius: var(--radius-xl); }
+  .thumb.mobile .screen { border-radius: var(--radius-lg); }
+  iframe { border: 0; transform-origin: 0 0; display: block; }
   .thumb iframe { pointer-events: none; }
 </style>
