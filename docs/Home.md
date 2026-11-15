@@ -11,6 +11,7 @@ A local-first AI workstation: coding agents working on a local repo, a Markdown 
 - [[Roadmap]] — milestones M0–M5, sequencing, exit criteria
 - [[M1 Vertical Slice]] — step-by-step task breakdown for the first milestone
 - [[M1 Progress]] — live task ledger (what is done, tested, and deviated)
+- [[Logging System Plan]]: one local diagnostics log for the whole app, with no user content (prompts, notes, files, messages, keys); 3 waves, 8 agents
 - [[Built-in Upstreams Plan]]: waves for building 9Router, opencode, Hermes, OpenClaw, Coucou, Logseq and the Excalidraw design board into the app
 - [[Risks and Open Questions]] — things that need a decision or verification
 - [[Development Setup]] — toolchain and prerequisites
@@ -42,6 +43,7 @@ A local-first AI workstation: coding agents working on a local repo, a Markdown 
 - [[ADR-0008 Modular Boundaries For Upstream Sync]]
 - [[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]]
 - [[ADR-0012 One Design System]]
+- [[ADR-0013 Local Diagnostics Log Without User Content]]
 
 ## Upstream
 - [[Upstream Evaluation]] (superseded) · [[9Router]] · [[OpenRouter]] · [[OmniRoute]] · [[opencode]] · [[Hermes Agent]] · [[OpenClaw]] · [[Coucou]] · [[Logseq]] · [[Open Design]] · [[Design Studio Sources]] — opencode, 9router, openclaw, hermes-agent, coucou, Logseq
