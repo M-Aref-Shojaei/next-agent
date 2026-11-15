@@ -9,6 +9,9 @@ use futures_util::StreamExt;
 use next_agent_process_manager::{HealthProbe, HealthReport, HealthStatus, ProbeFuture};
 use std::time::{Duration, Instant};
 
+/// How much of an error response body is kept in the error message.
+const ERROR_BODY_CHARS: usize = 500;
+
 /// Retries for 429 / 5xx / connection failures before a stream opens.
 #[derive(Debug, Clone, Copy)]
 pub struct RetryPolicy {
@@ -124,7 +127,7 @@ impl RouterClient {
             let body = response.text().await.unwrap_or_default();
             return Err(LlmError::Http {
                 status,
-                body: crate::runner::truncate(&body, 500),
+                body: crate::runner::truncate(&body, ERROR_BODY_CHARS),
             });
         }
         let body: serde_json::Value = response
@@ -227,7 +230,7 @@ impl RouterClient {
                     let status = response.status().as_u16();
                     let text = response.text().await.unwrap_or_default();
                     let error = classify_status(status, &text, &request.model);
-                    if !(status == 429 || status >= 500) || last {
+                    if !is_retryable(status) || last {
                         return Err(error);
                     }
                     error
@@ -308,6 +311,11 @@ pub(crate) fn describe(error: &reqwest::Error) -> String {
     }
 }
 
+/// Rate limits and server errors are worth another attempt.
+fn is_retryable(status: u16) -> bool {
+    status == 429 || status >= 500
+}
+
 pub(crate) fn classify_status(status: u16, body: &str, model: &str) -> LlmError {
     let lower = body.to_ascii_lowercase();
     let missing_model = lower.contains("model")
@@ -318,7 +326,7 @@ pub(crate) fn classify_status(status: u16, body: &str, model: &str) -> LlmError 
         400 if missing_model => LlmError::ModelNotFound(model.to_string()),
         _ => LlmError::Http {
             status,
-            body: crate::runner::truncate(body, 500),
+            body: crate::runner::truncate(body, ERROR_BODY_CHARS),
         },
     }
 }
