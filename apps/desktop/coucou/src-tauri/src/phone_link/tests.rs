@@ -1922,9 +1922,10 @@ fn over_the_wire_a_10000_character_command_is_flagged_and_allow_does_nothing() {
 fn only_the_right_window_may_call_a_command_that_changes_something() {
     use super::{caller_allowed, Caller};
     // Next Agent: Coucou's windows carry a `coucou-` prefix in Next Agent's app.
-    assert!(caller_allowed("coucou-settings", Caller::Settings));
+    // Next Agent: the settings moved into Next Agent's main window (owner request), so the Coucou window no longer counts.
+    assert!(caller_allowed("main", Caller::Settings));
     assert!(caller_allowed("coucou-island", Caller::Island));
-    for other in ["coucou-island", "coucou-mochi", "settings", "", "Next Agent-settings", "coucou-settings ", "main", "coucou-settings2"] {
+    for other in ["coucou-island", "coucou-mochi", "settings", "", "Next Agent-settings", "coucou-settings", "main ", "Main", "main2"] {
         assert!(!caller_allowed(other, Caller::Settings), "{other:?} must not act as the settings window");
     }
     for other in ["coucou-settings", "coucou-mochi", "island", "", "Next Agent-island", "coucou-island ", "main"] {

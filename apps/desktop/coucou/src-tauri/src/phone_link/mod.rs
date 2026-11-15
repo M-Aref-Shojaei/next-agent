@@ -781,7 +781,8 @@ enum Caller {
 
 fn caller_allowed(label: &str, who: Caller) -> bool {
     match who {
-        Caller::Settings => label == crate::HUB_LABEL,
+        // Next Agent: the settings moved into Next Agent's main window (owner request).
+        Caller::Settings => label == crate::SETTINGS_LABEL,
         Caller::Island => label == island::WINDOW_LABEL,
     }
 }

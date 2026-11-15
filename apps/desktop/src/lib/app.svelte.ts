@@ -1,7 +1,9 @@
 // App-wide reactive state (Svelte 5 runes). Logic lives in pure modules
 // (timeline.ts, modes.ts, shortcuts.ts); this class only wires them to the API.
 import type { ModeName } from "@next-agent/contracts";
+import { goto } from "$app/navigation";
 import { api, type RouterHealthReport, type Workspace } from "./api.ts";
+import { onOverlaySettingsRequest } from "./overlay-settings.ts";
 import type { DiffAction } from "./diff.ts";
 import { cycleMode } from "./modes.ts";
 import {
@@ -49,6 +51,9 @@ class AppStore {
   }
 
   async init(): Promise<void> {
+    // The tray's "Settings…", the island's and the dictation window's settings
+    // links open this window on Settings → Overlay (the overlay's settings live here).
+    void onOverlaySettingsRequest((href) => void goto(href));
     try {
       this.setHealth(await api.routerHealth());
       await api.onRouterHealth((report) => this.setHealth(report));

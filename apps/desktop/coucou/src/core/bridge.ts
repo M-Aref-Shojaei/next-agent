@@ -283,7 +283,8 @@ export const Bridge = {
 
   quit: () => call<void>("quit_app"),
 
-  openSettingsWindow: () => call<void>("open_settings_window"),
+  // Next Agent: a page, so the Coucou window's settings links open that page of Next Agent's Settings.
+  openSettingsWindow: (page?: string) => call<void>("open_settings_window", { page: page ?? null }),
 
   /** Writes to %LOCALAPPDATA%\Coucou\next-agent.log, next to the Rust lines. */
   log: (message: string) => call<void>("log_line", { message }),

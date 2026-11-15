@@ -78,6 +78,11 @@ export interface HubOptions {
   flowPages: Partial<Record<PageId, FlowPageRenderer>>;
   /** Draws the island's settings for one of the Notch pages into `container`. */
   renderNotch(page: PageId, container: HTMLElement): Promise<void>;
+  /**
+   * Next Agent: a page shown somewhere else instead (the settings pages, in
+   * Next Agent's Settings: owner request). True when it took the page.
+   */
+  elsewhere?(page: PageId): boolean;
 }
 
 const DEFAULT_STATUS: FlowStatus = {
@@ -162,6 +167,8 @@ export async function startHub(root: HTMLElement, opts: HubOptions) {
 
   async function show(page: PageId, targetAnchor?: string) {
     const def = ALL.find((p) => p.id === page) ?? FLOW_PAGES[0];
+    // Next Agent: settings pages open in Next Agent's Settings (owner request).
+    if (opts.elsewhere?.(def.id)) return;
     ctx.onLeave?.();
     ctx.onLeave = undefined;
     current = def.id;

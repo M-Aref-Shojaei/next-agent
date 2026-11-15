@@ -115,7 +115,8 @@ pub fn agy_approvals_set_enabled(
     shared: State<Shared>,
     enabled: bool,
 ) -> Result<AgyApprovalsStatus, String> {
-    if window.label() != crate::HUB_LABEL {
+    // Next Agent: the switch moved into Next Agent's Settings, in the main window (owner request).
+    if window.label() != crate::SETTINGS_LABEL {
         return Err("only the Next Agent window may change this".into());
     }
     let updated = {
