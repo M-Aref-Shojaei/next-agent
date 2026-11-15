@@ -4,7 +4,8 @@
   import type { FieldControl } from "./types.ts";
 
   type Props = Omit<HTMLTextareaAttributes, "value"> & {
-    value?: string | null;
+    /** Bindable. `null` and `undefined` show an empty box. */
+    value?: string | null | undefined;
     /** Visible label (wraps in <Field>). Without it, pass aria-label. */
     label?: string;
     hint?: string;
@@ -16,7 +17,7 @@
   };
 
   let {
-    value = $bindable(""),
+    value = $bindable(),
     label,
     hint,
     error,

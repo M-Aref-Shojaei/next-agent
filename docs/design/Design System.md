@@ -129,9 +129,9 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 | Component | Props | Use when |
 |---|---|---|
 | **Field** | `label`, `hint`, `error`, `required`, `hideLabel`, `id`, snippet `children({id, describedby, invalid, labelId})` | Labelling any custom control. It wires the label and `aria-describedby` for you. |
-| **TextField** | bindable `value`, `label`, `hint`, `error`, `hideLabel`, `size`, `mono`, snippets `prefix` and `suffix` | Single-line text. With `label` it wraps itself in a Field; without one, pass `aria-label`. |
-| **TextArea** | bindable `value`, `label`, `hint`, `error`, `rows`, `mono`, `resize` | Multi-line text. |
-| **Select** | bindable `value`, `options: {value,label,disabled?}[]`, `label`, `placeholder`, `size`, `error` | Choosing one of more than about 5 options. Use a native select. |
+| **TextField** | bindable `value` (`string`, `number`, `null` or `undefined`), `label`, `hint`, `error`, `hideLabel`, `size`, `mono`, snippets `prefix` and `suffix` | Single-line text. With `label` it wraps itself in a Field; without one, pass `aria-label`. |
+| **TextArea** | bindable `value` (also `null` or `undefined`), `label`, `hint`, `error`, `rows`, `mono`, `resize` | Multi-line text. |
+| **Select** | bindable `value` (also `null` or `undefined`: nothing chosen, the placeholder shows), `options: {value,label,disabled?}[]`, `label`, `placeholder`, `size`, `error` | Choosing one of more than about 5 options. Use a native select. |
 | **ShortcutField** | bindable `value` ("Ctrl+Shift+K"), `label` or `id`, `requireModifier`, `clearable`, `platform`, `record`, `onrecording` | Recording a global shortcut. Click, then press keys. Esc cancels; Backspace clears. Pass Coucou's recorder as `record` to keep its AltGr rules. `onrecording` pauses global shortcuts while recording. |
 | **Kbd** | `keys`, `platform`, `size` | Showing a shortcut as keycaps (⌘⇧K on a Mac, Ctrl+Shift+K elsewhere). |
 

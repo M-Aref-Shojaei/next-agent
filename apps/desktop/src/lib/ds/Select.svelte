@@ -5,7 +5,8 @@
   import type { FieldControl, Option, Size } from "./types.ts";
 
   type Props = Omit<HTMLSelectAttributes, "value" | "size"> & {
-    value?: V;
+    /** Bindable; `null` and `undefined` both mean "nothing chosen" (the placeholder shows). */
+    value?: V | null;
     options: readonly Option<V>[];
     /** Visible label (wraps in <Field>). Without it, pass aria-label. */
     label?: string;
@@ -43,7 +44,7 @@
       aria-describedby={ctl?.describedby ?? rest["aria-describedby"] ?? undefined}
       bind:value
     >
-      {#if placeholder}<option value="" disabled selected={value === undefined || value === ""}>{placeholder}</option>{/if}
+      {#if placeholder}<option value="" disabled selected={value == null || value === ""}>{placeholder}</option>{/if}
       {#each options as opt (opt.value)}
         <option value={opt.value} disabled={opt.disabled}>{opt.label}</option>
       {/each}

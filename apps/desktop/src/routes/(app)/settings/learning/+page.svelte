@@ -285,7 +285,7 @@
           </SettingsRow>
           <SettingsRow label="Mode">
             {#snippet children(ctl)}
-              <Select id={ctl.id} bind:value={() => form!.mode ?? "auto", (v) => (form!.mode = v)}
+              <Select id={ctl.id} bind:value={form!.mode}
                 options={[{ value: "auto", label: "Auto (worktree)" }, { value: "manual", label: "Manual" }, { value: "plan", label: "Plan" }]} />
             {/snippet}
           </SettingsRow>

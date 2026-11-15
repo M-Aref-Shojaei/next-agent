@@ -319,11 +319,11 @@
     <SettingsSection id="roles" title="Default model and roles" description="Write provider/model (for example anthropic/claude-sonnet-4-5) or a combo name. Empty roles use the chat role, then the default model.">
       {#snippet actions()}<Button type="submit" variant="primary">Save models</Button>{/snippet}
       <SettingsRow label="Default model">
-        {#snippet children(c)}<TextField id={c.id} list="targets" placeholder="provider/model or combo" bind:value={() => settings.defaultModel ?? "", (v) => (settings.defaultModel = String(v))} />{/snippet}
+        {#snippet children(c)}<TextField id={c.id} list="targets" placeholder="provider/model or combo" bind:value={settings.defaultModel} />{/snippet}
       </SettingsRow>
       {#each ROLES as role (role)}
         <SettingsRow label={cap(role)}>
-          {#snippet children(c)}<TextField id={c.id} list="targets" placeholder={ROLE_HELP[role]} bind:value={() => settings.roles[role] ?? "", (v) => (settings.roles[role] = String(v))} />{/snippet}
+          {#snippet children(c)}<TextField id={c.id} list="targets" placeholder={ROLE_HELP[role]} bind:value={settings.roles[role]} />{/snippet}
         </SettingsRow>
       {/each}
     </SettingsSection>

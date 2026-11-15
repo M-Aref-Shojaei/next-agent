@@ -77,6 +77,8 @@
   let dangerOpen = $state(false);
   let largeOpen = $state(false);
   let progress = $state(42);
+  let nullableText = $state<string | undefined>(undefined);
+  let nullableChoice = $state<string | null>(null);
   const tableRows = [
     { model: "claude-sonnet", requests: 128, cost: 4.21, seen: "2026-07-02" },
     { model: "gpt-mini", requests: 1042, cost: 1.07, seen: "2026-07-03" },
@@ -258,6 +260,8 @@
         <Field label="Custom control in a Field" hint="Field wraps anything: it hands the control its id.">
           {#snippet children(ctl)}<Slider id={ctl.id} aria-describedby={ctl.describedby} bind:value={volume} format={(v) => `${v}%`} />{/snippet}
         </Field>
+        <TextField label="Optional (string | undefined)" bind:value={nullableText} hint="Binds straight to an optional setting: {nullableText === undefined ? 'unset' : `“${nullableText}”`}." />
+        <Select label="Optional choice (string | null)" bind:value={nullableChoice} placeholder="Not set" options={[{ value: "auto", label: "Auto" }, { value: "manual", label: "Manual" }]} hint={nullableChoice === null ? "null" : nullableChoice} />
       </div>
     {/snippet}
   </SettingsSection>

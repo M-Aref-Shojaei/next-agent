@@ -5,7 +5,8 @@
   import type { FieldControl, Size } from "./types.ts";
 
   type Props = Omit<HTMLInputAttributes, "size" | "value" | "prefix"> & {
-    value?: string | number | null;
+    /** Bindable. `null` and `undefined` show an empty box, so optional settings bind directly. */
+    value?: string | number | null | undefined;
     /** Visible label (wraps the input in <Field>). Without it, pass aria-label. */
     label?: string;
     hint?: string;
@@ -21,7 +22,7 @@
   };
 
   let {
-    value = $bindable(""),
+    value = $bindable(),
     label,
     hint,
     error,
