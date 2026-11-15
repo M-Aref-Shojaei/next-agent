@@ -10,7 +10,9 @@
   <div class="row">
     <button class="primary" onclick={() => onrespond("allow")}>Allow</button>
     <button class="danger" onclick={() => onrespond("deny")}>Deny</button>
-    <button onclick={() => onrespond("always")}>Always for this workspace</button>
+    {#if item.canAlways}
+      <button onclick={() => onrespond("always")}>Always for this workspace</button>
+    {/if}
   </div>
 </section>
 

@@ -53,6 +53,8 @@ pub trait ChannelState: Send + Sync {
     fn claim(&self, key: &str, value: &str) -> Result<bool, String>;
     /// The value stored with `key`, if any.
     fn claimed(&self, key: &str) -> Result<Option<String>, String>;
+    /// Forget `key` (a send that failed after it was claimed).
+    fn release(&self, key: &str) -> Result<(), String>;
 
     fn log(&self, entry: &Activity) -> Result<(), String>;
     fn activity(&self, channel_id: &str, limit: usize) -> Result<Vec<Activity>, String>;
@@ -133,6 +135,11 @@ impl ChannelState for MemoryState {
 
     fn claimed(&self, key: &str) -> Result<Option<String>, String> {
         Ok(self.lock().keys.get(key).cloned())
+    }
+
+    fn release(&self, key: &str) -> Result<(), String> {
+        self.lock().keys.remove(key);
+        Ok(())
     }
 
     fn log(&self, entry: &Activity) -> Result<(), String> {
@@ -260,6 +267,12 @@ impl ChannelState for StoreState {
     fn claimed(&self, key: &str) -> Result<Option<String>, String> {
         self.store()?
             .channel_claimed(key)
+            .map_err(|e| e.to_string())
+    }
+
+    fn release(&self, key: &str) -> Result<(), String> {
+        self.store()?
+            .channel_release(key)
             .map_err(|e| e.to_string())
     }
 

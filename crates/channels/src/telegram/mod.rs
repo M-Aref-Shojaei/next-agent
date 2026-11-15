@@ -134,8 +134,16 @@ pub fn parse_update(update: &Value, me: &BotIdentity) -> Option<Inbound> {
         && message["reply_to_message"]["from"]["id"]
             .as_i64()
             .is_some_and(|id| id.to_string() == me.id);
+    // Only a real username gets the `@`: a first name of `@owner` must not
+    // pass for one.
     let sender_label = from["username"].as_str().map_or_else(
-        || from["first_name"].as_str().unwrap_or_default().to_string(),
+        || {
+            from["first_name"]
+                .as_str()
+                .unwrap_or_default()
+                .trim_start_matches(['@', ' '])
+                .to_string()
+        },
         |u| format!("@{u}"),
     );
     let thread_id = (message["is_topic_message"].as_bool() == Some(true))
@@ -272,6 +280,16 @@ mod tests {
     #[allow(clippy::needless_pass_by_value)]
     fn update(message: Value) -> Value {
         json!({ "update_id": 10, "message": message })
+    }
+
+    #[test]
+    fn first_names_cannot_pass_for_usernames() {
+        let u = update(json!({
+            "message_id": 5, "text": "hi",
+            "from": { "id": 7, "is_bot": false, "first_name": "@owner" },
+            "chat": { "id": 7, "type": "private" }
+        }));
+        assert_eq!(parse_update(&u, &me()).expect("m").sender_label, "owner");
     }
 
     #[test]

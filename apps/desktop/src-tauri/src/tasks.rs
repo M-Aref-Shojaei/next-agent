@@ -226,6 +226,7 @@ impl AppService {
             TaskOptions {
                 snapshots,
                 approval_timeout: channel.map(|c| c.approval_timeout),
+                untrusted_origin: channel.is_some(),
             },
         );
         self.running()?.insert(task_id.clone(), handle.control());

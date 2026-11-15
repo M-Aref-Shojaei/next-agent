@@ -244,11 +244,13 @@ async fn unknown_sender_gets_a_code_and_runs_after_desktop_approval() {
         "no task before approval"
     );
 
-    // Re-DM: same code, no new request.
+    // Re-DM: same code, no new request, and no second reply.
+    let sent = rig.channel.sent().len();
     assert_eq!(
         rig.hub.handle("ch_1", dm(2, "42", "hello?")).await,
         Handled::Pairing(PairingOutcome::Pending(code.clone()))
     );
+    assert_eq!(rig.channel.sent().len(), sent, "repeats stay silent");
     assert_eq!(rig.hub.pending_pairings("ch_1").expect("pending").len(), 1);
 
     let approved = rig
@@ -290,10 +292,12 @@ async fn pairing_codes_expire_and_cap_at_three() {
             Handled::Pairing(PairingOutcome::Issued(_))
         ));
     }
+    let sent = rig.channel.sent().len();
     assert_eq!(
         rig.hub.handle("ch_1", dm(10, "d", "x")).await,
         Handled::Pairing(PairingOutcome::Full)
     );
+    assert_eq!(rig.channel.sent().len(), sent, "a full queue stays silent");
     let code = rig.hub.pending_pairings("ch_1").expect("p")[0].code.clone();
     rig.clock.fetch_add(3_600, Ordering::SeqCst);
     assert_eq!(rig.hub.pending_pairings("ch_1").expect("p").len(), 0);
@@ -468,7 +472,8 @@ async fn same_session_is_ordered_and_new_resets_history() {
         second.contains("Earlier in this conversation"),
         "history is replayed"
     );
-    assert!(second.contains("You answered: echo: first"));
+    assert!(second.contains("Your earlier answer"));
+    assert!(second.contains("echo: first"));
 
     assert_eq!(
         rig.hub.handle("ch_1", dm(3, "42", "/new")).await,
@@ -603,5 +608,87 @@ async fn group_replies_thread_to_the_message() {
     tokio::time::sleep(Duration::from_millis(20)).await;
     assert!(
         matches!(rig.channel.sent().last(), Some(Sent::Send { reply_to: Some(id), chat, .. }) if id == "m1" && chat == "-100")
+    );
+}
+
+#[tokio::test]
+async fn deliver_honours_dm_and_group_policies() {
+    let groups_off = rig(ChannelConfig {
+        groups: vec!["-100".into()],
+        ..config()
+    });
+    pair(&groups_off, "42").await;
+    // Groups are disabled by default, so a listed group still gets nothing.
+    let to_group = Delivery {
+        channel_id: "ch_1".into(),
+        chat_id: "-100".into(),
+        text: "hi".into(),
+        idempotency_key: None,
+    };
+    assert!(groups_off.hub.deliver(&to_group).await.is_err());
+
+    // DMs switched off: a paired chat no longer receives deliveries.
+    let dm_off = rig_paired_with(ChannelConfig {
+        dm_policy: DmPolicy::Disabled,
+        ..config()
+    });
+    let to_dm = Delivery {
+        channel_id: "ch_1".into(),
+        chat_id: "42".into(),
+        text: "hi".into(),
+        idempotency_key: None,
+    };
+    assert!(dm_off.hub.deliver(&to_dm).await.is_err());
+
+    // Groups on (allow-list) and listed: delivered.
+    let groups_on = rig(ChannelConfig {
+        group_policy: GroupPolicy::Allowlist,
+        groups: vec!["-100".into()],
+        ..config()
+    });
+    assert_eq!(groups_on.hub.deliver(&to_group).await, Ok(1));
+}
+
+/// A rig whose channel config changed after "42" was paired.
+fn rig_paired_with(config: ChannelConfig) -> Rig {
+    let rig = rig(config);
+    rig.state
+        .allow_add(
+            "ch_1",
+            &next_agent_channels::AllowEntry {
+                sender_id: "42".into(),
+                label: "@42".into(),
+                source: "pairing".into(),
+                added_at: String::new(),
+            },
+        )
+        .expect("allow");
+    rig
+}
+
+#[tokio::test]
+async fn concurrent_deliveries_with_one_key_send_once() {
+    let rig = rig(config());
+    pair(&rig, "42").await;
+    let before = rig.channel.sent().len();
+    let delivery = Delivery {
+        channel_id: "ch_1".into(),
+        chat_id: "42".into(),
+        text: "report".into(),
+        idempotency_key: Some("job:1".into()),
+    };
+    let (a, b) = tokio::join!(rig.hub.deliver(&delivery), rig.hub.deliver(&delivery));
+    assert_eq!(a.expect("a") + b.expect("b"), 1);
+    assert_eq!(rig.channel.sent().len(), before + 1);
+}
+
+#[tokio::test]
+async fn a_failed_delivery_can_be_retried() {
+    let state = Arc::new(MemoryState::default());
+    assert!(state.claim("deliver:k", "pending").expect("claim"));
+    state.release("deliver:k").expect("release");
+    assert!(
+        state.claim("deliver:k", "pending").expect("claim again"),
+        "released keys can be claimed again"
     );
 }

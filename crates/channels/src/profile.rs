@@ -78,8 +78,16 @@ pub fn sanitize_tools(tools: &[String]) -> Vec<String> {
 #[must_use]
 pub fn channel_profile(tools: &[String]) -> AgentProfile {
     let mut text = String::from("---\npermissions:\n  \"*\": deny\n");
-    for tool in sanitize_tools(tools) {
-        let _ = writeln!(text, "  {tool}: allow");
+    let enabled = sanitize_tools(tools);
+    // Every selectable tool gets an explicit line: a missing one would fall
+    // back to its policy kind (`edit` -> `write_file`) and inherit that.
+    for tool in SELECTABLE_TOOLS {
+        let effect = if enabled.iter().any(|t| t == tool) {
+            "allow"
+        } else {
+            "deny"
+        };
+        let _ = writeln!(text, "  {tool}: {effect}");
     }
     for tool in ALWAYS_DENIED {
         let _ = writeln!(text, "  {tool}: deny");
@@ -154,6 +162,20 @@ mod tests {
             command: "ls".into(),
             cwd: PathBuf::from("/w"),
         }
+    }
+
+    #[test]
+    fn enabling_a_kind_does_not_enable_its_aliases() {
+        let profile = channel_profile(&["write_file".into()]);
+        assert_eq!(
+            profile.permission("write_file", "write_file"),
+            Permission::Allow
+        );
+        assert_eq!(profile.permission("edit", "write_file"), Permission::Deny);
+        assert_eq!(
+            profile.permission("apply_patch", "write_file"),
+            Permission::Deny
+        );
     }
 
     #[test]

@@ -29,6 +29,7 @@
   let allow = $state<AllowEntry[]>([]);
   let activity = $state<ChannelActivity[]>([]);
   let newSender = $state("");
+  let pairCode = $state("");
   let newLabel = $state("");
   let message = $state("");
   let busy = $state(false);
@@ -126,11 +127,25 @@
     }
   }
 
-  async function resolve(request: PairingRequest, approve: boolean) {
+  /** Approve the request whose code the owner typed (never one picked from a list). */
+  async function approveCode(event: SubmitEvent) {
+    event.preventDefault();
+    if (!selectedId || !pairCode.trim()) return;
+    try {
+      const request = await api.channelPairingResolve(selectedId, pairCode.trim(), true);
+      pairCode = "";
+      message = `Paired ${request.label || request.senderId} (id ${request.senderId}).`;
+      await loadDetails();
+    } catch (e) {
+      message = String(e);
+    }
+  }
+
+  async function deny(request: PairingRequest) {
     if (!selectedId) return;
     try {
-      await api.channelPairingResolve(selectedId, request.code, approve);
-      message = approve ? `Paired ${request.label || request.senderId}.` : `Denied ${request.label || request.senderId}.`;
+      await api.channelPairingResolve(selectedId, request.code, false);
+      message = `Denied ${request.label || request.senderId}.`;
       await loadDetails();
     } catch (e) {
       message = String(e);
@@ -318,25 +333,29 @@
       <section aria-labelledby="h-pairing">
         <h2 id="h-pairing">Pending pairings</h2>
         {#if pairings.length === 0}
-          <p class="muted">None. Unknown people who message the bot appear here with their code (at most 3, each for 1 hour).</p>
+          <p class="muted">None. Unknown people who message the bot appear here (at most 3, each for 1 hour).</p>
         {:else}
+          <p class="muted">
+            To approve, ask the person for the code the bot sent them and type it here. The code is not shown on this
+            page, so a look-alike name cannot be approved by mistake.
+          </p>
+          <form onsubmit={approveCode} class="row add">
+            <label class="sr-only" for="pair-code">Pairing code from their chat</label>
+            <input id="pair-code" bind:value={pairCode} autocomplete="off" placeholder="Pairing code from their chat" />
+            <button type="submit" disabled={!pairCode.trim()}>Approve</button>
+          </form>
           <table>
-            <thead><tr><th>Who</th><th>Code</th><th>Expires</th><th></th></tr></thead>
+            <thead><tr><th>Who</th><th>Expires</th><th></th></tr></thead>
             <tbody>
               {#each pairings as p (p.code)}
                 <tr>
                   <td>{p.label || "unknown"} <span class="muted">id {p.senderId}</span></td>
-                  <td><code>{p.code}</code></td>
                   <td>{expiresIn(p, now)}</td>
-                  <td class="row">
-                    <button onclick={() => resolve(p, true)} aria-label="Approve {p.label || p.senderId}">Approve</button>
-                    <button onclick={() => resolve(p, false)} aria-label="Deny {p.label || p.senderId}">Deny</button>
-                  </td>
+                  <td><button onclick={() => deny(p)} aria-label="Deny {p.label || p.senderId}">Deny</button></td>
                 </tr>
               {/each}
             </tbody>
           </table>
-          <p class="muted">Only approve codes you expect: check the code matches what the person sees in their chat.</p>
         {/if}
       </section>
 

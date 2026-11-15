@@ -39,6 +39,8 @@ export interface ApprovalItem {
   reason: string;
   /** Set once answered. */
   choice?: ApprovalChoice;
+  /** Whether "Always for this workspace" is offered (not for channel tasks). */
+  canAlways: boolean;
 }
 
 export type TaskStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -121,6 +123,12 @@ export function resolveApproval(
   };
 }
 
+/** Older events carry no options: they offered every choice. */
+function offersAlways(data: unknown): boolean {
+  const options = typeof data === "object" && data !== null ? (data as Record<string, unknown>).options : undefined;
+  return !Array.isArray(options) || options.includes("always_for_workspace");
+}
+
 function field(data: unknown, key: string): string {
   if (typeof data !== "object" || data === null) return "";
   const value = (data as Record<string, unknown>)[key];
@@ -162,6 +170,7 @@ export function applyMessage(task: TaskState, message: StreamMessage): TaskState
           tool: message.tool,
           summary: message.summary,
           reason: message.reason,
+          canAlways: true,
         },
       ],
     };
@@ -272,6 +281,7 @@ export function applyMessage(task: TaskState, message: StreamMessage): TaskState
             tool: tool?.tool ?? "tool",
             summary: field(data, "summary"),
             reason: tool?.reason ?? "",
+            canAlways: offersAlways(data),
           },
         ],
       };

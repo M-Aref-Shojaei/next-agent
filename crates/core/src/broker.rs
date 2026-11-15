@@ -136,6 +136,7 @@ pub struct SqliteBroker<'a> {
     executor: Box<dyn ToolExecutor + 'a>,
     approver: Option<Box<dyn Approver + 'a>>,
     snapshots: Option<Box<dyn StepSnapshots + 'a>>,
+    untrusted: bool,
 }
 
 impl<'a> SqliteBroker<'a> {
@@ -150,7 +151,19 @@ impl<'a> SqliteBroker<'a> {
             executor: Box::new(UnavailableExecutor),
             approver: None,
             snapshots: None,
+            untrusted: false,
         }
+    }
+
+    /// The task comes from outside the desktop (a chat channel). Saved allow
+    /// rules are ignored (deny rules still apply), "always for this
+    /// workspace" answers count as allow-once and save nothing, and touching
+    /// a secret or repository-control file (judged on the resolved path)
+    /// needs an approval even where the mode would allow it.
+    #[must_use]
+    pub fn untrusted_origin(mut self) -> Self {
+        self.untrusted = true;
+        self
     }
 
     /// Capture the work tree before each allowed mutating call (per-step
@@ -192,7 +205,13 @@ impl<'a> SqliteBroker<'a> {
     /// Returns [`StoreError`] if the rules cannot be read.
     pub fn load_rules(&mut self) -> Result<(), StoreError> {
         let rows = self.store.rules_for(&self.context.workspace_id)?;
-        self.rules = RuleSet::new(rows.iter().filter_map(row_to_rule).collect());
+        let untrusted = self.untrusted;
+        self.rules = RuleSet::new(
+            rows.iter()
+                .filter_map(row_to_rule)
+                .filter(|rule| !untrusted || rule.effect == Effect::Deny)
+                .collect(),
+        );
         Ok(())
     }
 
@@ -233,6 +252,23 @@ impl ToolBroker for SqliteBroker<'_> {
         floor: Option<&Floor>,
     ) -> BrokerOutcome {
         self.handle_inner(Some(ctx), call_id, request, floor)
+    }
+}
+
+/// The file a request touches, preferring the path the policy resolved.
+fn touched_path(request: &ToolRequest, resolved: Option<&Path>) -> Option<PathBuf> {
+    match request {
+        ToolRequest::Read { path }
+        | ToolRequest::ListDir { path }
+        | ToolRequest::Search { path, .. }
+        | ToolRequest::Write { path, .. }
+        | ToolRequest::ApplyPatch { path, .. }
+        | ToolRequest::Edit { path, .. } => {
+            Some(resolved.map_or_else(|| path.clone(), Path::to_path_buf))
+        }
+        ToolRequest::Exec { .. } | ToolRequest::Network { .. } | ToolRequest::AskUser { .. } => {
+            None
+        }
     }
 }
 
@@ -284,7 +320,8 @@ impl SqliteBroker<'_> {
         let resolved_request = with_resolved_path(request, evaluation.resolved_path.as_deref());
         let request = &resolved_request;
 
-        let reason = match tighten(evaluation.decision.clone(), floor) {
+        let decision = self.decide(&evaluation, floor, request);
+        let reason = match decision {
             Decision::Allow { reason } => {
                 decided("allow", &reason);
                 reason
@@ -370,6 +407,31 @@ impl SqliteBroker<'_> {
 }
 
 impl SqliteBroker<'_> {
+    /// The engine's decision under the profile floor. For channel tasks an
+    /// allowed touch of a secret or repository-control file (judged on the
+    /// resolved path) becomes an approval.
+    fn decide(
+        &self,
+        evaluation: &Evaluation,
+        floor: Option<&Floor>,
+        request: &ToolRequest,
+    ) -> Decision {
+        let decision = tighten(evaluation.decision.clone(), floor);
+        if !self.untrusted || !matches!(decision, Decision::Allow { .. }) {
+            return decision;
+        }
+        let checker = self
+            .context
+            .sandbox
+            .checker(self.context.case_insensitive, &RealFs);
+        match touched_path(request, evaluation.resolved_path.as_deref()) {
+            Some(path) if checker.is_protected(&path) => Decision::Ask {
+                reason: "channel task touching a secret or repository-control file".into(),
+            },
+            _ => decision,
+        }
+    }
+
     /// Best-effort capture before an allowed mutating call. A failure is
     /// logged and never blocks the step.
     fn snapshot_before(
@@ -421,7 +483,10 @@ impl SqliteBroker<'_> {
         policy_request: &Request,
         evaluation: &Evaluation,
     ) {
-        let note = if self.persist_allow_rule(policy_request, evaluation) {
+        // Channel tasks never save rules: "always" counts as allow-once.
+        let note = if self.untrusted {
+            "approved once (no rule is saved for a channel task)"
+        } else if self.persist_allow_rule(policy_request, evaluation) {
             "approved for workspace by user"
         } else {
             "approved once by user (no narrow workspace rule possible)"

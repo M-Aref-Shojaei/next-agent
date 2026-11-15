@@ -10,7 +10,7 @@
 //! no answer within the timeout is a deny (enforced by the runner).
 
 use crate::channel::{BoxFuture, Channel, ChannelError};
-use crate::config::ChannelMode;
+use crate::config::{ChannelMode, DmPolicy, GroupPolicy};
 use crate::outbound::{self, Preview};
 use crate::pairing::{self, PairingOutcome, PairingRequest};
 use crate::policy::{self, DmAccess, GroupAccess, GroupFacts};
@@ -18,7 +18,7 @@ use crate::queue::{SessionQueues, StopToken};
 use crate::routing::{self, RouteInput};
 use crate::state::{Activity, AllowEntry, ChannelState};
 use crate::types::{ChatKind, Inbound};
-use crate::untrusted;
+use crate::untrusted::{self, Turn};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -134,7 +134,7 @@ pub struct Hub {
     runner: Arc<dyn TaskRunner>,
     channels: Mutex<HashMap<String, Arc<dyn Channel>>>,
     queues: SessionQueues<Work>,
-    history: Mutex<HashMap<String, VecDeque<(String, String)>>>,
+    history: Mutex<HashMap<String, VecDeque<Turn>>>,
     notify: Mutex<Option<Notify>>,
     clock: Clock,
     throttle: Duration,
@@ -394,11 +394,15 @@ impl Hub {
                     DmAccess::Deny(reason) => Err(reason),
                     DmAccess::NeedsPairing => {
                         let outcome = self.request_pairing(channel, message);
-                        let reply = pairing::pairing_reply(&outcome, &message.sender_id);
-                        let _ = outbound::send_reply(channel, self.state.as_ref(), message, &reply)
-                            .await;
-                        self.log(channel_id, "in", "pairing", peer, &message.text, None);
+                        // Answer only when a code is issued: repeats and a
+                        // full queue stay silent, so a flood of unpaired
+                        // senders cannot spend the bot's rate limit.
                         if matches!(outcome, PairingOutcome::Issued(_)) {
+                            let reply = pairing::pairing_reply(&outcome, &message.sender_id);
+                            let _ =
+                                outbound::send_reply(channel, self.state.as_ref(), message, &reply)
+                                    .await;
+                            self.log(channel_id, "in", "pairing", peer, &message.text, None);
                             self.emit(HubEvent::PairingRequested {
                                 channel_id: channel_id.to_string(),
                             });
@@ -450,9 +454,7 @@ impl Hub {
         let _ = outbound::send_reply(channel, self.state.as_ref(), message, reply).await;
     }
 
-    fn lock_history(
-        &self,
-    ) -> std::sync::MutexGuard<'_, HashMap<String, VecDeque<(String, String)>>> {
+    fn lock_history(&self) -> std::sync::MutexGuard<'_, HashMap<String, VecDeque<Turn>>> {
         self.history.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -555,12 +557,17 @@ impl Hub {
             .channel(&delivery.channel_id)
             .ok_or_else(|| format!("channel {} is not running", delivery.channel_id))?;
         let config = channel.config();
-        let allowed = self
-            .allow_ids(&delivery.channel_id)
-            .iter()
-            .any(|id| id == &delivery.chat_id)
-            || config.groups.iter().any(|g| g == &delivery.chat_id);
-        if !allowed {
+        let chat = &delivery.chat_id;
+        // A paired DM (Telegram: the chat id is the user id) while DMs are
+        // on, or a listed group while groups are on. Policies are honoured.
+        let dm = config.dm_policy != DmPolicy::Disabled
+            && self
+                .allow_ids(&delivery.channel_id)
+                .iter()
+                .any(|id| id == chat);
+        let group =
+            config.group_policy != GroupPolicy::Disabled && config.groups.iter().any(|g| g == chat);
+        if !(dm || group) {
             return Err(format!(
                 "chat {} is not paired or allowed on this channel",
                 delivery.chat_id
@@ -576,21 +583,25 @@ impl Hub {
                 .idempotency_key
                 .as_ref()
                 .map(|k| format!("deliver:{}:{k}:{part}", delivery.channel_id));
+            // Claim before sending, so two concurrent retries cannot both
+            // send; a failed send releases the claim for the next retry.
             if let Some(key) = &key {
-                if self.state.claimed(key)?.is_some() {
+                if !self.state.claim(key, "pending")? {
                     continue;
                 }
             }
-            let reference = channel
+            let result = channel
                 .send(crate::types::Outbound {
                     chat_id: delivery.chat_id.clone(),
                     text: chunk,
                     ..crate::types::Outbound::default()
                 })
-                .await
-                .map_err(|e| e.to_string())?;
-            if let Some(key) = &key {
-                self.state.claim(key, &reference.message_id)?;
+                .await;
+            if let Err(error) = result {
+                if let Some(key) = &key {
+                    self.state.release(key)?;
+                }
+                return Err(error.to_string());
             }
             sent += 1;
         }
@@ -611,7 +622,7 @@ impl Hub {
             message,
             mut job,
         } = work;
-        let history: Vec<(String, String)> = self
+        let history: Vec<Turn> = self
             .lock_history()
             .get(&job.session_key)
             .map_or_else(Vec::new, |h| h.iter().cloned().collect());
@@ -682,10 +693,11 @@ impl Hub {
         if outcome.status == "completed" {
             let mut history = self.lock_history();
             let turns = history.entry(session).or_default();
-            turns.push_back((
-                clip(&message.text, HISTORY_CHARS),
-                clip(&outcome.answer, HISTORY_CHARS),
-            ));
+            turns.push_back(Turn {
+                sender: untrusted::sender_of(&message),
+                asked: clip(&message.text, HISTORY_CHARS),
+                answered: clip(&outcome.answer, HISTORY_CHARS),
+            });
             while turns.len() > HISTORY_TURNS {
                 turns.pop_front();
             }

@@ -45,12 +45,21 @@ pub struct ChannelDto {
 
 /// Save request from Settings. `token` is only sent when the owner pastes
 /// a new one; it goes straight to the keychain.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelInput {
     pub config: ChannelConfig,
     #[serde(default)]
     pub token: Option<String>,
+}
+
+impl std::fmt::Debug for ChannelInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChannelInput")
+            .field("config", &self.config)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 struct Running {
@@ -818,6 +827,17 @@ mod tests {
             fx.secrets.lock().expect("lock")[&id].get().expect("get"),
             None
         );
+    }
+
+    #[test]
+    fn debug_output_redacts_the_token() {
+        let input = ChannelInput {
+            config: ChannelConfig::default(),
+            token: Some(TOKEN.into()),
+        };
+        let text = format!("{input:?}");
+        assert!(!text.contains("ABCdef"), "{text}");
+        assert!(text.contains("<redacted>"));
     }
 
     #[tokio::test]

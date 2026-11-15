@@ -7,8 +7,9 @@ use next_agent_channels::config::guard_mode;
 use next_agent_channels::state::{AllowEntry, ChannelState, StoreState};
 use next_agent_channels::{channel_profile, ChannelExecutor, ChannelMode};
 use next_agent_core::agent::{AgentStep, MockExecutor, TaskSpec};
-use next_agent_core::broker::context_for;
+use next_agent_core::broker::{context_for, Approval};
 use next_agent_core::control::{spawn_task_with, TaskLaunch, TaskOptions};
+use next_agent_core::store::RuleRow;
 use next_agent_core::task::{TaskId, TaskStatus};
 use next_agent_core::{AgentEvent, EventKind, LocalTools, Store, ToolRequest, Workspace};
 use next_agent_permission_engine::{Mode, ModeError, Origin, Transition};
@@ -45,6 +46,22 @@ fn run(
     script: Vec<AgentStep>,
     timeout: Duration,
 ) -> (TaskStatus, Vec<AgentEvent>) {
+    run_with(fx, seed, mode, tools, script, timeout, true, None)
+}
+
+/// [`run`] with the origin flag and an optional desktop answer to every
+/// approval card.
+#[allow(clippy::too_many_arguments)]
+fn run_with(
+    fx: &Fixture,
+    seed: &str,
+    mode: ChannelMode,
+    tools: &[&str],
+    script: Vec<AgentStep>,
+    timeout: Duration,
+    untrusted_origin: bool,
+    answer: Option<Approval>,
+) -> (TaskStatus, Vec<AgentEvent>) {
     let mode = guard_mode(mode.mode()).expect("channel mode");
     let id = TaskId::from_seed(seed);
     Store::open(&fx.db)
@@ -80,11 +97,17 @@ fn run(
         },
         TaskOptions {
             approval_timeout: Some(timeout),
+            untrusted_origin,
             ..TaskOptions::default()
         },
     );
     let mut events = Vec::new();
     while let Ok(event) = handle.events().recv_timeout(Duration::from_secs(10)) {
+        if let (EventKind::ApprovalRequested { approval_id, .. }, Some(answer)) =
+            (&event.kind, answer)
+        {
+            handle.respond(approval_id, answer).expect("respond");
+        }
         events.push(event);
     }
     (handle.join().expect("join"), events)
@@ -252,4 +275,212 @@ fn sqlite_state_round_trips() {
     let activity = state.activity("ch", 5).expect("activity");
     assert_eq!(activity[0].text, "hi");
     assert_ne!(activity[0].ts.len(), 0);
+}
+
+fn save_allow_rule(fx: &Fixture, kind: &str) {
+    Store::open(&fx.db)
+        .expect("store")
+        .insert_rule(&RuleRow {
+            id: format!("rule_{kind}"),
+            scope: "workspace".into(),
+            workspace_id: Some(fx.workspace.id().to_string()),
+            effect: "allow".into(),
+            kind: kind.into(),
+            pattern: String::new(),
+        })
+        .expect("rule");
+}
+
+fn requested_options(events: &[AgentEvent]) -> Vec<Vec<String>> {
+    events
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EventKind::ApprovalRequested { options, .. } => Some(options.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn saved_allow_rules_do_not_auto_approve_channel_tasks() {
+    let fx = fixture("rules");
+    save_allow_rule(&fx, "write_file");
+    // A desktop task: the saved rule upgrades the ask to allow.
+    let (_, desktop) = run_with(
+        &fx,
+        "r1",
+        ChannelMode::Manual,
+        &["write_file"],
+        vec![write(&fx, "desk.txt")],
+        Duration::from_millis(150),
+        false,
+        None,
+    );
+    assert_eq!(decisions(&desktop)[0].0, "allow");
+    // A channel task: the rule is ignored, so it asks; nobody answers: deny.
+    let (_, channel) = run_with(
+        &fx,
+        "r2",
+        ChannelMode::Manual,
+        &["write_file"],
+        vec![write(&fx, "chan.txt")],
+        Duration::from_millis(150),
+        true,
+        None,
+    );
+    assert_eq!(decisions(&channel)[0].0, "ask");
+    assert_eq!(
+        requested_options(&channel).len(),
+        1,
+        "an approval card was shown"
+    );
+    assert!(!fx.workspace.root().join("chan.txt").exists());
+}
+
+#[test]
+fn deny_rules_still_apply_to_channel_tasks() {
+    let fx = fixture("deny-rule");
+    Store::open(&fx.db)
+        .expect("store")
+        .insert_rule(&RuleRow {
+            id: "rule_deny_read".into(),
+            scope: "workspace".into(),
+            workspace_id: Some(fx.workspace.id().to_string()),
+            effect: "deny".into(),
+            kind: "read_file".into(),
+            pattern: String::new(),
+        })
+        .expect("rule");
+    let script = vec![AgentStep::Call {
+        call_id: "c1".into(),
+        request: ToolRequest::Read {
+            path: fx.workspace.root().join("README.md"),
+        },
+    }];
+    let (_, events) = run(
+        &fx,
+        "dr",
+        ChannelMode::Manual,
+        &["read_file"],
+        script,
+        Duration::from_secs(5),
+    );
+    assert_eq!(decisions(&events)[0].0, "deny");
+}
+
+#[test]
+fn always_on_a_channel_task_is_offered_never_and_saves_no_rule() {
+    let fx = fixture("always");
+    let (_, events) = run_with(
+        &fx,
+        "a1",
+        ChannelMode::Manual,
+        &["write_file"],
+        vec![write(&fx, "once.txt")],
+        Duration::from_secs(5),
+        true,
+        Some(Approval::AlwaysForWorkspace),
+    );
+    let options = requested_options(&events);
+    assert_eq!(
+        options,
+        [vec!["allow".to_string(), "deny".to_string()]],
+        "no always option for channel tasks"
+    );
+    // An "always" answer (e.g. from an older overlay) runs once and saves nothing.
+    assert!(fx.workspace.root().join("once.txt").exists());
+    let rules = Store::open(&fx.db)
+        .expect("store")
+        .rules_for(fx.workspace.id())
+        .expect("rules");
+    assert_eq!(rules.len(), 0, "no rule saved from a channel task");
+}
+
+#[test]
+fn secret_files_need_approval_for_channel_tasks() {
+    let fx = fixture("secret");
+    fs::write(fx.workspace.root().join(".env"), "API_KEY=hunter2\n").expect("env");
+    let read = |name: &str| AgentStep::Call {
+        call_id: "c1".into(),
+        request: ToolRequest::Read {
+            path: fx.workspace.root().join(name),
+        },
+    };
+    let (_, events) = run(
+        &fx,
+        "s1",
+        ChannelMode::Manual,
+        &["read_file"],
+        vec![read(".env")],
+        Duration::from_millis(150),
+    );
+    assert_eq!(decisions(&events)[0].0, "ask");
+    let leaked = events.iter().any(|e| matches!(&e.kind, EventKind::ToolFinished { summary, .. } if summary.contains("hunter2")));
+    assert!(!leaked, "secret contents never reach the task unapproved");
+    // Ordinary files still read without a prompt.
+    let (_, events) = run(
+        &fx,
+        "s2",
+        ChannelMode::Manual,
+        &["read_file"],
+        vec![read("README.md")],
+        Duration::from_secs(5),
+    );
+    assert_eq!(decisions(&events)[0].0, "allow");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_secret_file_needs_approval_too() {
+    let fx = fixture("secret-link");
+    fs::write(fx.workspace.root().join(".env"), "API_KEY=hunter2\n").expect("env");
+    std::os::unix::fs::symlink(
+        fx.workspace.root().join(".env"),
+        fx.workspace.root().join("notes.txt"),
+    )
+    .expect("link");
+    let script = vec![AgentStep::Call {
+        call_id: "c1".into(),
+        request: ToolRequest::Read {
+            path: fx.workspace.root().join("notes.txt"),
+        },
+    }];
+    let (_, events) = run(
+        &fx,
+        "s3",
+        ChannelMode::Manual,
+        &["read_file"],
+        script,
+        Duration::from_millis(150),
+    );
+    assert_eq!(decisions(&events)[0].0, "ask");
+}
+
+#[test]
+fn enabling_write_file_does_not_enable_edit_or_apply_patch() {
+    let fx = fixture("kinds");
+    let edit = AgentStep::Call {
+        call_id: "c1".into(),
+        request: ToolRequest::Edit {
+            path: fx.workspace.root().join("README.md"),
+            old_string: "hello".into(),
+            new_string: "bye".into(),
+            replace_all: false,
+        },
+    };
+    let (_, events) = run(
+        &fx,
+        "k1",
+        ChannelMode::Manual,
+        &["write_file"],
+        vec![edit],
+        Duration::from_secs(5),
+    );
+    let decided = decisions(&events);
+    assert_eq!(decided[0].0, "deny");
+    assert!(decided[0].1.contains("channel"), "{decided:?}");
+    assert!(
+        requested_options(&events).is_empty(),
+        "denied without a prompt"
+    );
 }

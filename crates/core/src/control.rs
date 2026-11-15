@@ -113,6 +113,7 @@ pub struct ChannelApprover {
     events: Emitter,
     poll: Duration,
     timeout: Option<Duration>,
+    options: Vec<Approval>,
 }
 
 impl ChannelApprover {
@@ -123,7 +124,15 @@ impl ChannelApprover {
             events,
             poll: Duration::from_millis(25),
             timeout: None,
+            options: Approval::ALL.to_vec(),
         }
+    }
+
+    /// Offer only allow and deny (no "always for this workspace").
+    #[must_use]
+    pub fn without_always(mut self) -> Self {
+        self.options.retain(|o| *o != Approval::AlwaysForWorkspace);
+        self
     }
 
     /// Deny an approval nobody answered within `timeout` (resolved `by`
@@ -148,7 +157,8 @@ impl Approver for ChannelApprover {
             approval_id: approval_id.clone(),
             call_id: call_id.to_string(),
             summary: format!("{} {} — {reason}", request.name(), describe(request)),
-            options: Approval::ALL
+            options: self
+                .options
                 .iter()
                 .map(|choice| choice.as_str().to_string())
                 .collect(),
@@ -202,6 +212,9 @@ pub struct TaskOptions {
     /// Deny approvals nobody answers within this time (channel tasks).
     /// `None` waits until answered or cancelled.
     pub approval_timeout: Option<Duration>,
+    /// The task comes from outside the desktop (a chat channel): see
+    /// [`SqliteBroker::untrusted_origin`]. Approvals offer no "always".
+    pub untrusted_origin: bool,
 }
 
 /// A running task. Dropping the handle does not cancel the task.
@@ -312,13 +325,18 @@ fn run_launch(
     let events = Emitter::new(spec.id.clone())
         .with_sink(StoreSink::new(sink_store))
         .with_sink(forward);
+    let mut approver = ChannelApprover::new(Arc::clone(control), events.clone())
+        .with_timeout(options.approval_timeout);
+    if options.untrusted_origin {
+        approver = approver.without_always();
+    }
     let mut broker = SqliteBroker::new(&store, mode, context)
         .for_task(task_id.clone())
         .with_boxed_executor(tools)
-        .with_approver(
-            ChannelApprover::new(Arc::clone(control), events.clone())
-                .with_timeout(options.approval_timeout),
-        );
+        .with_approver(approver);
+    if options.untrusted_origin {
+        broker = broker.untrusted_origin();
+    }
     if let Some(snapshots) = options.snapshots {
         broker = broker.with_snapshots(snapshots);
     }

@@ -2155,6 +2155,16 @@ impl Store {
         )? == 1)
     }
 
+    /// Forget an idempotency key (the claimed send failed).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn channel_release(&self, key: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM channel_idempotency WHERE key = ?1", [key])?;
+        Ok(())
+    }
+
     /// The value recorded with an idempotency key.
     ///
     /// # Errors
