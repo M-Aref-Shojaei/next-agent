@@ -61,6 +61,7 @@ const OUTPUTS_REMOVED: usize = 2;
 const USER_ONLY: usize = 3;
 const OMITTED: usize = 4;
 const LEVELS: [usize; 5] = [WHOLE, OUTPUTS_CLIPPED, OUTPUTS_REMOVED, USER_ONLY, OMITTED];
+const LEVEL_COUNT: usize = LEVELS.len();
 
 const CHECKPOINT_OPEN: &str = "<conversation-checkpoint>";
 const CHECKPOINT_CLOSE: &str = "</conversation-checkpoint>";
@@ -477,15 +478,10 @@ fn flatten_message(message: &ChatMessage, level: usize) -> String {
     lines.join("\n")
 }
 
-/// Text transcript of `messages[from..]`, shrunk to fit `target` tokens
-/// together with `lead`. `None` when even the most shortened form does not fit.
-fn flatten_and_drop_oldest(
-    lead: &[ChatMessage],
-    recent: &str,
-    messages: &[ChatMessage],
-    from: usize,
-    target: u64,
-) -> Option<Vec<ChatMessage>> {
+/// Rendered text of each exchange at every level in `LEVELS`, oldest first.
+/// The carried-over `recent` summary (if any) comes first; exchanges with no
+/// whole-level text are dropped.
+fn exchanges(recent: &str, messages: &[ChatMessage], from: usize) -> Vec<[String; LEVEL_COUNT]> {
     let mut groups: Vec<Vec<&ChatMessage>> = Vec::new();
     for index in from..messages.len() {
         if groups.is_empty() || opens_exchange(messages, index) {
@@ -495,7 +491,7 @@ fn flatten_and_drop_oldest(
             group.push(&messages[index]);
         }
     }
-    let mut exchanges: Vec<[String; 5]> = Vec::new();
+    let mut exchanges: Vec<[String; LEVEL_COUNT]> = Vec::new();
     if !recent.is_empty() {
         exchanges.push(LEVELS.map(|level| {
             if level == OMITTED {
@@ -518,6 +514,19 @@ fn flatten_and_drop_oldest(
             exchanges.push(renders);
         }
     }
+    exchanges
+}
+
+/// Text transcript of `messages[from..]`, shrunk to fit `target` tokens
+/// together with `lead`. `None` when even the most shortened form does not fit.
+fn flatten_and_drop_oldest(
+    lead: &[ChatMessage],
+    recent: &str,
+    messages: &[ChatMessage],
+    from: usize,
+    target: u64,
+) -> Option<Vec<ChatMessage>> {
+    let exchanges = exchanges(recent, messages, from);
     if exchanges.is_empty() {
         return None;
     }
