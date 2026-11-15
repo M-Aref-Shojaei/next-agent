@@ -728,14 +728,10 @@ pub fn compact(
         .take_while(|m| m.role == "system")
         .cloned()
         .collect();
-    let lead: Vec<ChatMessage> = match &previous {
-        Some(checkpoint) => {
-            let mut lead = system.clone();
-            lead.push(ChatMessage::user(checkpoint_text(&checkpoint.summary, "")));
-            lead
-        }
-        None => system.clone(),
-    };
+    let mut lead = system.clone();
+    if let Some(c) = &previous {
+        lead.push(ChatMessage::user(checkpoint_text(&c.summary, "")));
+    }
     let recent = previous
         .as_ref()
         .map_or_else(String::new, |c| c.recent.clone());
