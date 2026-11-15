@@ -1,7 +1,7 @@
 ---
 title: Design Studio Sources
 tags: [upstream, design]
-status: researched
+status: ported
 ---
 
 # Design Studio Sources
@@ -14,6 +14,9 @@ The owner used Open Design and found **serious flaws in its UI, UX and functiona
 | [Onlook](https://github.com/onlook-dev/onlook) | Apache-2.0 | Next.js, Supabase, CodeSandbox | Runs the real app in a preview and **maps each element to its place in the source**; applies a visual edit to the preview first, then to the code; right-click opens the source; checkpoints | Supabase, CodeSandbox and hosting. The open-source editor is the predecessor of a hosted product, so check its activity before porting |
 | [OpenUI](https://github.com/wandb/openui) | Apache-2.0 | Python backend, npm frontend | Describe a UI → live HTML; **convert HTML to React, Svelte or Web Components** | The Python backend and LiteLLM |
 | [open-pencil](https://github.com/open-pencil/open-pencil) | MIT (*verify*) | **Tauri** + Vue (same shell as ours) | Later: read and write Figma `.fig` files; its headless design SDK | Not production-ready yet. Revisit when it is stable |
+
+## Status
+Built in Wave 2 session 9. Pinned commits: Open Design `59e4f2a`, Onlook `423e2e9`, OpenUI `42d7ab4`. See [[Design Studio]] for what was ported where.
 
 ## Why this beats copying one tool
 - Open Design is good at **generating from a design system**, but its editing loop is weak.

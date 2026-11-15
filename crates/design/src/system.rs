@@ -1,3 +1,7 @@
+// Adapted from Open Design (Apache-2.0, © 2026 Open Design contributors):
+// design-systems/README.md (DESIGN.md + tokens.css package layout, the
+// nine-section DESIGN.md headings) @ 59e4f2a — modified: the sections are
+// filled from a project's own CSS by our extractor; no design system taken.
 //! Design systems: read a project's CSS into tokens, then write `DESIGN.md`
 //! (the brand contract the `design` model designs from) and `tokens.css`.
 //!
@@ -212,7 +216,7 @@ pub fn extract_from_sources(name: &str, sources: &[(String, String)]) -> DesignS
     let mut system = DesignSystem {
         name: name.to_string(),
         palette: tally.ranked_colors(),
-        fonts: ranked(&tally.fonts),
+        fonts: with_first(ranked(&tally.fonts), tally.root_font.clone()),
         font_sizes: ranked(&tally.sizes),
         spacing: ranked(&tally.spacing),
         radii: ranked(&tally.radii),
@@ -294,6 +298,8 @@ struct Tally {
     spacing: BTreeMap<String, usize>,
     radii: BTreeMap<String, usize>,
     shadows: BTreeMap<String, usize>,
+    /// The document's own font (first `font-family` on `:root`/`html`/`body`).
+    root_font: Option<String>,
 }
 
 impl Tally {
@@ -307,7 +313,13 @@ impl Tally {
             return; // already a token reference
         }
         match p {
-            "font-family" => bump(&mut self.fonts, v),
+            "font-family" if matches!(v, "inherit" | "initial" | "unset" | "revert") => {}
+            "font-family" => {
+                if self.root_font.is_none() && decl.is_root_level() && decl.context.len() == 1 {
+                    self.root_font = Some(v.to_string());
+                }
+                bump(&mut self.fonts, v);
+            }
             "font-size" => {
                 for len in css::lengths_in(v) {
                     bump(&mut self.sizes, &len);
@@ -347,6 +359,15 @@ fn is_spacing_property(p: &str) -> bool {
         || p == "column-gap"
         || p.starts_with("padding")
         || p.starts_with("margin")
+}
+
+/// `first` (when known) leads the list, the rest keep their order.
+fn with_first(mut list: Vec<String>, first: Option<String>) -> Vec<String> {
+    if let Some(first) = first {
+        list.retain(|f| *f != first);
+        list.insert(0, first);
+    }
+    list
 }
 
 fn ranked(map: &BTreeMap<String, usize>) -> Vec<String> {
@@ -515,10 +536,18 @@ pub fn render_design_md(system: &DesignSystem) -> String {
     }
 
     let _ = write!(md, "## 3. {}\n\n", DESIGN_MD_SECTIONS[2]);
-    let fonts: Vec<String> = tokens_of(TokenKind::Font)
+    let font_tokens = tokens_of(TokenKind::Font);
+    let fonts: Vec<String> = font_tokens
         .iter()
         .map(|t| format!("`{}` = {}", t.name, t.value))
-        .chain(system.fonts.iter().take(3).cloned())
+        .chain(
+            system
+                .fonts
+                .iter()
+                .take(3)
+                .filter(|f| !font_tokens.iter().any(|t| &t.value == *f))
+                .cloned(),
+        )
         .collect();
     if fonts.is_empty() {
         md.push_str("- Typeface: system UI stack.\n");
@@ -670,6 +699,22 @@ mod tests {
             .iter()
             .any(|t| t.name == "--text-1" && t.value == "14px"));
         assert_eq!(s.fonts, vec!["-apple-system, sans-serif"]);
+    }
+
+    #[test]
+    fn the_root_font_wins_over_frequent_ones() {
+        let css = ":root { font-family: Inter, sans-serif; } code, pre, .mono { font-family: ui-monospace, monospace; } .a { font-family: ui-monospace, monospace; } .b { font-family: inherit; }";
+        let s = extract_from_sources("X", &[("app.css".into(), css.into())]);
+        assert_eq!(
+            s.fonts,
+            vec!["Inter, sans-serif", "ui-monospace, monospace"]
+        );
+        let font = s
+            .tokens
+            .iter()
+            .find(|t| t.kind == TokenKind::Font)
+            .expect("font");
+        assert_eq!(font.value, "Inter, sans-serif");
     }
 
     #[test]

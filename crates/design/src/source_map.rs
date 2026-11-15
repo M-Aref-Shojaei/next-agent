@@ -1,4 +1,4 @@
-// Adapted from Onlook (Apache-2.0, © Onlook contributors): the idea of
+// Adapted from Onlook (Apache-2.0, © 2024 On Off, Inc.): the idea of
 // mapping every rendered element back to its place in the source
 // (packages/parser, element ids → file + position) @ 423e2e9 — modified:
 // re-implemented in Rust with no ids; locations come from framework dev

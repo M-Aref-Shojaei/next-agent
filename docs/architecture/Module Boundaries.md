@@ -22,6 +22,8 @@ when you add a dependency that someone else ships, add a row here.
 | Health probing | `HealthProbe` | `crates/process-manager` | `Gateway` (provider behind the `chat` role), `RouterClient`, scripted probes in tests |
 | Git isolation | `WorktreeProvider` | `crates/core` (task 4) | git CLI, no-op for non-git workspaces |
 | Task records | `TaskRecorder` | `crates/core` (task 5) | vault Markdown, JSON export |
+| Design model | `DesignModel` | `crates/design/src/studio.rs` | gateway `design` role (`src-tauri/src/design.rs`), `MockDesignModel` (offline), scripted models in tests |
+| Design preview transport | `PreviewProxy` | `crates/design/src/proxy.rs` | `std::net` loopback reverse proxy only (no `reqwest`); targets checked by `ssrf::check_preview_url` |
 | Notes graph | `Graph`, `Document`, `Index` | `crates/graph` | Logseq 0.10.9 Markdown file graph; SQLite index cache |
 | Wire format | `EventEnvelope` (`v: 1`) | `packages/contracts` | Rust producer, TS consumer, sidecars |
 | Sidecars | JSON-RPC envelopes | `services/*` | opencode gateway (M2), Hermes adapter (M2) |
