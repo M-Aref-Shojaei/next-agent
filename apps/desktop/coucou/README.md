@@ -499,7 +499,7 @@ windows/
     desktop/           Mochi's own little window, when he lives on the desktop
     island/            state machine, hooks, integrations
     views/             every island view
-    settings/          the settings window
+    hub/               the Coucou window (history, Notetaker, statistics, dictionary, snippets, mail)
   src-tauri/           Rust backend: window, named pipe, Claude API, pollers
   hook/                coucou-hook.exe, the Claude Code relay
   scripts/             icon generator

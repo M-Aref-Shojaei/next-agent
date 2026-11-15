@@ -9,7 +9,7 @@
   import { apiState, errorText, exposureNotice, keyStoreName, overlay } from "$lib/overlay-settings.ts";
   import { overlayStore as store } from "$lib/overlay-store.svelte.ts";
   import { CUSTOM_SERVER_KEY, providerDef, urlExposure } from "$coucou/core/providers";
-  import { CLAUDE_MODELS } from "$coucou/settings/claude-models";
+  import { CLAUDE_MODELS } from "$coucou/core/claude-models";
   import type { ModelInfo, SubscriptionStatus } from "$coucou/core/bridge";
 
   const KEY_STORE = keyStoreName(navigator.userAgent);

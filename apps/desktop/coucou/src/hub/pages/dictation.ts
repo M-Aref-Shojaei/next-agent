@@ -10,7 +10,7 @@ import { FlowBridge, type FlowEntry, type FlowStats, flowKeyId } from "../../cor
 import type { HubContext } from "../shell";
 import { emptyState, glowCard } from "../hero";
 import { button, card, icon, iconButton, keyLabel, label, number, row, shortCount, toggle } from "../ui";
-import { modelsControl } from "./flowsettings";
+import { modelsControl } from "../models";
 import { pageSave } from "../save";
 
 function dayKey(ms: number): string {

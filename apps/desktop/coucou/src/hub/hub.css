@@ -100,7 +100,7 @@ body.hub-window {
   padding: 0;
 }
 
-/* The window's text fields (settings.css, input[type="text"]) weigh more than
+/* The window's text fields (base.css, input[type="text"]) weigh more than
    one class and drew a second box inside this one: the field is the box. */
 .hub-search .hub-search-input,
 .hub-search .hub-search-input:focus {

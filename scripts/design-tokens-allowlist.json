@@ -17,11 +17,6 @@
       "reason": "Coucou identity colours (per pill, agent or forge): data, not styling. The hex strings are persisted in preferences, alpha-suffixed (color + 'b3') and drawn on canvas, so they cannot be CSS variables."
     },
     {
-      "path": "apps/desktop/coucou/src/settings/**",
-      "pending": true,
-      "reason": "Coucou's settings window (settings.css and its TypeScript) is not scanned yet. Pending: move it into Next Agent Settings (ADR-0012). The rest of apps/desktop/coucou/src is scanned."
-    },
-    {
       "path": "apps/desktop/coucou/src/views/integrations.ts",
       "max": 2,
       "reason": "Coucou identity colours (per pill, agent or forge): data, not styling. The hex strings are persisted in preferences, alpha-suffixed (color + 'b3') and drawn on canvas, so they cannot be CSS variables."

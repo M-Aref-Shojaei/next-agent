@@ -9,7 +9,7 @@ import { FlowBridge, clock, speakerColor, type Note, type NotesState } from "../
 import type { HubContext } from "../shell";
 import { emptyState, glowCard } from "../hero";
 import { button, iconButton, segmented } from "../ui";
-import { modelsControl } from "./flowsettings";
+import { modelsControl } from "../models";
 
 const lang = () => document.documentElement.lang || undefined;
 
