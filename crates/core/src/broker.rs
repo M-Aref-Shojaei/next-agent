@@ -163,12 +163,8 @@ impl<'a> SqliteBroker<'a> {
     #[must_use]
     pub fn untrusted_origin(mut self) -> Self {
         self.untrusted = true;
-        // Rules loaded before the flag was set may hold allow rules: reload
-        // as deny-only, and on failure keep none (`load_rules` called later
-        // by the launcher reports the error and stops the task).
-        if self.load_rules().is_err() {
-            self.rules = RuleSet::empty();
-        }
+        // Rules loaded before the flag was set may hold allow rules.
+        self.rules.retain(|rule| rule.effect == Effect::Deny);
         self
     }
 
@@ -261,23 +257,6 @@ impl ToolBroker for SqliteBroker<'_> {
     }
 }
 
-/// The file a request touches, preferring the path the policy resolved.
-fn touched_path(request: &ToolRequest, resolved: Option<&Path>) -> Option<PathBuf> {
-    match request {
-        ToolRequest::Read { path }
-        | ToolRequest::ListDir { path }
-        | ToolRequest::Search { path, .. }
-        | ToolRequest::Write { path, .. }
-        | ToolRequest::ApplyPatch { path, .. }
-        | ToolRequest::Edit { path, .. } => {
-            Some(resolved.map_or_else(|| path.clone(), Path::to_path_buf))
-        }
-        ToolRequest::Exec { .. } | ToolRequest::Network { .. } | ToolRequest::AskUser { .. } => {
-            None
-        }
-    }
-}
-
 /// Apply an agent-profile floor on top of the engine's decision. Only ever
 /// tightens: Deny wins over everything, Ask replaces Allow.
 fn tighten(decision: Decision, floor: Option<&Floor>) -> Decision {
@@ -326,7 +305,7 @@ impl SqliteBroker<'_> {
         let resolved_request = with_resolved_path(request, evaluation.resolved_path.as_deref());
         let request = &resolved_request;
 
-        let decision = self.decide(&evaluation, floor, request);
+        let decision = self.decide(&evaluation, floor);
         let reason = match decision {
             Decision::Allow { reason } => {
                 decided("allow", &reason);
@@ -414,27 +393,15 @@ impl SqliteBroker<'_> {
 
 impl SqliteBroker<'_> {
     /// The engine's decision under the profile floor. For channel tasks an
-    /// allowed touch of a secret or repository-control file (judged on the
-    /// resolved path) becomes an approval.
-    fn decide(
-        &self,
-        evaluation: &Evaluation,
-        floor: Option<&Floor>,
-        request: &ToolRequest,
-    ) -> Decision {
-        let decision = tighten(evaluation.decision.clone(), floor);
-        if !self.untrusted || !matches!(decision, Decision::Allow { .. }) {
-            return decision;
-        }
-        let checker = self
-            .context
-            .sandbox
-            .checker(self.context.case_insensitive, &RealFs);
-        match touched_path(request, evaluation.resolved_path.as_deref()) {
-            Some(path) if checker.is_protected(&path) => Decision::Ask {
+    /// allowed touch of a secret or repository-control file (the engine's
+    /// `protected` fact, judged on resolved paths and on paths a command
+    /// mentions) becomes an approval.
+    fn decide(&self, evaluation: &Evaluation, floor: Option<&Floor>) -> Decision {
+        match tighten(evaluation.decision.clone(), floor) {
+            Decision::Allow { .. } if self.untrusted && evaluation.protected => Decision::Ask {
                 reason: "channel task touching a secret or repository-control file".into(),
             },
-            _ => decision,
+            decision => decision,
         }
     }
 

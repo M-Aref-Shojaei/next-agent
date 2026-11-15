@@ -11,16 +11,6 @@ use crate::config::{ChannelConfig, DmPolicy, GroupPolicy};
 /// Allow-list entry that admits everyone (needed for [`DmPolicy::Open`]).
 pub const WILDCARD: &str = "*";
 
-/// Whether `sender` is on `allow` (exact id match, or `*`).
-#[must_use]
-pub fn sender_allowed(allow: &[String], sender: &str) -> bool {
-    let sender = sender.trim();
-    !sender.is_empty()
-        && allow
-            .iter()
-            .any(|entry| entry == WILDCARD || entry == sender)
-}
-
 /// Whether `sender` is listed by id (no wildcard).
 fn listed(allow: &[String], sender: &str) -> bool {
     let sender = sender.trim();
@@ -96,12 +86,56 @@ pub fn group_access(config: &ChannelConfig, allow: &[String], facts: &GroupFacts
     GroupAccess::Allow
 }
 
+/// Whether an out-of-conversation message (the scheduler's "deliver to
+/// channel") may go to `chat`: a listed group while groups are on, or a
+/// paired sender's DM (Telegram: the chat id is the user id) while DMs are
+/// on. Wildcards never name a chat. `allow` is read only for DM targets.
+pub fn deliver_access(
+    config: &ChannelConfig,
+    chat: &str,
+    allow: impl FnOnce() -> Vec<String>,
+) -> bool {
+    let chat = chat.trim();
+    if chat.is_empty() || chat == WILDCARD {
+        return false;
+    }
+    let group =
+        config.group_policy != GroupPolicy::Disabled && config.groups.iter().any(|g| g == chat);
+    group || (config.dm_policy != DmPolicy::Disabled && listed(&allow(), chat))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn list(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn deliver_access_follows_both_policies() {
+        let paired = || list(&["42"]);
+        let mut cfg = ChannelConfig {
+            groups: list(&["-100"]),
+            ..ChannelConfig::default()
+        };
+        assert!(deliver_access(&cfg, "42", paired));
+        assert!(deliver_access(&cfg, " 42 ", paired));
+        assert!(
+            !deliver_access(&cfg, "-100", paired),
+            "groups off by default"
+        );
+        assert!(!deliver_access(&cfg, "*", || list(&["*"])));
+        assert!(
+            !deliver_access(&cfg, "7", || list(&["*"])),
+            "`*` names no chat"
+        );
+        cfg.group_policy = GroupPolicy::Allowlist;
+        assert!(deliver_access(&cfg, "-100", || unreachable!(
+            "groups need no allow-list read"
+        )));
+        cfg.dm_policy = DmPolicy::Disabled;
+        assert!(!deliver_access(&cfg, "42", paired));
     }
 
     #[test]

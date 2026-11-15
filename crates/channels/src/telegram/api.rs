@@ -79,11 +79,6 @@ impl TelegramApi {
         self.token.split(':').next().unwrap_or_default()
     }
 
-    #[must_use]
-    pub fn poll_timeout(&self) -> Duration {
-        self.poll
-    }
-
     /// Call `method` with a JSON body; returns `result`.
     async fn call(&self, method: &str, body: &Value) -> Result<Value, ChannelError> {
         let url = format!("{}/bot{}/{method}", self.base, self.token);

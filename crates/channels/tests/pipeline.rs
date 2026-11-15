@@ -277,14 +277,14 @@ fn sqlite_state_round_trips() {
     assert_ne!(activity[0].ts.len(), 0);
 }
 
-fn save_allow_rule(fx: &Fixture, kind: &str) {
+fn save_rule(fx: &Fixture, effect: &str, kind: &str) {
     Store::open(&fx.db)
         .expect("store")
         .insert_rule(&RuleRow {
-            id: format!("rule_{kind}"),
+            id: format!("rule_{effect}_{kind}"),
             scope: "workspace".into(),
             workspace_id: Some(fx.workspace.id().to_string()),
-            effect: "allow".into(),
+            effect: effect.into(),
             kind: kind.into(),
             pattern: String::new(),
         })
@@ -304,7 +304,7 @@ fn requested_options(events: &[AgentEvent]) -> Vec<Vec<String>> {
 #[test]
 fn saved_allow_rules_do_not_auto_approve_channel_tasks() {
     let fx = fixture("rules");
-    save_allow_rule(&fx, "write_file");
+    save_rule(&fx, "allow", "write_file");
     // A desktop task: the saved rule upgrades the ask to allow.
     let (_, desktop) = run_with(
         &fx,
@@ -340,17 +340,7 @@ fn saved_allow_rules_do_not_auto_approve_channel_tasks() {
 #[test]
 fn deny_rules_still_apply_to_channel_tasks() {
     let fx = fixture("deny-rule");
-    Store::open(&fx.db)
-        .expect("store")
-        .insert_rule(&RuleRow {
-            id: "rule_deny_read".into(),
-            scope: "workspace".into(),
-            workspace_id: Some(fx.workspace.id().to_string()),
-            effect: "deny".into(),
-            kind: "read_file".into(),
-            pattern: String::new(),
-        })
-        .expect("rule");
+    save_rule(&fx, "deny", "read_file");
     let script = vec![AgentStep::Call {
         call_id: "c1".into(),
         request: ToolRequest::Read {
@@ -387,7 +377,13 @@ fn always_on_a_channel_task_is_offered_never_and_saves_no_rule() {
         [vec!["allow".to_string(), "deny".to_string()]],
         "no always option for channel tasks"
     );
-    // An "always" answer (e.g. from an older overlay) runs once and saves nothing.
+    // An "always" answer (e.g. from an older overlay) runs once, is recorded
+    // as allow, and saves nothing.
+    let resolved = events.iter().find_map(|e| match &e.kind {
+        EventKind::ApprovalResolved { choice, .. } => Some(choice.clone()),
+        _ => None,
+    });
+    assert_eq!(resolved.as_deref(), Some("allow"));
     assert!(fx.workspace.root().join("once.txt").exists());
     let rules = Store::open(&fx.db)
         .expect("store")

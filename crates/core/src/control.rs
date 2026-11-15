@@ -166,6 +166,9 @@ impl Approver for ChannelApprover {
         let deadline = self.timeout.map(|t| std::time::Instant::now() + t);
         let (choice, by) = loop {
             match receiver.recv_timeout(self.poll) {
+                // A choice that was not offered ("always" on a channel task,
+                // from an older client) is recorded as what it does: allow once.
+                Ok(choice) if !self.options.contains(&choice) => break (Approval::Allow, "user"),
                 Ok(choice) => break (choice, "user"),
                 Err(RecvTimeoutError::Timeout) if self.control.is_cancelled() => {
                     self.control.unregister(&approval_id);

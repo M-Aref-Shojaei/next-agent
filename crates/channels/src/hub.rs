@@ -10,7 +10,7 @@
 //! no answer within the timeout is a deny (enforced by the runner).
 
 use crate::channel::{BoxFuture, Channel, ChannelError};
-use crate::config::{ChannelMode, DmPolicy, GroupPolicy};
+use crate::config::ChannelMode;
 use crate::outbound::{self, Preview};
 use crate::pairing::{self, PairingOutcome, PairingRequest};
 use crate::policy::{self, DmAccess, GroupAccess, GroupFacts};
@@ -39,7 +39,6 @@ pub const WAITING_FOR_APPROVAL: &str = "⏳ Waiting for approval on the desktop�
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelJob {
     pub channel_id: String,
-    pub channel_kind: String,
     pub workspace_id: String,
     pub mode: ChannelMode,
     pub tools: Vec<String>,
@@ -51,7 +50,6 @@ pub struct ChannelJob {
     /// Timeline label, e.g. `Telegram · @alice`.
     pub origin: String,
     pub chat_id: String,
-    pub sender_id: String,
 }
 
 /// Progress a runner reports while the task runs.
@@ -352,7 +350,6 @@ impl Hub {
         }
         let job = ChannelJob {
             channel_id: channel_id.to_string(),
-            channel_kind: config.kind.clone(),
             workspace_id: config.workspace_id.clone(),
             mode: config.mode,
             tools: config.tools.clone(),
@@ -363,7 +360,6 @@ impl Hub {
             prompt: String::new(),
             origin,
             chat_id: message.chat_id.clone(),
-            sender_id: message.sender_id.clone(),
         };
         self.queues.push(
             &session,
@@ -560,23 +556,16 @@ impl Hub {
             .channel(&delivery.channel_id)
             .ok_or_else(|| format!("channel {} is not running", delivery.channel_id))?;
         let config = channel.config();
-        let chat = &delivery.chat_id;
-        // A paired DM (Telegram: the chat id is the user id) while DMs are
-        // on, or a listed group while groups are on. Policies are honoured.
-        let dm = config.dm_policy != DmPolicy::Disabled
-            && self
-                .allow_ids(&delivery.channel_id)
-                .iter()
-                .any(|id| id == chat);
-        let group =
-            config.group_policy != GroupPolicy::Disabled && config.groups.iter().any(|g| g == chat);
-        if !(dm || group) {
+        if !policy::deliver_access(config, &delivery.chat_id, || {
+            self.allow_ids(&delivery.channel_id)
+        }) {
             return Err(format!(
                 "chat {} is not paired or allowed on this channel",
                 delivery.chat_id
             ));
         }
         let limit = channel.capabilities().text_chunk_limit;
+        let scope = channel.key_scope();
         let mut sent = 0;
         for (part, chunk) in crate::chunk::chunk_text(&delivery.text, limit)
             .into_iter()
@@ -585,7 +574,7 @@ impl Hub {
             let key = delivery
                 .idempotency_key
                 .as_ref()
-                .map(|k| format!("deliver:{}:{k}:{part}", delivery.channel_id));
+                .map(|k| format!("deliver:{scope}:{k}:{part}"));
             // Claim before sending, so two concurrent retries cannot both
             // send; a failed send releases the claim for the next retry.
             if let Some(key) = &key {

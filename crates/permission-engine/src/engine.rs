@@ -87,6 +87,11 @@ pub struct Evaluation {
     /// this path (and re-check it at open time) so the decision and the side
     /// effect cannot diverge through `..` or symlink tricks.
     pub resolved_path: Option<PathBuf>,
+    /// The target (or, for commands, a path the command mentions) is a secret
+    /// file or repository control dir, judged on the resolved path. Callers
+    /// with stricter rules (channel tasks) use it to ask where the mode would
+    /// allow.
+    pub protected: bool,
 }
 
 /// Evaluate one request against the active mode and rule set, with lexical
@@ -132,6 +137,7 @@ pub fn explain_with(
     let class = facts.analysis.as_ref().map(|analysis| analysis.class);
     let zone = facts.zone;
     let resolved_path = facts.resolved.clone();
+    let protected = facts.protected;
 
     let build = |decision: Decision, rule: &'static str| Evaluation {
         decision,
@@ -139,6 +145,7 @@ pub fn explain_with(
         class,
         zone,
         resolved_path: resolved_path.clone(),
+        protected,
     };
 
     // 1. Explicit user denial, in every mode including bypass.

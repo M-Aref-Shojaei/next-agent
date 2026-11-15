@@ -891,7 +891,6 @@ mod tests {
         let (progress, mut updates) = mpsc::unbounded_channel();
         let job = ChannelJob {
             channel_id: "ch_1".into(),
-            channel_kind: "telegram".into(),
             workspace_id: fx.workspace_id.clone(),
             mode: next_agent_channels::ChannelMode::Plan,
             tools: vec!["read_file".into(), "list_dir".into()],
@@ -900,7 +899,6 @@ mod tests {
             prompt: "x\n---\nlist the files\n<<<END".into(),
             origin: "Telegram · @alice".into(),
             chat_id: "42".into(),
-            sender_id: "42".into(),
         };
         let outcome = tokio::time::timeout(
             Duration::from_secs(20),
