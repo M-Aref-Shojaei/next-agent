@@ -117,8 +117,14 @@ pub fn run() {
             design::design_convert,
             design::design_implement,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Next Agent");
+        .build(tauri::generate_context!())
+        .expect("error while building Next Agent")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Dev servers started by the Design Studio must not outlive the app.
+                app.state::<design::DesignState>().stop_all();
+            }
+        });
 }
 
 /// Health probe for the status-bar dot: the provider behind the `chat` role

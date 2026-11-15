@@ -334,9 +334,15 @@ fn handle(client: TcpStream, config: &Config) -> io::Result<()> {
         }
     }
     response.set("Connection", "close".into());
-    let is_html = response
-        .get("content-type")
-        .is_some_and(|t| t.to_ascii_lowercase().starts_with("text/html"));
+    // A compressed body (a server that ignored `Accept-Encoding: identity`)
+    // is passed through untouched rather than corrupted by the injection.
+    let encoded = response
+        .get("content-encoding")
+        .is_some_and(|e| !e.trim().eq_ignore_ascii_case("identity"));
+    let is_html = !encoded
+        && response
+            .get("content-type")
+            .is_some_and(|t| t.to_ascii_lowercase().starts_with("text/html"));
     let has_body = !method.eq_ignore_ascii_case("HEAD")
         && !response.first.contains(" 204 ")
         && !response.first.contains(" 304 ");
@@ -615,6 +621,19 @@ mod tests {
         });
         let proxy = proxy_for(port);
         assert!(get(&proxy, "/", None, "").ends_with("v6"));
+    }
+
+    #[test]
+    fn compressed_html_is_passed_through() {
+        let port = upstream(|_| {
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Encoding: gzip\r\nContent-Length: 3\r\n\r\nzzz".to_vec()
+        });
+        let proxy = proxy_for(port);
+        let out = get(&proxy, "/", None, "");
+        assert!(
+            out.contains("Content-Encoding: gzip") && !out.contains("bridge.js"),
+            "{out}"
+        );
     }
 
     #[test]

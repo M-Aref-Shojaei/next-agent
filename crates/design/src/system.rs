@@ -491,6 +491,7 @@ pub fn render_tokens_css(system: &DesignSystem) -> String {
 /// `DESIGN.md`: the brand contract in Open Design's nine-section layout,
 /// filled with what the CSS tells us and clear placeholders for the rest.
 #[must_use]
+#[allow(clippy::too_many_lines)] // one block per section, in order
 pub fn render_design_md(system: &DesignSystem) -> String {
     let tokens_of = |kind: TokenKind| -> Vec<&Token> {
         system.tokens.iter().filter(|t| t.kind == kind).collect()

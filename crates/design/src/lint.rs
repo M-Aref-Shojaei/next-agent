@@ -118,9 +118,10 @@ pub fn lint(html: &str, token_colors: &[String]) -> Vec<Finding> {
             "Lorem ipsum filler; write copy specific to the brief.",
         ));
     }
-    for decl in css::declarations(&css_of(html)) {
+    let decls = css::declarations(&css_of(html));
+    for decl in &decls {
         if decl.property == "text-transform" && decl.value == "uppercase" {
-            let tracked = css::declarations(&css_of(html))
+            let tracked = decls
                 .iter()
                 .any(|d| d.context == decl.context && d.property == "letter-spacing");
             if !tracked {

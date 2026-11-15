@@ -222,6 +222,14 @@ pub struct DesignState {
 }
 
 impl DesignState {
+    /// Stop every preview and dev server (called when the app exits:
+    /// managed state is not dropped then).
+    pub fn stop_all(&self) {
+        if let Ok(mut previews) = self.previews.lock() {
+            previews.clear();
+        }
+    }
+
     fn previews(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, Preview>>, String> {
         self.previews
             .lock()
@@ -650,14 +658,14 @@ impl AppService {
     ) -> Result<PreviewDto, String> {
         let (root, _) = self.workspace_root(workspace_id)?;
         let bridge = proxy::bridge_script(studio_origin).map_err(|e| e.to_string())?;
-        // One preview per workspace: replace any running one.
-        state.previews()?.remove(workspace_id);
         let (target, dev) = match url.map(str::trim).filter(|u| !u.is_empty()) {
             Some(url) => (
                 ssrf::check_preview_url(url).map_err(|e| e.to_string())?,
                 None,
             ),
             None => {
+                // Stop the old preview first: it may be this project's dev server.
+                state.previews()?.remove(workspace_id);
                 let dev = start_dev_server(&root)?;
                 let target = ssrf::check_preview_url(&format!("http://localhost:{}/", dev.1))
                     .map_err(|e| e.to_string())?;
@@ -666,6 +674,8 @@ impl AppService {
         };
         let target_text = format!("http://{}{}", target.authority(), target.path);
         let proxy = PreviewProxy::start(target, bridge).map_err(|e| e.to_string())?;
+        // One preview per workspace: the new one replaces any running one.
+        state.previews()?.remove(workspace_id);
         let dto = PreviewDto {
             url: proxy.url(),
             origin: proxy.origin(),
@@ -761,6 +771,11 @@ impl AppService {
         let target = file.clone();
         let script: Script = Box::new(move |sandbox: &Path| {
             // The worktree's copy may differ from the dev server's working copy.
+            if !sandbox.join(&target).is_file() {
+                return Err(format!(
+                    "{target} is not committed, so the task worktree has no copy of it; commit it first"
+                ));
+            }
             let current = read_source(sandbox, &target)?;
             let contents =
                 codemod::transplant(&seen, &current, &edit).map_err(|e| e.to_string())?;

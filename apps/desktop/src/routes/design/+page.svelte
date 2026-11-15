@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { app } from "$lib/app.svelte.ts";
   import { api, type BoardMeta } from "$lib/api.ts";
   import DesignFrame from "$lib/components/DesignFrame.svelte";
@@ -75,6 +75,8 @@
 
   // ---- edit app ----
   let previewUrl = $state("");
+  /** Workspace the running preview belongs to. */
+  let previewWs = "";
   let preview = $state<PreviewInfo | null>(null);
   let previewFrame = $state<FrameKind>("web");
   let iframe = $state<HTMLIFrameElement | null>(null);
@@ -235,6 +237,7 @@
     problem = "";
     try {
       preview = await api.designPreviewStart(ws.id, previewUrl.trim() || null, window.location.origin);
+      previewWs = ws.id;
       clearSelection();
       pollLog();
     } catch (e) {
@@ -246,9 +249,9 @@
   async function stopPreview() {
     if (logTimer) clearInterval(logTimer);
     logTimer = null;
-    if (preview && loadedFor) {
+    if (preview && previewWs) {
       try {
-        await api.designPreviewStop(loadedFor);
+        await api.designPreviewStop(previewWs);
       } catch {
         // already gone
       }
@@ -285,8 +288,14 @@
     editNote = "";
   }
   $effect(() => {
-    // Keep the bridge's mode in sync with the toggle.
-    post("mode", { edit: tab === "edit" && selecting });
+    // Keep the bridge's mode in sync with the toggle; leaving edit mode drops
+    // the selection and its unwritten style previews.
+    const edit = tab === "edit" && selecting;
+    post("mode", { edit });
+    if (!edit && untrack(() => selected)) {
+      post("deselect");
+      clearSelection();
+    }
   });
 
   async function onMessage(event: MessageEvent) {
