@@ -24,11 +24,14 @@ flowchart LR
     next_agent_permission_engine["permission-engine<br/><small>crates/permission-engine</small>"]
     next_agent_process_manager["process-manager<br/><small>crates/process-manager</small>"]
     next_agent_graph["graph<br/><small>crates/graph</small>"]
+    next_agent_design["design<br/><small>crates/design</small>"]
     next_agent_macos_panel["macos-panel<br/><small>crates/macos-panel</small>"]
+    next_agent_channels["channels<br/><small>crates/channels</small>"]
   end
   subgraph ts["TypeScript packages"]
     direction TB
     ts_contracts["contracts<br/><small>packages/contracts</small>"]
+    ts_design_instrument["design-instrument<br/><small>packages/design-instrument</small>"]
     ts_policy["policy<br/><small>packages/policy</small>"]
     ts_vault["vault<br/><small>packages/vault</small>"]
   end
@@ -48,11 +51,15 @@ flowchart LR
   next_agent_core --> next_agent_permission_engine
   next_agent_core --> next_agent_process_manager
   next_agent_core --> next_agent_graph
+  next_agent_channels --> next_agent_core
+  next_agent_channels --> next_agent_permission_engine
   next_agent_desktop --> next_agent_core
   next_agent_desktop --> next_agent_permission_engine
   next_agent_desktop --> next_agent_process_manager
   next_agent_desktop --> next_agent_graph
   next_agent_desktop --> coucou
+  next_agent_desktop --> next_agent_channels
+  next_agent_desktop --> next_agent_design
   ts_desktop --> ts_contracts
   ts_desktop ==>|"IPC: invoke / Channel"| next_agent_desktop
   ts_policy <-.->|"rule parity (check-policy-parity)"| next_agent_permission_engine
@@ -71,12 +78,15 @@ flowchart LR
   class next_agent_permission_engine rust
   class next_agent_process_manager rust
   class next_agent_graph rust
+  class next_agent_design rust
   class next_agent_macos_panel rust
+  class next_agent_channels rust
   class next_agent_desktop rust
   class coucou rust
   class coucou_hook rust
   class ts_desktop ts
   class ts_contracts ts
+  class ts_design_instrument ts
   class ts_policy ts
   class ts_vault ts
   class agent_gateway planned
@@ -92,16 +102,19 @@ flowchart LR
 
 | Project | Kind | Path | Depends on | Used by | Mirrors |
 |---|---|---|---|---|---|
-| core | Rust crate | `crates/core` | permission-engine, process-manager, graph | desktop backend (Tauri) | contracts, vault |
-| permission-engine | Rust crate | `crates/permission-engine` | — | core, desktop backend (Tauri) | policy |
+| core | Rust crate | `crates/core` | permission-engine, process-manager, graph | channels, desktop backend (Tauri) | contracts, vault |
+| permission-engine | Rust crate | `crates/permission-engine` | — | core, channels, desktop backend (Tauri) | policy |
 | process-manager | Rust crate | `crates/process-manager` | — | core, desktop backend (Tauri) | — |
 | graph | Rust crate | `crates/graph` | — | core, desktop backend (Tauri) | vault |
+| design | Rust crate | `crates/design` | — | desktop backend (Tauri) | — |
 | macos-panel | Rust crate | `crates/macos-panel` | — | — | — |
-| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph, coucou backend (Tauri) | desktop UI | — |
+| channels | Rust crate | `crates/channels` | core, permission-engine | desktop backend (Tauri) | — |
+| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph, coucou backend (Tauri), channels, design | desktop UI | — |
 | coucou backend (Tauri) | Rust crate | `apps/desktop/coucou/src-tauri` | — | desktop backend (Tauri) | — |
 | coucou-hook backend (Tauri) | Rust crate | `apps/desktop/coucou/hook` | — | — | — |
 | desktop UI | TS package | `apps/desktop` | contracts, desktop backend (Tauri) | — | — |
 | contracts | TS package | `packages/contracts` | — | desktop UI | core |
+| design-instrument | TS package | `packages/design-instrument` | — | — | — |
 | policy | TS package | `packages/policy` | — | — | permission-engine |
 | vault | TS package | `packages/vault` | — | — | core, graph |
 | agent-gateway | planned (stub) | `services/agent-gateway` | — | — | — |

@@ -31,6 +31,7 @@ pub const APP_IDENTIFIER: &str = "dev.nextagent.desktop";
 ///
 /// # Panics
 /// Panics if the Tauri runtime cannot start (unrecoverable at launch).
+#[allow(clippy::too_many_lines)] // Mostly the command list.
 pub fn run() {
     // The overlay is Coucou's Tauri app, vendored whole (ADR-0011): its
     // plugins and state, its setup, its commands and its run-event handling.

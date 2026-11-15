@@ -68,5 +68,8 @@ test("the CSP stays strict: local only, no inline or eval'd script, no plugins",
   assert.ok(!rules.has("script-src"), "scripts fall back to default-src 'self'");
   assert.deepEqual(rules.get("object-src"), ["'none'"]);
   assert.deepEqual(rules.get("frame-ancestors"), ["'none'"]);
-  assert.ok(!/unsafe-eval|https?:\/\/(?!ipc\.localhost)|\*/.test(csp), csp);
+  // One exception: the Design Studio frames its preview from the loopback proxy.
+  assert.deepEqual(rules.get("frame-src"), ["'self'", "http://127.0.0.1:*"]);
+  const rest = csp.replace(/frame-src [^;]*/, "");
+  assert.ok(!/unsafe-eval|https?:\/\/(?!ipc\.localhost)|\*/.test(rest), csp);
 });

@@ -96,3 +96,32 @@ Task ledger for [[M1 Vertical Slice]]. Update this note (and the step boxes ther
   - Undo skips untracked files over 2 MiB.
   - Warn when two tasks share one work tree.
 
+
+### 2026-11-15 — Coucou vendored whole; Wave 2 merged ([[Built-in Upstreams Plan]])
+- **Overlay is Coucou's Tauri app, copied whole** ([[ADR-0011 Vendor Whole Upstream Codebases on Request]]), in `apps/desktop/coucou/` at commit `0d7fe58`:
+  - Connected through `coucou.rs`, which maps task events to hook events. Approvals go back through `approval_respond`, as Allow or Deny only.
+  - A gradient orb replaces Mochi.
+  - Renamed to Next Agent in 14 languages; the wake phrase is "OK Next Agent".
+  - WhatsApp and Spotify are removed.
+  - The update source stays empty until the owner gives a repo.
+  - Settings → Upstreams watches Coucou and only reports changes.
+  - Security: each window gets only the commands its page calls, the hook relay has limits, and the CSP is strict.
+  - Art still to replace: [[Coucou art to replace]].
+- **Wave 2:**
+  - Notes UI (Logseq graph pages, journals, queries, graph view).
+  - Memory and skills (from [[Hermes Agent]]): session store with FTS search, skills curator, cron jobs.
+  - Channels (from [[OpenClaw]]): a Telegram bot with DM pairing and allow-lists. Channel tasks run only in manual or plan mode, offer no "always" and deny unanswered approvals.
+  - Design Studio: design system, directions, live preview through a loopback proxy, style edits written as reviewed worktree tasks.
+- **Integration** (coordinator):
+  - One start path, `task_start_inner`, with four entry points: UI, cron (`task_start_with`), channel (`task_start_channel`) and Design Studio scripted (`task_start_scripted`).
+  - A review approver combines with channel timeouts and no-always.
+  - Design tasks also reach the island.
+  - Every page now sits under the `(app)` layout.
+  - CSP gains only `frame-src http://127.0.0.1:*`, for the preview.
+- **Tests:** 1462 Rust and 816 node pass (7 skipped); clippy `-D warnings`, fmt, `make check`, svelte-check and the build are clean.
+- **Not verified:**
+  - The app was not launched with these changes, so the first-launch move of Coucou data and Keychain entries is untested.
+  - A real Telegram bot.
+  - The Design Studio preview inside the Tauri webview.
+  - The Windows and Linux code was not compiled.
+- **Open:** deliver cron results to a channel. (Channel tasks cannot write memory or skills: the channel profile denies every tool not on its list.)

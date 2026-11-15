@@ -334,16 +334,15 @@ fn run_launch(
     let broker = SqliteBroker::new(&store, mode, context)
         .for_task(task_id.clone())
         .with_boxed_executor(tools);
-    let mut broker = match options.approver {
-        Some(approver) => broker.with_approver(approver),
-        None => {
-            let mut approver = ChannelApprover::new(Arc::clone(control), events.clone())
-                .with_timeout(options.approval_timeout);
-            if options.untrusted_origin {
-                approver = approver.without_always();
-            }
-            broker.with_approver(approver)
+    let mut broker = if let Some(approver) = options.approver {
+        broker.with_approver(approver)
+    } else {
+        let mut approver = ChannelApprover::new(Arc::clone(control), events.clone())
+            .with_timeout(options.approval_timeout);
+        if options.untrusted_origin {
+            approver = approver.without_always();
         }
+        broker.with_approver(approver)
     };
     if options.untrusted_origin {
         broker = broker.untrusted_origin();

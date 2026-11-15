@@ -855,7 +855,8 @@ impl AppService {
                 },
             ])
         });
-        let task_id = self.task_start_scripted(&design_request(&row.workspace_id, prompt), sink, script)?;
+        let task_id =
+            self.task_start_scripted(&design_request(&row.workspace_id, prompt), sink, script)?;
         Ok(DesignTask {
             task_id,
             title,
@@ -1237,8 +1238,7 @@ pub fn design_implement(
     id: String,
     on_event: Channel<StreamMessage>,
 ) -> Result<DesignTask, String> {
-    let task =
-        Arc::clone(&service).design_implement(&id, island_sink(&app, on_event))?;
+    let task = Arc::clone(&service).design_implement(&id, island_sink(&app, on_event))?;
     announce(&app, &task);
     Ok(task)
 }

@@ -227,6 +227,7 @@ impl AppService {
         self.task_start_inner(request, sink, TaskExtras::default(), Some(channel), None)
     }
 
+    #[allow(clippy::too_many_lines)] // One start path for UI, cron, channel and scripted tasks.
     fn task_start_inner(
         self: &Arc<Self>,
         request: &TaskRequest,
@@ -264,21 +265,16 @@ impl AppService {
             });
         }
         let learning = self.learning_for(&plan);
-        let (executor, agent_notice) = match scripted {
-            Some(steps) => (
+        let (executor, agent_notice) = if let Some(steps) = scripted {
+            (
                 Box::new(MockExecutor::new(steps)) as Box<dyn AgentExecutor + Send>,
                 None,
-            ),
-            None => {
-                let (executor, notice, builtin) = self.choose_executor(
-                    &plan,
-                    &task_id,
-                    &learning,
-                    channel.map(|c| &c.profile),
-                );
-                plan.builtin = builtin;
-                (executor, notice)
-            }
+            )
+        } else {
+            let (executor, notice, builtin) =
+                self.choose_executor(&plan, &task_id, &learning, channel.map(|c| &c.profile));
+            plan.builtin = builtin;
+            (executor, notice)
         };
         let executor: Box<dyn AgentExecutor + Send> = match channel {
             Some(c) => Box::new(next_agent_channels::ChannelExecutor::new(

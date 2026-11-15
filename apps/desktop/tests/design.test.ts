@@ -25,7 +25,7 @@ test("sandbox constants match the Rust side and the page uses them", () => {
   const rust = read("../../../crates/design/src/sandbox.rs");
   assert.match(rust, new RegExp(`pub const DIRECTION_SANDBOX: &str = "${DIRECTION_SANDBOX}";`));
   assert.match(rust, new RegExp(`pub const APP_SANDBOX: &str = "${APP_SANDBOX}";`));
-  const page = read("../src/routes/design/+page.svelte") + read("../src/lib/components/DesignFrame.svelte");
+  const page = read("../src/routes/(app)/design/+page.svelte") + read("../src/lib/components/DesignFrame.svelte");
   // Every iframe takes its sandbox from these constants (or the preview DTO).
   const iframes = page.match(/<iframe[\s\S]*?>/g) ?? [];
   assert.ok(iframes.length > 0);

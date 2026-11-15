@@ -296,6 +296,7 @@ fn tighten(decision: Decision, floor: Option<&Floor>) -> Decision {
 }
 
 impl SqliteBroker<'_> {
+    #[allow(clippy::too_many_lines)] // One decision path, kept in order.
     fn handle_inner(
         &mut self,
         ctx: Option<&RunContext<'_>>,

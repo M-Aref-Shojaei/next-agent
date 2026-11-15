@@ -365,6 +365,8 @@ impl BuiltinExecutor {
     /// Send the conversation (after the cache-invariant check), compacting
     /// and retrying once if the provider says the prompt is too long.
     /// `with_tools: false` sends no tool schemas (the final summary turn).
+    // The error is the step to return (a large enum), not a failure type.
+    #[allow(clippy::result_large_err)]
     fn request(&mut self, with_tools: bool) -> Result<Completion, AgentStep> {
         let mut retried = false;
         self.flush_transcript();
