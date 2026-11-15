@@ -3,6 +3,10 @@
   import { api } from "$lib/api.ts";
   import { app } from "$lib/app.svelte.ts";
   import {
+    Banner, Button, Checkbox, EmptyState, List, ListRow, Select, SettingsLayout, SettingsRow,
+    SettingsSection, StatusDot, Switch, TextField, type SettingsNavItem, type Tone,
+  } from "$lib/ds/index.ts";
+  import {
     SELECTABLE_TOOLS,
     expiresIn,
     formErrors,
@@ -36,6 +40,20 @@
   let now = $state(Math.floor(Date.now() / 1000));
 
   const selected = $derived(channels.find((c) => c.config.id === selectedId) ?? null);
+  const nav = $derived<SettingsNavItem[]>([
+    { id: "channels", label: "Your channels", href: "#channels" },
+    ...(form ? [{ id: "bot", label: selected ? "Bot settings" : "New bot", href: "#bot" }] : []),
+    ...(selected
+      ? [
+          { id: "pairing", label: "Pending pairings", href: "#pairing", badge: pairings.length || undefined },
+          { id: "allow", label: "Allow-list", href: "#allow" },
+          { id: "activity", label: "Activity", href: "#activity" },
+        ]
+      : []),
+  ]);
+  const healthTone: Record<"ok" | "info" | "error", Tone> = { ok: "ok", info: "neutral", error: "danger" };
+  const workspaceName = (id: string) => app.workspaces.find((w) => w.id === id)?.name ?? id;
+  const arrow: Record<string, string> = { in: "←", out: "→" };
   const errors = $derived(form ? formErrors(form, allow, token, selected?.hasToken ?? false) : []);
 
   async function loadList() {
@@ -103,90 +121,98 @@
     }
   }
 
-  async function remove() {
-    if (!selected) return;
-    if (!confirm(`Delete ${selected.config.name}? Its token, pairings, allow-list and activity are removed.`)) return;
+  /** Run an action; on success set `done` as the message, on failure show the error. */
+  async function run(work: () => Promise<unknown>, done?: string) {
     try {
-      await api.channelDelete(selected.config.id);
-      form = null;
-      selectedId = null;
-      await loadList();
-      message = "Channel deleted.";
+      await work();
+      if (done) message = done;
     } catch (e) {
       message = String(e);
     }
   }
 
-  async function restart() {
-    if (!selectedId) return;
-    try {
-      await api.channelRestart(selectedId);
+  async function remove() {
+    if (!selected) return;
+    if (!confirm(`Delete ${selected.config.name}? Its token, pairings, allow-list and activity are removed.`)) return;
+    const id = selected.config.id;
+    await run(async () => {
+      await api.channelDelete(id);
+      form = null;
+      selectedId = null;
       await loadList();
-    } catch (e) {
-      message = String(e);
-    }
+    }, "Channel deleted.");
+  }
+
+  async function restart() {
+    const id = selectedId;
+    if (!id) return;
+    await run(async () => {
+      await api.channelRestart(id);
+      await loadList();
+    });
   }
 
   /** Approve the request whose code the owner typed (never one picked from a list). */
   async function approveCode(event: SubmitEvent) {
     event.preventDefault();
-    if (!selectedId || !pairCode.trim()) return;
-    try {
-      const request = await api.channelPairingResolve(selectedId, pairCode.trim(), true);
+    const id = selectedId;
+    if (!id || !pairCode.trim()) return;
+    await run(async () => {
+      const request = await api.channelPairingResolve(id, pairCode.trim(), true);
       pairCode = "";
       message = `Paired ${request.label || request.senderId} (id ${request.senderId}).`;
       await loadDetails();
-    } catch (e) {
-      message = String(e);
-    }
+    });
   }
 
   async function deny(request: PairingRequest) {
-    if (!selectedId) return;
-    try {
-      await api.channelPairingResolve(selectedId, request.code, false);
+    const id = selectedId;
+    if (!id) return;
+    await run(async () => {
+      await api.channelPairingResolve(id, request.code, false);
       message = `Denied ${request.label || request.senderId}.`;
       await loadDetails();
-    } catch (e) {
-      message = String(e);
-    }
+    });
   }
 
   async function addAllowed(event: SubmitEvent) {
     event.preventDefault();
-    if (!selectedId || !newSender.trim()) return;
-    try {
-      await api.channelAllowAdd(selectedId, newSender.trim(), newLabel.trim());
+    const id = selectedId;
+    if (!id || !newSender.trim()) return;
+    await run(async () => {
+      await api.channelAllowAdd(id, newSender.trim(), newLabel.trim());
       newSender = "";
       newLabel = "";
       await loadDetails();
-    } catch (e) {
-      message = String(e);
-    }
+    });
   }
 
   async function removeAllowed(entry: AllowEntry) {
-    if (!selectedId) return;
-    try {
-      await api.channelAllowRemove(selectedId, entry.senderId);
+    const id = selectedId;
+    if (!id) return;
+    await run(async () => {
+      await api.channelAllowRemove(id, entry.senderId);
       await loadDetails();
-    } catch (e) {
-      message = String(e);
-    }
+    });
   }
 
   onMount(() => {
     const offs: (() => void)[] = [];
+    let disposed = false;
+    // Cleanup runs synchronously, but listeners arrive after awaits: drop late ones at once.
+    const keep = (off: () => void) => (disposed ? off() : offs.push(off));
     void (async () => {
       try {
         await loadList();
         if (channels[0]) edit(channels[0]);
-        offs.push(
+        keep(
           await api.onChannelHealth((id, health) => {
             channels = channels.map((c) => (c.config.id === id ? { ...c, health } : c));
           }),
+        );
+        keep(
           await api.onChannelChange((id) => {
-            if (id === selectedId) void loadDetails().catch(() => {});
+            if (id === selectedId) void loadDetails().catch((e) => (message = String(e)));
           }),
         );
       } catch (e) {
@@ -195,237 +221,233 @@
     })();
     const tick = setInterval(() => (now = Math.floor(Date.now() / 1000)), 30_000);
     return () => {
+      disposed = true;
       clearInterval(tick);
       offs.forEach((off) => off());
     };
   });
 </script>
 
-<div class="page">
-  <h1>Channels</h1>
-  <p><a href="/settings">← Settings</a> · <a href="/">Back to chat</a></p>
-  <p class="muted">
-    Message the agent from a chat app. Each message runs as a task in its workspace, in manual or plan mode only, with a
-    tool set you choose (everything else is denied). Approvals happen here or in the overlay, never in the chat; no
-    answer in time means deny. Bot tokens are kept in the system keychain. Design from OpenClaw (MIT).
-  </p>
-  {#if message}<p role="status">{message}</p>{/if}
+<SettingsLayout
+  title="Channels"
+  description="Message the agent from a chat app. Each message runs as a task in its workspace, in manual or plan mode only, with a tool set you choose (everything else is denied). Approvals happen here or in the overlay, never in the chat; no answer in time means deny. Bot tokens are kept in the system keychain. Design from OpenClaw (MIT)."
+  {nav}
+  current="channels"
+>
+  {#snippet top()}<a href="/settings">← Settings</a> · <a href="/">Back to chat</a>{/snippet}
 
-  <section aria-labelledby="h-list">
-    <h2 id="h-list">Your channels</h2>
+  {#if message}<Banner tone="info" ondismiss={() => (message = "")}>{message}</Banner>{/if}
+
+  <SettingsSection id="channels" title="Your channels">
+    {#snippet actions()}<Button variant="primary" onclick={add}>Add Telegram</Button>{/snippet}
     {#if channels.length === 0}
-      <p class="muted">No channel yet.</p>
+      <EmptyState compact title="No channel yet" description="Add a Telegram bot to message the agent from your phone." />
     {:else}
-      <table>
-        <thead><tr><th>Name</th><th>Workspace</th><th>Mode</th><th>Health</th><th></th></tr></thead>
-        <tbody>
-          {#each channels as c (c.config.id)}
-            {@const h = healthLabel(c.health, c.config.enabled)}
-            <tr aria-current={c.config.id === selectedId}>
-              <td>{c.config.name}</td>
-              <td>{app.workspaces.find((w) => w.id === c.config.workspaceId)?.name ?? c.config.workspaceId}</td>
-              <td>{c.config.mode}</td>
-              <td class={h.tone}>{h.text}{#if c.health?.restarts} · {c.health.restarts} restarts{/if}</td>
-              <td><button onclick={() => edit(c)}>Open</button></td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+      <List label="Channels" bordered={false}>
+        {#each channels as c (c.config.id)}
+          {@const h = healthLabel(c.health, c.config.enabled)}
+          <ListRow
+            title={c.config.name}
+            description="{workspaceName(c.config.workspaceId)} · {c.config.mode}"
+            selected={c.config.id === selectedId}
+            onclick={() => edit(c)}
+          >
+            {#snippet leading()}<StatusDot tone={healthTone[h.tone]} label={h.text} />{/snippet}
+            <span>{h.text}{#if c.health?.restarts} · {c.health.restarts} restarts{/if}</span>
+          </ListRow>
+        {/each}
+      </List>
     {/if}
-    <p><button onclick={add}>Add Telegram</button></p>
-  </section>
+  </SettingsSection>
 
   {#if form}
-    <section aria-labelledby="h-form">
-      <h2 id="h-form">{selected ? selected.config.name : "New Telegram bot"}</h2>
-      {#if !selected}
-        <ol class="muted steps">
-          <li>In Telegram, message <strong>@BotFather</strong>, send <code>/newbot</code> and copy the token it gives you.</li>
-          <li>Paste it below, pick the workspace and press <em>Test connection</em>, then <em>Save</em>.</li>
-          <li>Message your bot: it answers with a pairing code. Approve it under <em>Pending pairings</em>.</li>
-        </ol>
-      {/if}
-      <form onsubmit={save} class="grid">
-        <label for="ch-name">Name</label>
-        <input id="ch-name" bind:value={form.name} />
-
-        <label for="ch-token">Bot token</label>
-        <div class="row">
-          <input id="ch-token" type="password" autocomplete="off" bind:value={token}
-            placeholder={selected?.hasToken ? "Saved in the keychain (paste to replace)" : "123456:ABC… from @BotFather"} />
-          <button type="button" onclick={test} disabled={!token.trim() && !selected?.hasToken}>Test connection</button>
-        </div>
-        {#if testResult}
-          <span></span>
-          <p role="status" class={typeof testResult === "string" ? (testResult === "Testing…" ? "" : "bad") : "ok"}>
-            {typeof testResult === "string" ? testResult : `Connected to @${testResult.username} (${testResult.name})`}
-          </p>
-        {/if}
-
-        <label for="ch-ws">Workspace</label>
-        <select id="ch-ws" bind:value={form.workspaceId}>
-          <option value="" disabled>Pick a workspace</option>
-          {#each app.workspaces as ws (ws.id)}<option value={ws.id}>{ws.name}</option>{/each}
-        </select>
-
-        <label for="ch-mode">Mode</label>
-        <select id="ch-mode" bind:value={form.mode}>
-          <option value="manual">Manual: reads run, changes wait for approval here</option>
-          <option value="plan">Plan: read-only</option>
-        </select>
-
-        <label for="ch-dm">Direct messages</label>
-        <select id="ch-dm" bind:value={form.dmPolicy}>
-          <option value="pairing">Pairing: unknown people get a code you approve here</option>
-          <option value="allowlist">Allow-list only</option>
-          <option value="open">Anyone (needs * on the allow-list)</option>
-          <option value="disabled">Off</option>
-        </select>
-
-        <label for="ch-groups">Groups</label>
-        <select id="ch-groups" bind:value={form.groupPolicy}>
-          <option value="disabled">Off</option>
-          <option value="allowlist">Only the group ids below</option>
-          <option value="open">Any group the bot is in</option>
-        </select>
-        {#if form.groupPolicy !== "disabled"}
-          <label for="ch-group-ids">Group ids</label>
-          <input id="ch-group-ids" bind:value={groupsText} placeholder="-1001234567890, …" />
-          <span></span>
-          <label><input type="checkbox" bind:checked={form.requireMention} /> Only answer when mentioned or replied to</label>
-        {/if}
-
-        <label for="ch-timeout">Approval timeout</label>
-        <div class="row"><input id="ch-timeout" type="number" min="10" max="3600" bind:value={form.approvalTimeoutSecs} /> <span class="muted">seconds, then deny</span></div>
-
-        <span>Tools</span>
-        <fieldset class="tools">
-          <legend class="sr-only">Tools channel tasks may use</legend>
-          {#each SELECTABLE_TOOLS as tool (tool.name)}
-            <label>
-              <input type="checkbox" checked={form.tools.includes(tool.name)}
-                onchange={(e) => form && (form.tools = toggleTool(form.tools, tool.name, e.currentTarget.checked))} />
-              {tool.label}
-            </label>
-          {/each}
-          <p class="muted">Subagents, scheduling, messaging other sessions and gateway control are always off.</p>
-        </fieldset>
-
-        <span></span>
-        <label><input type="checkbox" bind:checked={form.enabled} /> Enabled</label>
-
-        {#if errors.length}
-          <span></span>
-          <ul class="bad">{#each errors as e (e)}<li>{e}</li>{/each}</ul>
-        {/if}
-        <span></span>
-        <div class="row">
-          <button type="submit" disabled={busy || errors.length > 0}>Save</button>
-          {#if selected}
-            <button type="button" onclick={restart}>Restart</button>
-            <button type="button" onclick={remove}>Delete</button>
+    <form onsubmit={save}>
+      <SettingsSection id="bot" title={selected ? selected.config.name : "New Telegram bot"}>
+        {#snippet footer()}
+          {#if !selected}
+            <ol class="steps">
+              <li>In Telegram, message <strong>@BotFather</strong>, send <code>/newbot</code> and copy the token it gives you.</li>
+              <li>Paste it below, pick the workspace and press <em>Test connection</em>, then <em>Save</em>.</li>
+              <li>Message your bot: it answers with a pairing code. Approve it under <em>Pending pairings</em>.</li>
+            </ol>
           {/if}
-        </div>
-      </form>
-    </section>
+          {#if testResult}
+            {#if typeof testResult !== "string"}
+              <Banner tone="ok">Connected to @{testResult.username} ({testResult.name})</Banner>
+            {:else}
+              <Banner tone={testResult === "Testing…" ? "info" : "danger"}>{testResult}</Banner>
+            {/if}
+          {/if}
+          {#if errors.length}
+            <Banner tone="warn" title="Fix before saving">
+              <ul>{#each errors as e (e)}<li>{e}</li>{/each}</ul>
+            </Banner>
+          {/if}
+          <div class="actions">
+            <Button type="submit" variant="primary" loading={busy} disabled={errors.length > 0}>Save</Button>
+            {#if selected}
+              <Button onclick={restart}>Restart</Button>
+              <Button variant="danger" onclick={remove}>Delete</Button>
+            {/if}
+          </div>
+        {/snippet}
+
+        <SettingsRow label="Name">
+          {#snippet children(ctl)}<TextField id={ctl.id} bind:value={form!.name} />{/snippet}
+        </SettingsRow>
+
+        <SettingsRow label="Bot token" description="Write-only: a saved token is never shown here.">
+          {#snippet children(ctl)}
+            <TextField id={ctl.id} aria-describedby={ctl.describedby} type="password" autocomplete="off" bind:value={token}
+              placeholder={selected?.hasToken ? "Saved in the keychain (paste to replace)" : "123456:ABC… from @BotFather"} />
+            <Button onclick={test} disabled={!token.trim() && !selected?.hasToken}>Test connection</Button>
+          {/snippet}
+        </SettingsRow>
+
+        <SettingsRow label="Workspace">
+          {#snippet children(ctl)}
+            <Select id={ctl.id} bind:value={form!.workspaceId} placeholder="Pick a workspace"
+              options={app.workspaces.map((w) => ({ value: w.id, label: w.name }))} />
+          {/snippet}
+        </SettingsRow>
+
+        <SettingsRow label="Mode" description="Manual: reads run, changes wait for approval here. Plan: read-only.">
+          {#snippet children(ctl)}
+            <Select id={ctl.id} aria-describedby={ctl.describedby} bind:value={form!.mode}
+              options={[{ value: "manual", label: "Manual" }, { value: "plan", label: "Plan" }]} />
+          {/snippet}
+        </SettingsRow>
+
+        <SettingsRow label="Direct messages" description="Pairing: unknown people get a code you approve here. Anyone needs * on the allow-list.">
+          {#snippet children(ctl)}
+            <Select id={ctl.id} aria-describedby={ctl.describedby} bind:value={form!.dmPolicy}
+              options={[
+                { value: "pairing", label: "Pairing" },
+                { value: "allowlist", label: "Allow-list only" },
+                { value: "open", label: "Anyone" },
+                { value: "disabled", label: "Off" },
+              ]} />
+          {/snippet}
+        </SettingsRow>
+
+        <SettingsRow label="Groups">
+          {#snippet children(ctl)}
+            <Select id={ctl.id} bind:value={form!.groupPolicy}
+              options={[
+                { value: "disabled", label: "Off" },
+                { value: "allowlist", label: "Only the group ids below" },
+                { value: "open", label: "Any group the bot is in" },
+              ]} />
+          {/snippet}
+        </SettingsRow>
+        {#if form.groupPolicy !== "disabled"}
+          <SettingsRow label="Group ids">
+            {#snippet children(ctl)}<TextField id={ctl.id} bind:value={groupsText} placeholder="-1001234567890, …" />{/snippet}
+          </SettingsRow>
+          <SettingsRow label="Require a mention" description="Only answer when mentioned or replied to.">
+            {#snippet children(ctl)}<Switch id={ctl.id} aria-describedby={ctl.describedby} bind:checked={form!.requireMention} />{/snippet}
+          </SettingsRow>
+        {/if}
+
+        <SettingsRow label="Approval timeout" description="Seconds to wait for an approval, then deny.">
+          {#snippet children(ctl)}
+            <TextField id={ctl.id} aria-describedby={ctl.describedby} type="number" min="10" max="3600" bind:value={form!.approvalTimeoutSecs} />
+          {/snippet}
+        </SettingsRow>
+
+        <SettingsRow stacked label="Tools" description="Tools channel tasks may use. Subagents, scheduling, messaging other sessions and gateway control are always off.">
+          {#snippet children(ctl)}
+            <div class="tools" role="group" aria-labelledby={ctl.labelId}>
+              {#each SELECTABLE_TOOLS as tool (tool.name)}
+                <Checkbox label={tool.label} checked={form!.tools.includes(tool.name)}
+                  onchange={(on) => form && (form.tools = toggleTool(form.tools, tool.name, on))} />
+              {/each}
+            </div>
+          {/snippet}
+        </SettingsRow>
+
+        <SettingsRow label="Enabled">
+          {#snippet children(ctl)}<Switch id={ctl.id} bind:checked={form!.enabled} />{/snippet}
+        </SettingsRow>
+      </SettingsSection>
+    </form>
 
     {#if selected}
-      <section aria-labelledby="h-pairing">
-        <h2 id="h-pairing">Pending pairings</h2>
+      <SettingsSection
+        id="pairing"
+        title="Pending pairings"
+        description={pairings.length === 0
+          ? "Unknown people who message the bot appear here (at most 3, each for 1 hour)."
+          : "To approve, ask the person for the code the bot sent them and type it here. The code is not shown on this page, so a look-alike name cannot be approved by mistake."}
+      >
         {#if pairings.length === 0}
-          <p class="muted">None. Unknown people who message the bot appear here (at most 3, each for 1 hour).</p>
+          <EmptyState compact title="No pending pairings" />
         {:else}
-          <p class="muted">
-            To approve, ask the person for the code the bot sent them and type it here. The code is not shown on this
-            page, so a look-alike name cannot be approved by mistake.
-          </p>
-          <form onsubmit={approveCode} class="row add">
-            <label class="sr-only" for="pair-code">Pairing code from their chat</label>
-            <input id="pair-code" bind:value={pairCode} autocomplete="off" placeholder="Pairing code from their chat" />
-            <button type="submit" disabled={!pairCode.trim()}>Approve</button>
+          <form onsubmit={approveCode}>
+            <SettingsRow label="Pairing code" description="Typed by you, from their chat.">
+              {#snippet children(ctl)}
+                <TextField id={ctl.id} aria-describedby={ctl.describedby} bind:value={pairCode} autocomplete="off" placeholder="Pairing code from their chat" />
+                <Button type="submit" variant="primary" disabled={!pairCode.trim()}>Approve</Button>
+              {/snippet}
+            </SettingsRow>
           </form>
-          <table>
-            <thead><tr><th>Who</th><th>Expires</th><th></th></tr></thead>
-            <tbody>
-              {#each pairings as p (p.code)}
-                <tr>
-                  <td>{p.label || "unknown"} <span class="muted">id {p.senderId}</span></td>
-                  <td>{expiresIn(p, now)}</td>
-                  <td><button onclick={() => deny(p)} aria-label="Deny {p.label || p.senderId}">Deny</button></td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+          <List label="Pending pairing requests" bordered={false}>
+            {#each pairings as p (p.code)}
+              <ListRow title={p.label || "unknown"} description="id {p.senderId}" meta={expiresIn(p, now)}>
+                {#snippet actions()}
+                  <Button size="sm" onclick={() => deny(p)} aria-label="Deny {p.label || p.senderId}">Deny</Button>
+                {/snippet}
+              </ListRow>
+            {/each}
+          </List>
         {/if}
-      </section>
+      </SettingsSection>
 
-      <section aria-labelledby="h-allow">
-        <h2 id="h-allow">Allow-list</h2>
-        {#if allow.length === 0}
-          <p class="muted">Nobody yet. Approved pairings land here.</p>
-        {:else}
-          <table>
-            <thead><tr><th>User id</th><th>Name</th><th>Added by</th><th></th></tr></thead>
-            <tbody>
-              {#each allow as a (a.senderId)}
-                <tr>
-                  <td><code>{a.senderId}</code></td><td>{a.label}</td><td>{a.source}</td>
-                  <td><button onclick={() => removeAllowed(a)} aria-label="Remove {a.senderId}">Remove</button></td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+      <SettingsSection id="allow" title="Allow-list" description={allow.length === 0 ? "Nobody yet. Approved pairings land here." : undefined}>
+        {#if allow.length > 0}
+          <List label="Allowed senders" bordered={false}>
+            {#each allow as a (a.senderId)}
+              <ListRow title={a.senderId} description={a.label || undefined} meta="added by {a.source}">
+                {#snippet actions()}
+                  <Button size="sm" onclick={() => removeAllowed(a)} aria-label="Remove {a.senderId}">Remove</Button>
+                {/snippet}
+              </ListRow>
+            {/each}
+          </List>
         {/if}
-        <form onsubmit={addAllowed} class="row add">
-          <label class="sr-only" for="al-id">User id</label>
-          <input id="al-id" bind:value={newSender} placeholder="Telegram user id, or *" />
-          <label class="sr-only" for="al-label">Name</label>
-          <input id="al-label" bind:value={newLabel} placeholder="Name (optional)" />
-          <button type="submit">Add</button>
+        <form onsubmit={addAllowed}>
+          <SettingsRow label="Add someone" description="A Telegram user id, or * for anyone.">
+            {#snippet children(ctl)}
+              <TextField id={ctl.id} aria-describedby={ctl.describedby} bind:value={newSender} placeholder="Telegram user id, or *" />
+              <TextField aria-label="Name" bind:value={newLabel} placeholder="Name (optional)" />
+              <Button type="submit" variant="primary" disabled={!newSender.trim()}>Add</Button>
+            {/snippet}
+          </SettingsRow>
         </form>
-      </section>
+      </SettingsSection>
 
-      <section aria-labelledby="h-activity">
-        <h2 id="h-activity">Activity</h2>
+      <SettingsSection id="activity" title="Activity">
         {#if activity.length === 0}
-          <p class="muted">Nothing yet.</p>
+          <EmptyState compact title="Nothing yet" />
         {:else}
-          <table class="log">
-            <thead><tr><th>When</th><th></th><th>Kind</th><th>Who</th><th>Text</th></tr></thead>
-            <tbody>
-              {#each activity as a, i (i)}
-                <tr>
-                  <td>{a.ts.replace("T", " ").slice(0, 19)}</td>
-                  <td>{a.direction === "in" ? "←" : a.direction === "out" ? "→" : "·"}</td>
-                  <td>{a.kind}</td>
-                  <td>{a.peer}</td>
-                  <td>{a.text}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+          <List label="Recent activity" bordered={false}>
+            {#each activity as a, i (i)}
+              <ListRow title={a.text || a.kind} description="{a.peer} · {a.kind}" meta={a.ts.replace("T", " ").slice(0, 19)}>
+                {#snippet leading()}
+                  <span role="img" aria-label={a.direction === "in" ? "Received" : a.direction === "out" ? "Sent" : "Event"}>{arrow[a.direction] ?? "·"}</span>
+                {/snippet}
+              </ListRow>
+            {/each}
+          </List>
         {/if}
-      </section>
+      </SettingsSection>
     {/if}
   {/if}
-</div>
+</SettingsLayout>
 
 <style>
-  .page { padding: 20px 28px; overflow: auto; flex: 1; min-height: 0; max-width: 900px; display: grid; gap: 14px; align-content: start; }
-  input[type="checkbox"] { width: auto; margin: 0 6px 0 0; }
-  .tools label, .grid > label:has(input[type="checkbox"]) { display: flex; align-items: center; }
-  section { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--panel); }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  tr[aria-current="true"] td { background: var(--sidebar); }
-  .grid { display: grid; grid-template-columns: minmax(150px, auto) 1fr; gap: 8px; align-items: center; margin-top: 8px; }
-  .row { display: flex; gap: 8px; align-items: center; }
-  .row input { flex: 1; }
-  .add { margin-top: 8px; }
-  .tools { border: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-  .steps { margin: 0 0 8px; padding-left: 18px; }
-  select { font: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; }
-  .log td:last-child { word-break: break-word; }
-  .ok { color: var(--ok); } .bad { color: var(--danger); } .error { color: var(--danger); } .info { color: var(--muted); }
-  ul.bad { margin: 0; padding-left: 18px; }
+  .steps { margin: 0 0 var(--space-3); padding-left: var(--space-5); display: grid; gap: var(--space-1); }
+  ul { margin: 0; padding-left: var(--space-5); }
+  .tools { display: grid; gap: var(--space-2); }
+  .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
 </style>
