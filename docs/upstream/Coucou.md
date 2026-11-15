@@ -121,7 +121,7 @@ These are Swift-only code paths with no Tauri counterpart to copy. Each would be
   - `coucou_lib::invoke_handler` routes Coucou's command names to Coucou's handler and everything else to Next Agent's.
 - **Windows.**
   - Labels: `coucou-island`, `coucou-settings`, `coucou-mochi`, `coucou-pill`.
-  - Per-window command access. `apps/desktop/src-tauri/build.rs` declares every command (Next Agent's and the overlay's) in Tauri's app manifest, so a window may call only what its capability grants. `scripts/gen-capabilities.mjs` writes the capabilities from the code: `default.json` gives `main` Next Agent's commands only; `overlay-{island,settings,mochi,pill}.json` give each overlay window the overlay commands its own page reaches (its imports, the bridge methods they call, the commands those invoke), and none of Next Agent's. `make check` fails when they are stale; `scripts/tests/capabilities.test.ts` pins the rules.
+  - Per-window command access. `apps/desktop/src-tauri/build.rs` declares every command (Next Agent's and the overlay's) in Tauri's app manifest, so a window may call only what its capability grants. `scripts/gen-capabilities.mjs` writes the capabilities from the code: `default.json` gives `main` Next Agent's commands plus exactly the overlay settings commands that `apps/desktop/src/lib/overlay-settings.ts` calls (no other file of Next Agent's frontend may name an overlay command); `overlay-{island,settings,mochi,pill}.json` give each overlay window the overlay commands its own page reaches (its imports, the bridge methods they call, the commands those invoke), and none of Next Agent's. `make check` fails when they are stale; `scripts/tests/capabilities.test.ts` pins the rules.
   - CSP: Next Agent's, plus upstream's `media-src 'self' blob:`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`.
 - **macOS.**
   - The island webview moves into the `IslandPanel` (level `mainMenu + 3`, `constrainFrameRect` passthrough), placed at the top centre of the chosen display by its frame in points.
@@ -134,9 +134,9 @@ These are Swift-only code paths with no Tauri counterpart to copy. Each would be
 - **Claude Code.**
   - The relay `next-agent-hook` and its socket `~/Library/Application Support/dev.nextagent.desktop/overlay/relay.sock`: a 0700 folder, and a uid check on both ends (on Windows, the pipe `\\.\pipe\next-agent-<sid>`, the client's SID checked by the app too).
   - Limits: the first line within 5 s, at most 1 MiB (larger is refused, not cut), at most 64 connections at once; the relay reads at most 32 MiB of stdin.
-  - Hooks are written only from the overlay's settings window (Agents → Claude Code), after its diff, dated backup and confirmation (with the fingerprint of the preview). Nothing is written until then; only that window may call the write commands.
+  - Hooks are written only from Settings → Overlay → Agents (Claude Code), after its diff, dated backup and confirmation in a dialog (with the fingerprint of the preview). Nothing is written until then; of the overlay's windows none may call the write commands, only the main window.
   - The island offers Allow (once) and Deny; only those reach `approval_respond`. TODO(channels): hide any future "Always" for tasks the stream marks as from a channel.
-- **Settings.** Next Agent's Settings → "Overlay" opens the overlay's own settings window (`overlay_open`).
+- **Settings.** The overlay's settings are Next Agent's Settings → Overlay (`/settings/overlay/*`); see "Deviations requested by the owner" below.
 - **Self-update.** Settings → General → Updates → "Update source" takes a GitHub `owner/repo`, empty by default; while empty nothing is checked or asked. Once set, the upstream consent question and schedule apply, tags are `vX.Y.Z`, and only releases and assets of that repository count.
 
 ### Differences from upstream (each marked `Next Agent:` in the code)
@@ -158,6 +158,36 @@ These are Swift-only code paths with no Tauri counterpart to copy. Each would be
 - **Lints and checks:**
   - Upstream's style lints are allowed by name, and its formatting is kept (`rustfmt.toml`).
   - The structure heuristic skips the folder.
+
+## Deviations requested by the owner
+
+### One design system: the settings live in Next Agent's Settings (2026-11-15)
+
+The owner's rule ([[ADR-0012 One Design System]]): one design system everywhere, and every built-in upstream's settings inside Next Agent's own Settings.
+
+- **Where.** Settings → Overlay, one page per section, built from `SettingsLayout`, `SettingsSection` and `SettingsRow`:
+
+  | Section | Route | Coucou source |
+  |---|---|---|
+  | General | `/settings/overlay/general` | `settings/main.ts` generalSection, recapRows, languageRow |
+  | Pills and colours | `/settings/overlay/pills` | activePillsSection, `colors.ts` |
+  | Agents | `/settings/overlay/agents` | claudeSection, planSection, `agents.ts` |
+  | Chat | `/settings/overlay/chat` | subscriptions, apiSection, `claude-models.ts`, chat providers, local models |
+  | Integrations | `/settings/overlay/integrations` | integrationsSection |
+  | Dictation | `/settings/overlay/dictation` | `hub/pages/flowsettings.ts` (keys, microphone, recognition, privacy), `hub/pages/styles.ts` |
+  | Notetaker | `/settings/overlay/notetaker` | flowsettings' Notetaker card |
+  | Voice | `/settings/overlay/voice` | `hub/pages/voice.ts` |
+  | Shortcuts | `/settings/overlay/shortcuts` | shortcutsSection |
+  | Phone link | `/settings/overlay/phone` | `phone.ts` |
+  | Updates | `/settings/overlay/updates` | `updates.ts` |
+  | About | `/settings/overlay/about` | the window's brand and version line; credits from NOTICE.md, no artwork |
+
+- **Same behaviour.** Same commands, arguments, defaults, validation and order of operations (`apps/desktop/src/lib/overlay-settings.ts` mirrors `core/bridge.ts` and `core/flow.ts`, including which calls swallow errors and which surface them). The settings writers keep the preview, the dated backup and the explicit confirmation, now in the design system's `Dialog`; the write carries the preview's fingerprint. In a plain browser the calls answer from `mock-api.ts`.
+- **Small differences, visual only.** Texts are English (Next Agent's Settings are); the island, tray and hub still follow the Language setting. The colour palette opens inline under the dot. Flow's "Open this window when you open Next Agent" is not shown: the Coucou window never opens at launch in Next Agent, so it did nothing.
+- **Entry points.** Rust's `show_hub` sends the moved pages (`MOVED_PAGES` in `src-tauri/src/lib.rs`) to the main window instead (`overlay-settings-open` event, `lib/app.svelte.ts` navigates). So the tray's "Settings…", the island's settings links (`open_settings_window`) and the Flow pill's "settings" open Settings → Overlay. Next Agent's own `overlay_open` command is gone.
+- **The Coucou window stays, without its settings.** It keeps the Flow pages that are not settings (dictation history, the Notetaker, statistics, dictionary, snippets, mail). Its new entry `src/hub/main.ts` is `settings/main.ts`'s `main()` without the Notch pages; `hub/shell.ts` takes an `elsewhere` hook, so its sidebar and search links to settings pages open Settings → Overlay (`Bridge.openSettingsWindow(page)`).
+- **Kept unused.** `src/settings/main.ts`, `agents.ts`, `phone.ts`, `updates.ts`, `colors.ts`, `claude-models.ts` (only its `CLAUDE_MODELS` list is imported), `parts.ts`, and `hub/pages/{flowsettings,styles,voice}.ts` as pages (`flowsettings.ts`'s `modelsControl` is still used by the dictation page). `settings/settings.css` still gives the Coucou window its base styles. Removing them would be a large diff against upstream; a re-sync stays a plain diff.
+- **Who may change what.** The phone link's and Antigravity's "only the settings window" checks now name the main window (`SETTINGS_LABEL = "main"`); the Coucou window no longer passes them. Capabilities: `main` gets the 70 overlay settings commands (pinned in `scripts/tests/capabilities.test.ts`); `coucou-settings` loses the settings writers (`hooks_apply`, `status_line_apply`, `agent_hooks_apply`, `secret_*`, `local_set_key`, `save_settings`, the phone switches, `update_set_source` …). Overlay windows still get none of Next Agent's commands. The CSP is unchanged.
 
 ## Upstream watch
 

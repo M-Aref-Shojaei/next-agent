@@ -42,7 +42,7 @@ The outfit choice, the seasonal "auto" pick and the wardrobe view still work. On
 
 ## 3. Sounds → placeholder: silence
 
-Upstream keeps 29 WAV files in `NotchBuddy/Resources/sounds/` (16-bit PCM, stereo, 48 kHz). Coucou's Vite config serves them at `/sounds/<name>.wav`; `apps/desktop/coucou/src/core/sound.ts` fetches them from there. Next Agent ships none, so every sound is silent. The user can still drop their own files in Coucou's sounds folder: Settings → Sounds → "Open folder" (`src-tauri/src/sounds.rs`), WAV/MP3/M4A/AIFF, same names.
+Upstream keeps 29 WAV files in `NotchBuddy/Resources/sounds/` (16-bit PCM, stereo, 48 kHz). Coucou's Vite config serves them at `/sounds/<name>.wav`; `apps/desktop/coucou/src/core/sound.ts` fetches them from there. Next Agent ships none, so every sound is silent. The user can still drop their own files in Coucou's sounds folder: Next Agent's Settings → Overlay → General → "Open sounds folder" (`src-tauri/src/sounds.rs`), WAV/MP3/M4A/AIFF, same names.
 
 Names (`SOUND_NAMES` in `sound.ts`):
 

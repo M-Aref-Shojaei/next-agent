@@ -166,7 +166,7 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 | **Card** | `title`, `description`, `variant` default\|hero\|subtle, `padding`, `level`, snippets `media`, `actions`, `children` | Grouping content. `hero` is for about and intro cards, with `<BrandMark>` as `media`. |
 | **List / ListRow** | List: `label`, `bordered`. ListRow: `title`, `description`, `meta`, `selected`, `disabled`, `onclick` or `href`, snippets `leading`, `actions`, `children` | Lists of things with per-item actions (bots, rules, providers). The row body can be one button or link; actions stay separate buttons. |
 | **Tabs** | `tabs: {id,label,disabled?,badge?}[]`, bindable `value`, `label`, snippet `children(activeId)` | Switching views of the same object. Arrow keys, Home and End move between tabs. Use SettingsLayout's nav for page-level navigation instead. |
-| **Dialog** | bindable `open`, `title`, `description`, `confirmLabel`, `cancelLabel`, `tone` default\|danger, `busy`, `hideConfirm`, `onconfirm` (may be async), `oncancel`, snippet `children` | Confirming a consequential action. It uses native `<dialog>`, which traps focus and closes on Esc. `danger` focuses Cancel first. |
+| **Dialog** | bindable `open`, `title`, `description`, `confirmLabel`, `cancelLabel`, `tone` default\|danger, `size` md\|lg (lg: a diff or a table), `busy`, `hideConfirm`, `onconfirm` (may be async), `oncancel`, snippet `children` | Confirming a consequential action. It uses native `<dialog>`, which traps focus and closes on Esc. `danger` focuses Cancel first. |
 | **Tooltip** | `text`, `placement` top\|bottom, snippet `children({describedby})` | Explaining an icon. Never hide required information in a tooltip. |
 | **BrandMark** | `size`, `label` | The red orb as a static brand mark. |
 
@@ -201,6 +201,7 @@ Pure helpers (tested in `apps/desktop/tests/ds.test.ts`):
   - The check fails when a file goes over its `max`, when an allowlisted file is clean (remove its entry), or when an allowlisted file no longer exists.
   - It prints a note when a count drops, so you can lower `max`.
   - `apps/desktop/coucou/**` is one pending entry: the vendored Coucou UI, which gets restyled and has its settings moved.
+  - **Coucou settings: migrated.** Its settings window (`coucou/src/settings/*`) and the hub's settings pages (Flow settings, styles, voice) are now Settings → Overlay (`routes/(app)/settings/overlay/*`), built from SettingsLayout, SettingsSection and SettingsRow; the old code stays in the tree, unused ([[Coucou]]).
 - **Dark-theme parity:** the two dark blocks in `tokens.css` must match.
 - **Run it:** `node scripts/check-design-tokens.mjs --list` prints every finding. Tests: `scripts/tests/design-tokens.test.ts`.
 
