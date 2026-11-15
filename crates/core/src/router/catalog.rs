@@ -22,6 +22,9 @@ pub const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 pub const CATALOG_FILE: &str = "openrouter-models.json";
 /// Responses larger than this are refused (the real list is ~1–2 MB).
 const MAX_BYTES: usize = 8 * 1024 * 1024;
+/// Redirects followed before the catalog request gives up.
+const MAX_REDIRECTS: usize = 3;
+const TOO_LARGE: &str = "the model catalog is too large";
 
 /// USD per token as a string → USD per 1M tokens. `-1` (dynamic) and
 /// unparsable values → `None`.
@@ -131,11 +134,10 @@ pub async fn fetch(url: &str) -> Result<(String, usize), LlmError> {
     if parsed.scheme() != "https" && !(parsed.scheme() == "http" && loopback) {
         return Err(LlmError::Config("the catalog URL must use https".into()));
     }
-    // Follow at most 3 redirects, and only to https (no downgrade).
-    // Follow at most 3 redirects, only over https and only on the same host.
+    // Redirects: at most MAX_REDIRECTS, each to the same host over https on port 443.
     let host = parsed.host_str().unwrap_or_default().to_string();
     let redirects = reqwest::redirect::Policy::custom(move |attempt| {
-        if attempt.previous().len() < 3
+        if attempt.previous().len() < MAX_REDIRECTS
             && attempt.url().scheme() == "https"
             && attempt.url().host_str() == Some(host.as_str())
             && attempt.url().port_or_known_default() == Some(443)
@@ -168,7 +170,7 @@ pub async fn fetch(url: &str) -> Result<(String, usize), LlmError> {
         .content_length()
         .is_some_and(|n| n > MAX_BYTES as u64)
     {
-        return Err(LlmError::Protocol("the model catalog is too large".into()));
+        return Err(LlmError::Protocol(TOO_LARGE.into()));
     }
     // Read in chunks so a body without a length cannot exceed the limit.
     let mut response = response;
@@ -179,7 +181,7 @@ pub async fn fetch(url: &str) -> Result<(String, usize), LlmError> {
         .map_err(|e| LlmError::Protocol(e.to_string()))?
     {
         if bytes.len() + chunk.len() > MAX_BYTES {
-            return Err(LlmError::Protocol("the model catalog is too large".into()));
+            return Err(LlmError::Protocol(TOO_LARGE.into()));
         }
         bytes.extend_from_slice(&chunk);
     }
