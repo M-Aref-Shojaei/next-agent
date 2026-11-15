@@ -65,6 +65,8 @@ const SHORT_COOLDOWN: Duration = Duration::from_secs(5);
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Output ceiling assumed when the price table has no `max_output` for a model.
 const FALLBACK_OUTPUT_TOKENS: u32 = 16_384;
+/// HTTP status returned when a budget refuses a request.
+const BUDGET_BLOCKED_STATUS: u16 = 402;
 
 /// User-editable gateway settings.
 #[allow(clippy::struct_excessive_bools)] // Independent on/off switches.
@@ -1085,7 +1087,7 @@ impl Gateway {
         let statuses = self.budgets_for(Some(role)).map_err(|error| {
             tracing::warn!(target: "router", %error, "could not read spend; budgets fail closed");
             LlmError::Http {
-                status: 402,
+                status: BUDGET_BLOCKED_STATUS,
                 body: format!("Budgets are set but today's spend could not be read ({error}); the request was not sent."),
             }
         })?;
@@ -1102,7 +1104,7 @@ impl Gateway {
             targets.retain(|t| priced(t));
             if targets.is_empty() {
                 return Err(LlmError::Http {
-                    status: 402,
+                    status: BUDGET_BLOCKED_STATUS,
                     body: "A budget is set, and none of these models has a known price, so their spend could not be counted. Add a price in pricing.json, refresh the model catalog, or allow unpriced models in Settings → Providers → Budgets.".into(),
                 });
             }
@@ -1116,7 +1118,7 @@ impl Gateway {
             .find(|s| s.spent + estimate >= s.budget.limit_usd);
         if let Some(over) = over {
             let blocked = || LlmError::Http {
-                status: 402,
+                status: BUDGET_BLOCKED_STATUS,
                 body: over.message(),
             };
             if self.config.settings.budget_action == BudgetAction::Block {
