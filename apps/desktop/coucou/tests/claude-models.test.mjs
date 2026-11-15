@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { installFakeDom } from "./fakedom.mjs";
 import { Bridge } from "../src/core/bridge.ts";
-import { claudeModelControl } from "../src/settings/claude-models.ts";
+import { claudeModelControl } from "../src/core/claude-models.ts";
 
 installFakeDom();
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));

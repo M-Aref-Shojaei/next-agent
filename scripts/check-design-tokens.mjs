@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // One design system (ADR-0012): style code under apps/desktop/src and the
-// vendored Coucou UI (apps/desktop/coucou/src, except its settings window, which
-// is moved into Next Agent Settings and is still "pending" in the allowlist) uses
+// vendored Coucou UI (apps/desktop/coucou/src) uses
 // the tokens in apps/desktop/src/lib/ds/tokens.css, never raw colours or font
 // stacks. Fails on any raw value outside tokens.css that the allowlist does not
 // cover. scripts/design-tokens-allowlist.json lists today's offenders, one entry
@@ -14,7 +13,6 @@ import { applyAllowlist, darkThemeParity, scanFile } from "./lib/design-tokens.m
 
 const ROOT = "apps/desktop/src";
 const COUCOU = "apps/desktop/coucou/src";
-const COUCOU_SETTINGS = `${COUCOU}/settings/`; // pending: not scanned until it moves into Settings
 const TOKENS = `${ROOT}/lib/ds/tokens.css`;
 const ALLOWLIST = "scripts/design-tokens-allowlist.json";
 const EXT = /\.(svelte|css|[cm]?ts)$/;
@@ -23,7 +21,6 @@ const files = [ROOT, COUCOU]
   .flatMap((root) => readdirSync(root, { recursive: true, withFileTypes: true }))
   .filter((e) => e.isFile() && EXT.test(e.name) && !e.name.endsWith(".d.ts"))
   .map((e) => `${e.parentPath}/${e.name}`.split("\\").join("/"))
-  .filter((f) => !f.startsWith(COUCOU_SETTINGS))
   .sort();
 
 const results = new Map();

@@ -99,7 +99,6 @@ test("the allowlist caps counts, notes progress and rejects stale entries", () =
     { path: "b.svelte", max: 2 },
     { path: "c.svelte", max: 1 },
     { path: "gone.svelte", max: 1 },
-    { path: "apps/desktop/coucou/src/settings/**", pending: true },
   ];
   const { failures, notes } = applyAllowlist(results, allow);
   assert.ok(failures.some((f) => f.startsWith("a.svelte: 2 raw values")), failures.join("\n"));
@@ -118,10 +117,10 @@ test("the real tokens.css keeps its two dark blocks in sync", () => {
   assert.equal(darkThemeParity(broken).length, 2);
 });
 
-test("the committed allowlist tracks Coucou's settings window as pending and caps every file", () => {
+test("the committed allowlist has no pending entry and caps every file", () => {
   const { entries } = JSON.parse(readFileSync("scripts/design-tokens-allowlist.json", "utf8"));
-  assert.ok(entries.some((e: { path: string; pending?: boolean }) => e.path === "apps/desktop/coucou/src/settings/**" && e.pending));
-  for (const e of entries) assert.ok(e.pending || Number.isInteger(e.max), e.path);
+  assert.ok(!entries.some((e: { pending?: boolean }) => e.pending));
+  for (const e of entries) assert.ok(Number.isInteger(e.max), e.path);
 });
 
 test("template interpolations and CONSTANT references are code, not colour words", () => {

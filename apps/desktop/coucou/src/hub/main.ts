@@ -1,13 +1,12 @@
 // Next Agent: the Coucou window's entry since its settings moved into Next
-// Agent's Settings (owner request: one design system). It is settings/main.ts's
-// `main()` without the Notch pages: the window keeps Flow's pages that are not
-// settings (dictation history, the Notetaker, statistics, dictionary, snippets,
-// mail), and every settings page it links to opens in Next Agent's main window
-// (`open_settings_window`, which Rust sends there: lib.rs `MOVED_PAGES`).
-// settings/main.ts and its sections stay in the tree, unused, for re-syncs.
+// Agent's Settings (owner request: one design system). The window keeps Flow's
+// pages that are not settings (dictation history, the Notetaker, statistics,
+// dictionary, snippets, mail), and every settings page it links to opens in
+// Next Agent's main window (`open_settings_window`, which Rust sends there:
+// lib.rs `MOVED_PAGES`). Coucou's own settings code is removed
+// (docs/upstream/Coucou.md).
 
-// The window's base styles came with settings/main.ts; the window looks as it did.
-import "../settings/settings.css";
+import "./base.css";
 import { Bridge, onEvent } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { startHub, type FlowPageRenderer, type PageId } from "./shell";

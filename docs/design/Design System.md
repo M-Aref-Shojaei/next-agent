@@ -202,9 +202,9 @@ Pure helpers (tested in `apps/desktop/tests/ds.test.ts`):
 - **Allowlist:** `scripts/design-tokens-allowlist.json` has one entry per offending file, with `max`, the count today.
   - The check fails when a file goes over its `max`, when an allowlisted file is clean (remove its entry), or when an allowlisted file no longer exists.
   - It prints a note when a count drops, so you can lower `max`.
-  - The checker also scans `apps/desktop/coucou/src/**`. `coucou/src/settings/**` is the one pending entry: it is not scanned until it moves into Next Agent Settings.
+  - The checker scans `apps/desktop/coucou/src/**` entirely. Nothing is pending.
   - A few Coucou files are listed because they hold identity colours as data (see "Coucou's windows").
-  - **Coucou settings: migrated.** Its settings window (`coucou/src/settings/*`) and the hub's settings pages (Flow settings, styles, voice) are now Settings → Overlay (`routes/(app)/settings/overlay/*`), built from SettingsLayout, SettingsSection and SettingsRow; the old code stays in the tree, unused ([[Coucou]]).
+  - **Coucou settings: migrated.** Its settings window (`coucou/src/settings/*`) and the hub's settings pages (Flow settings, styles, voice) are now Settings → Overlay (`routes/(app)/settings/overlay/*`), built from SettingsLayout, SettingsSection and SettingsRow. The old code is deleted, and the Coucou window's base styles are `coucou/src/hub/base.css` on the tokens: Coucou is fully on the system ([[Coucou]]).
 - **Dark-theme parity:** the two dark blocks in `tokens.css` must match.
 - **Run it:** `node scripts/check-design-tokens.mjs --list` prints every finding. Tests: `scripts/tests/design-tokens.test.ts`.
 

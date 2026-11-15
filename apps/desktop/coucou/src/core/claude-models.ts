@@ -1,5 +1,5 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/src/settings/claude-models.ts @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
-import { Bridge, type ModelInfo } from "../core/bridge";
+import { Bridge, type ModelInfo } from "./bridge";
 import { h, clear } from "../views/dom";
 import { t } from "../i18n/i18n";
 

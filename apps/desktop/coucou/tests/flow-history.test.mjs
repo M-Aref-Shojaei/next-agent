@@ -34,7 +34,6 @@ proto.querySelector = function (selector) {
   return selector.startsWith(".") ? querySelector.call(this, selector) : this.find(selector)[0] ?? null;
 };
 const { dictationPage } = await import("../src/hub/pages/dictation.ts");
-const { flowSettingsPage } = await import("../src/hub/pages/flowsettings.ts");
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const originalInvoke = internals.invoke;
 const button = (page, name) => page.find("button").find(b => b.textContent === name || b.getAttribute("aria-label") === name);
@@ -96,39 +95,3 @@ test("pending deletion waits for disk, prevents duplicates and preserves incomin
   assert.match(f.page.textContent, /New dictation/);
 });
 
-test("erasing history reports disk failures and blocks duplicate requests until retry", async t => {
-  const f = await fixture(t, flowSettingsPage);
-  let fail;
-  f.write(() => new Promise((_, reject) => { fail = reject; }));
-  const erase = button(f.page, "Erase the history");
-  erase.fire("click");
-  await flush();
-  assert.equal(erase.disabled, true);
-  erase.fire("click");
-  assert.equal(sent("flow_clear").length, 1);
-  fail(new Error("History file is locked"));
-  await flush();
-  assert.equal(erase.disabled, false);
-  assert.match(f.page.querySelector(".hub-warn").textContent, /locked/);
-  f.write(async () => {});
-  erase.fire("click");
-  await flush();
-  assert.equal(f.page.querySelector(".hub-warn").hidden, true);
-});
-
-test("Erase everything retains confirmation on failure and resets it only after success", async t => {
-  const f = await fixture(t, flowSettingsPage);
-  f.write(async () => { throw new Error("Could not erase statistics"); });
-  button(f.page, "Erase everything").fire("click");
-  assert.equal(sent("flow_clear").length, 0);
-  button(f.page, "Erase everything").fire("click");
-  await flush();
-  assert.match(f.page.textContent, /Erase the history and the statistics\?/);
-  assert.match(f.page.querySelector(".hub-warn").textContent, /statistics/);
-  f.write(async () => {});
-  button(f.page, "Erase everything").fire("click");
-  await flush();
-  assert.doesNotMatch(f.page.textContent, /Erase the history and the statistics\?/);
-  assert.equal(f.page.querySelector(".hub-warn").hidden, true);
-  assert.deepEqual(sent("flow_clear"), [{ everything: true }, { everything: true }]);
-});

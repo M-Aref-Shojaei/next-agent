@@ -24,7 +24,6 @@ Object.getPrototypeOf(root()).querySelectorAll = function (selector) {
   return [...this.walk()].filter(el => tags.includes(el.tagName));
 };
 const { dictionaryPage, snippetsPage } = await import("../src/hub/pages/words.ts");
-const { stylesPage } = await import("../src/hub/pages/styles.ts");
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const originalInvoke = internals.invoke;
 const button = (page, name) => page.find("button").find(b => b.textContent === name || b.getAttribute("aria-label") === name);
@@ -170,63 +169,3 @@ test("failed snippet deletion keeps the entry and a successful deletion clears i
   assert.match(f.page.textContent, /New snippet/);
 });
 
-test("a failed app-style change restores the persisted choice and allows retry", async t => {
-  const f = await fixture(t, stylesPage);
-  const appSelect = () => f.page.find("select").at(-1);
-  f.write(async () => { throw new Error("Styles destination is read-only"); });
-  appSelect().value = "verbatim";
-  appSelect().fire("change");
-  await flush();
-  assert.equal(appSelect().value, "polished");
-  assert.equal(f.data.styles[0].style, "polished");
-  assert.equal(error(f.page).hidden, false);
-  f.write(async () => {});
-  appSelect().value = "verbatim";
-  appSelect().fire("change");
-  await flush();
-  assert.equal(f.data.styles[0].style, "verbatim");
-  assert.equal(error(f.page).hidden, true);
-});
-
-test("adding and deleting app styles leaves the saved list intact when writing fails", async t => {
-  const f = await fixture(t, stylesPage);
-  const add = f.page.find("select").find(select => select.find("option").some(option => option.textContent === "+ Add an app"));
-  const initialSelects = f.page.find("select").length;
-  f.write(async () => { throw new Error("Disk full"); });
-  add.value = "editor\nEditor";
-  add.fire("change");
-  await flush();
-  assert.equal(f.data.styles.length, 1);
-  assert.equal(f.page.find("select").length, initialSelects);
-  f.write(async () => {});
-  add.value = "editor\nEditor";
-  add.fire("change");
-  await flush();
-  assert.deepEqual(f.data.styles[1], { id: "editor", name: "Editor", style: "natural" });
-  f.write(async () => { throw new Error("Disk full"); });
-  button(f.page, "Delete").fire("click");
-  await flush();
-  assert.equal(f.page.find("select").length, initialSelects + 1);
-  f.write(async () => {});
-  button(f.page, "Delete").fire("click");
-  await flush();
-  assert.deepEqual(f.data.styles.map(s => s.id), ["editor"]);
-});
-
-test("a repeated style event does not unlock the editor while its first save is pending", async t => {
-  const f = await fixture(t, stylesPage);
-  let finish;
-  f.write(() => new Promise(resolve => { finish = resolve; }));
-  const choice = f.page.find("select").at(-1);
-  choice.value = "verbatim";
-  choice.fire("change");
-  await flush();
-  choice.fire("change");
-  await flush();
-  assert.equal(sent("flow_set_styles").length, 1);
-  assert.equal(f.page.find("select").at(-1).disabled, true);
-  finish();
-  await flush();
-  assert.equal(f.data.styles[0].style, "verbatim");
-  assert.equal(f.page.find("select").at(-1).disabled, false);
-});
