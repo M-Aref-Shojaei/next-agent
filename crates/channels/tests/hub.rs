@@ -32,6 +32,8 @@ struct FakeChannel {
     sent: Mutex<Vec<Sent>>,
     next_id: AtomicU64,
     limit: usize,
+    /// Every send fails (a Telegram outage).
+    down: std::sync::atomic::AtomicBool,
 }
 
 impl FakeChannel {
@@ -41,6 +43,7 @@ impl FakeChannel {
             sent: Mutex::default(),
             next_id: AtomicU64::new(100),
             limit: 4096,
+            down: std::sync::atomic::AtomicBool::new(false),
         })
     }
     fn sent(&self) -> Vec<Sent> {
@@ -80,6 +83,9 @@ impl Channel for FakeChannel {
         Box::pin(std::future::pending())
     }
     fn send(&self, m: Outbound) -> BoxFuture<'_, Result<MessageRef, ChannelError>> {
+        if self.down.load(Ordering::SeqCst) {
+            return Box::pin(async { Err(ChannelError::transient("Telegram unreachable")) });
+        }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst).to_string();
         self.sent.lock().expect("lock").push(Sent::Send {
             chat: m.chat_id.clone(),
@@ -298,6 +304,11 @@ async fn pairing_codes_expire_and_cap_at_three() {
         Handled::Pairing(PairingOutcome::Full)
     );
     assert_eq!(rig.channel.sent().len(), sent, "a full queue stays silent");
+    let log = rig.state.activity("ch_1", 10).expect("activity");
+    assert!(
+        log.iter().any(|a| a.text == "pairing queue full"),
+        "the owner sees refusals"
+    );
     let code = rig.hub.pending_pairings("ch_1").expect("p")[0].code.clone();
     rig.clock.fetch_add(3_600, Ordering::SeqCst);
     assert_eq!(rig.hub.pending_pairings("ch_1").expect("p").len(), 0);
@@ -394,6 +405,7 @@ async fn long_replies_are_chunked() {
         sent: Mutex::default(),
         next_id: AtomicU64::new(1),
         limit: 100,
+        down: std::sync::atomic::AtomicBool::new(false),
     });
     let message = dm(1, "42", "x");
     let text = "word ".repeat(100);
@@ -684,11 +696,18 @@ async fn concurrent_deliveries_with_one_key_send_once() {
 
 #[tokio::test]
 async fn a_failed_delivery_can_be_retried() {
-    let state = Arc::new(MemoryState::default());
-    assert!(state.claim("deliver:k", "pending").expect("claim"));
-    state.release("deliver:k").expect("release");
-    assert!(
-        state.claim("deliver:k", "pending").expect("claim again"),
-        "released keys can be claimed again"
-    );
+    let rig = rig(config());
+    pair(&rig, "42").await;
+    let delivery = Delivery {
+        channel_id: "ch_1".into(),
+        chat_id: "42".into(),
+        text: "report".into(),
+        idempotency_key: Some("job:2".into()),
+    };
+    rig.channel.down.store(true, Ordering::SeqCst);
+    assert!(rig.hub.deliver(&delivery).await.is_err());
+    // The failed send released its key, so the retry goes out.
+    rig.channel.down.store(false, Ordering::SeqCst);
+    assert_eq!(rig.hub.deliver(&delivery).await, Ok(1));
+    assert_eq!(rig.hub.deliver(&delivery).await, Ok(0));
 }

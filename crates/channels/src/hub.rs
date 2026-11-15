@@ -406,6 +406,9 @@ impl Hub {
                             self.emit(HubEvent::PairingRequested {
                                 channel_id: channel_id.to_string(),
                             });
+                        } else if outcome == PairingOutcome::Full {
+                            // Silent to the sender, visible to the owner.
+                            self.log(channel_id, "in", "denied", peer, "pairing queue full", None);
                         }
                         return Err(Handled::Pairing(outcome));
                     }

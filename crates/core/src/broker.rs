@@ -163,6 +163,12 @@ impl<'a> SqliteBroker<'a> {
     #[must_use]
     pub fn untrusted_origin(mut self) -> Self {
         self.untrusted = true;
+        // Rules loaded before the flag was set may hold allow rules: reload
+        // as deny-only, and on failure keep none (`load_rules` called later
+        // by the launcher reports the error and stops the task).
+        if self.load_rules().is_err() {
+            self.rules = RuleSet::empty();
+        }
         self
     }
 
@@ -975,6 +981,68 @@ mod tests {
             },
         );
         assert_eq!(outcome.decision, "deny");
+    }
+
+    fn allow_writes(store: &Store) {
+        store
+            .insert_rule(&RuleRow {
+                id: "allow-writes".into(),
+                scope: "global".into(),
+                workspace_id: None,
+                effect: "allow".into(),
+                kind: "write_file".into(),
+                pattern: String::new(),
+            })
+            .expect("rule");
+    }
+
+    fn write_req() -> ToolRequest {
+        ToolRequest::Write {
+            path: "/work/project/a.txt".into(),
+            contents: "x".into(),
+        }
+    }
+
+    #[test]
+    fn untrusted_origin_ignores_saved_allow_rules_whatever_the_call_order() {
+        let store = Store::open_in_memory().expect("store");
+        allow_writes(&store);
+        // Trusted: the saved rule upgrades the ask.
+        let mut trusted = broker(&store, Mode::Manual);
+        trusted.load_rules().expect("load");
+        assert_eq!(trusted.handle("c1", &write_req()).decision, "allow");
+        // Untrusted, flag set after rules were loaded: still ignored.
+        let mut late = broker(&store, Mode::Manual);
+        late.load_rules().expect("load");
+        let mut late = late.untrusted_origin();
+        assert_eq!(late.handle("c2", &write_req()).decision, "ask");
+        // Untrusted, flag set first.
+        let mut early = broker(&store, Mode::Manual).untrusted_origin();
+        early.load_rules().expect("load");
+        assert_eq!(early.handle("c3", &write_req()).decision, "ask");
+    }
+
+    #[test]
+    fn untrusted_always_answer_saves_no_rule() {
+        let store = Store::open_in_memory().expect("store");
+        let mut broker = broker(&store, Mode::Manual)
+            .untrusted_origin()
+            .with_approver(Scripted(Approval::AlwaysForWorkspace));
+        assert_eq!(broker.handle("c1", &write_req()).decision, "allow");
+        assert_eq!(store.rules_for("ws_1").expect("rules").len(), 0);
+    }
+
+    #[test]
+    fn untrusted_reads_of_secret_files_ask() {
+        let store = Store::open_in_memory().expect("store");
+        let mut broker = broker(&store, Mode::Manual).untrusted_origin();
+        let secret = ToolRequest::Read {
+            path: "/work/project/.env".into(),
+        };
+        assert_eq!(broker.handle("c1", &secret).decision, "ask");
+        assert_eq!(broker.handle("c2", &read()).decision, "allow");
+        let mut trusted = super::tests::broker(&store, Mode::Manual);
+        assert_eq!(trusted.handle("c3", &secret).decision, "allow");
     }
 
     #[test]
