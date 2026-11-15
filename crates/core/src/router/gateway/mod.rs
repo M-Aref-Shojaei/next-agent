@@ -1108,7 +1108,7 @@ impl Gateway {
             }
         }
         for status in statuses.iter().filter(|s| s.level == Level::Warn) {
-            tracing::warn!(target: "router", budget = %status.budget.label(), spent = status.spent, "budget above 80%");
+            tracing::warn!(target: "router", budget = %status.budget.label(), spent = status.spent, "budget above {:.0}%", super::budget::WARN_AT * 100.0);
         }
         let estimate = self.estimate_cost(body, targets);
         let over = statuses
