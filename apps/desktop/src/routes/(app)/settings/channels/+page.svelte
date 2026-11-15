@@ -177,14 +177,19 @@
 
   onMount(() => {
     const offs: (() => void)[] = [];
+    let disposed = false;
+    // Cleanup runs synchronously, but listeners arrive after awaits: drop late ones at once.
+    const keep = (off: () => void) => (disposed ? off() : offs.push(off));
     void (async () => {
       try {
         await loadList();
         if (channels[0]) edit(channels[0]);
-        offs.push(
+        keep(
           await api.onChannelHealth((id, health) => {
             channels = channels.map((c) => (c.config.id === id ? { ...c, health } : c));
           }),
+        );
+        keep(
           await api.onChannelChange((id) => {
             if (id === selectedId) void loadDetails().catch(() => {});
           }),
@@ -195,6 +200,7 @@
     })();
     const tick = setInterval(() => (now = Math.floor(Date.now() / 1000)), 30_000);
     return () => {
+      disposed = true;
       clearInterval(tick);
       offs.forEach((off) => off());
     };
