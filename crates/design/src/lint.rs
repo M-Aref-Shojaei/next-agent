@@ -9,6 +9,9 @@
 use crate::css;
 use serde::{Deserialize, Serialize};
 
+/// How many off-palette colours are named in the `off-palette` message.
+const MAX_OFF_PALETTE_LISTED: usize = 6;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -44,7 +47,7 @@ fn root_blocks(html: &str) -> Vec<(usize, usize)> {
         let open = start + open;
         let close = html[open..].find('}').map_or(html.len(), |c| open + c);
         out.push((start, close));
-        from = close.max(start + 5);
+        from = close.max(start + ":root".len());
     }
     out
 }
@@ -52,28 +55,11 @@ fn root_blocks(html: &str) -> Vec<(usize, usize)> {
 /// Lint one direction. `token_colors` are the design system's colour values
 /// (lower-case); colours outside them are reported once, in summary.
 #[must_use]
-#[allow(clippy::too_many_lines)] // a flat list of independent rules
 pub fn lint(html: &str, token_colors: &[String]) -> Vec<Finding> {
     let lower = html.to_ascii_lowercase();
     let mut out = Vec::new();
 
-    let external = [
-        "src=\"http",
-        "src='http",
-        "href=\"http",
-        "href='http",
-        "url(http",
-        "url(\"http",
-        "url('http",
-        "src=\"//",
-        "href=\"//",
-        "@import",
-    ]
-    .iter()
-    .any(|p| lower.contains(p));
-    if external {
-        out.push(finding("network", Severity::P0, "Loads something from the network; previews have no network, so it will be missing. Inline it or use a CSS shape."));
-    }
+    out.extend(network_finding(&lower));
     if lower.contains("<script") {
         out.push(finding(
             "script",
@@ -118,6 +104,44 @@ pub fn lint(html: &str, token_colors: &[String]) -> Vec<Finding> {
             "Lorem ipsum filler; write copy specific to the brief.",
         ));
     }
+    out.extend(css_findings(html));
+    out.extend(raw_hex_findings(html, token_colors));
+    if !lower.contains("name=\"viewport\"") && !lower.contains("name=viewport") {
+        out.push(finding(
+            "missing-viewport",
+            Severity::P2,
+            "No viewport meta (the preview adds one).",
+        ));
+    }
+    out.sort_by_key(|f| f.severity);
+    out
+}
+
+/// Loads something from the network, which previews cannot fetch.
+fn network_finding(lower: &str) -> Vec<Finding> {
+    let external = [
+        "src=\"http",
+        "src='http",
+        "href=\"http",
+        "href='http",
+        "url(http",
+        "url(\"http",
+        "url('http",
+        "src=\"//",
+        "href=\"//",
+        "@import",
+    ]
+    .iter()
+    .any(|p| lower.contains(p));
+    if external {
+        vec![finding("network", Severity::P0, "Loads something from the network; previews have no network, so it will be missing. Inline it or use a CSS shape.")]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Uppercase text in inline CSS with no letter-spacing alongside it.
+fn css_findings(html: &str) -> Vec<Finding> {
     let decls = css::declarations(&css_of(html));
     for decl in &decls {
         if decl.property == "text-transform" && decl.value == "uppercase" {
@@ -125,16 +149,21 @@ pub fn lint(html: &str, token_colors: &[String]) -> Vec<Finding> {
                 .iter()
                 .any(|d| d.context == decl.context && d.property == "letter-spacing");
             if !tracked {
-                out.push(finding(
+                return vec![finding(
                     "all-caps-no-tracking",
                     Severity::P1,
                     "Uppercase text without letter-spacing (add about 0.06em).",
-                ));
-                break;
+                )];
             }
         }
     }
-    // Raw hex outside :root, and colours that aren't tokens.
+    Vec::new()
+}
+
+/// Raw hex outside `:root`, and colours that aren't design tokens.
+fn raw_hex_findings(html: &str, token_colors: &[String]) -> Vec<Finding> {
+    let lower = html.to_ascii_lowercase();
+    let mut out = Vec::new();
     let roots = root_blocks(&lower);
     let mut raw = 0usize;
     let mut off: Vec<String> = Vec::new();
@@ -142,7 +171,8 @@ pub fn lint(html: &str, token_colors: &[String]) -> Vec<Finding> {
     while let Some(p) = lower[i..].find('#') {
         let at = i + p;
         i = at + 1;
-        let found = css::colors_in(&lower[at..lower.len().min(at + 10)]);
+        let window: String = lower[at..].chars().take(10).collect();
+        let found = css::colors_in(&window);
         let Some(color) = found.first() else { continue };
         if !lower[at..].starts_with(color.as_str()) || roots.iter().any(|(s, e)| at > *s && at < *e)
         {
@@ -161,21 +191,13 @@ pub fn lint(html: &str, token_colors: &[String]) -> Vec<Finding> {
         ));
     }
     if !off.is_empty() {
-        off.truncate(6);
+        off.truncate(MAX_OFF_PALETTE_LISTED);
         out.push(finding(
             "off-palette",
             Severity::P1,
             format!("Colours not in tokens.css: {}.", off.join(", ")),
         ));
     }
-    if !lower.contains("name=\"viewport\"") && !lower.contains("name=viewport") {
-        out.push(finding(
-            "missing-viewport",
-            Severity::P2,
-            "No viewport meta (the preview adds one).",
-        ));
-    }
-    out.sort_by_key(|f| f.severity);
     out
 }
 
@@ -226,5 +248,10 @@ mod tests {
         }
         // P0 first.
         assert_eq!(lint(html, &[])[0].severity, Severity::P0);
+    }
+
+    #[test]
+    fn hash_before_multibyte_char_does_not_panic() {
+        let _ = lint("<p>#— hi</p>", &[]);
     }
 }

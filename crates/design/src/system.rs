@@ -16,6 +16,21 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+/// Colours kept, by frequency, when ranking a project's palette.
+const MAX_RANKED_COLORS: usize = 24;
+/// Values (font sizes, spacing, radii, ...) kept, by frequency, per category.
+const MAX_RANKED_VALUES: usize = 12;
+/// Palette colours promoted to `--color-N` tokens when the project has none.
+const MAX_DERIVED_COLORS: usize = 8;
+/// Literal values promoted to `--text-N`, `--space-N`, ... tokens per category.
+const MAX_DERIVED_VALUES: usize = 6;
+/// Font families listed in `DESIGN.md`'s typeface section.
+const MAX_FONTS_LISTED: usize = 3;
+/// Source files named in the `DESIGN.md` provenance comment.
+const MAX_SOURCES_LISTED: usize = 12;
+/// Raw values listed in `DESIGN.md` when a category has no tokens.
+const MAX_FALLBACK_LISTED: usize = 8;
+
 /// What a token is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -348,7 +363,7 @@ impl Tally {
         let mut all: Vec<(String, usize)> =
             self.colors.iter().map(|(k, v)| (k.clone(), *v)).collect();
         all.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        all.truncate(24);
+        all.truncate(MAX_RANKED_COLORS);
         all
     }
 }
@@ -373,7 +388,10 @@ fn with_first(mut list: Vec<String>, first: Option<String>) -> Vec<String> {
 fn ranked(map: &BTreeMap<String, usize>) -> Vec<String> {
     let mut all: Vec<(&String, &usize)> = map.iter().collect();
     all.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-    all.into_iter().take(12).map(|(k, _)| k.clone()).collect()
+    all.into_iter()
+        .take(MAX_RANKED_VALUES)
+        .map(|(k, _)| k.clone())
+        .collect()
 }
 
 /// Fill categories the project has no tokens for from its literal values,
@@ -382,7 +400,7 @@ fn derive_missing(system: &mut DesignSystem) {
     let has = |kind: TokenKind, s: &DesignSystem| s.tokens.iter().any(|t| t.kind == kind);
     let mut extra = Vec::new();
     if !has(TokenKind::Color, system) {
-        for (i, (color, _)) in system.palette.iter().take(8).enumerate() {
+        for (i, (color, _)) in system.palette.iter().take(MAX_DERIVED_COLORS).enumerate() {
             extra.push(derived(
                 &format!("--color-{}", i + 1),
                 color,
@@ -399,7 +417,7 @@ fn derive_missing(system: &mut DesignSystem) {
         if has(kind, system) {
             return;
         }
-        let mut sorted: Vec<&String> = values.iter().take(6).collect();
+        let mut sorted: Vec<&String> = values.iter().take(MAX_DERIVED_VALUES).collect();
         sorted.sort_by(|a, b| px(a).total_cmp(&px(b)));
         for (i, v) in sorted.into_iter().enumerate() {
             extra.push(derived(&format!("--{prefix}-{}", i + 1), v, kind));
@@ -491,26 +509,55 @@ pub fn render_tokens_css(system: &DesignSystem) -> String {
 /// `DESIGN.md`: the brand contract in Open Design's nine-section layout,
 /// filled with what the CSS tells us and clear placeholders for the rest.
 #[must_use]
-#[allow(clippy::too_many_lines)] // one block per section, in order
 pub fn render_design_md(system: &DesignSystem) -> String {
-    let tokens_of = |kind: TokenKind| -> Vec<&Token> {
-        system.tokens.iter().filter(|t| t.kind == kind).collect()
-    };
+    let mut md = design_md_front_matter(system);
+    md.push_str(&section_1_theme(system));
+    md.push_str(&section_2_colors(system));
+    md.push_str(&section_3_typography(system));
+    md.push_str(&section_4_components());
+    md.push_str(&section_5_layout(system));
+    md.push_str(&section_6_depth(system));
+    md.push_str(&section_7_dos_and_donts());
+    md.push_str(&section_8_responsive());
+    md.push_str(&section_9_agent_prompt(system));
+    md
+}
+
+/// `## N. <name>` heading for one of the nine sections.
+fn section_heading(number: usize) -> String {
+    format!("## {number}. {}\n\n", DESIGN_MD_SECTIONS[number - 1])
+}
+
+fn tokens_of(system: &DesignSystem, kind: TokenKind) -> Vec<&Token> {
+    system.tokens.iter().filter(|t| t.kind == kind).collect()
+}
+
+fn has_dark_theme(system: &DesignSystem) -> bool {
+    system.tokens.iter().any(|t| t.dark.is_some())
+}
+
+fn design_md_front_matter(system: &DesignSystem) -> String {
     let mut md = format!(
         "---\nname: {}\nsource: generated from the project's CSS by the Next Agent Design Studio\ntokens: tokens.css\n---\n\n# {} design system\n\n",
         system.name, system.name
     );
     md.push_str("This file is the brand contract the Design Studio designs from. Keep it short and specific; edit anything below.\n\n");
+    md
+}
 
-    let colors = tokens_of(TokenKind::Color);
-    let has_dark = system.tokens.iter().any(|t| t.dark.is_some());
-    let _ = write!(md, "## 1. {}\n\n", DESIGN_MD_SECTIONS[0]);
+fn section_1_theme(system: &DesignSystem) -> String {
+    let mut md = section_heading(1);
     let _ = write!(md,
         "- Restrained, functional interface{}.\n- Colour is used for meaning (accent, status), not decoration.\n- _Describe the mood in a sentence: who uses it, and how it should feel._\n\n",
-        if has_dark { " with light and dark themes that follow the OS" } else { "" }
+        if has_dark_theme(system) { " with light and dark themes that follow the OS" } else { "" }
     );
+    md
+}
 
-    let _ = write!(md, "## 2. {}\n\n", DESIGN_MD_SECTIONS[1]);
+fn section_2_colors(system: &DesignSystem) -> String {
+    let mut md = section_heading(2);
+    let colors = tokens_of(system, TokenKind::Color);
+    let has_dark = has_dark_theme(system);
     if colors.is_empty() {
         md.push_str("_No colours found._\n\n");
     } else {
@@ -535,9 +582,12 @@ pub fn render_design_md(system: &DesignSystem) -> String {
         }
         md.push('\n');
     }
+    md
+}
 
-    let _ = write!(md, "## 3. {}\n\n", DESIGN_MD_SECTIONS[2]);
-    let font_tokens = tokens_of(TokenKind::Font);
+fn section_3_typography(system: &DesignSystem) -> String {
+    let mut md = section_heading(3);
+    let font_tokens = tokens_of(system, TokenKind::Font);
     let fonts: Vec<String> = font_tokens
         .iter()
         .map(|t| format!("`{}` = {}", t.name, t.value))
@@ -545,7 +595,7 @@ pub fn render_design_md(system: &DesignSystem) -> String {
             system
                 .fonts
                 .iter()
-                .take(3)
+                .take(MAX_FONTS_LISTED)
                 .filter(|f| !font_tokens.iter().any(|t| &t.value == *f))
                 .cloned(),
         )
@@ -557,38 +607,56 @@ pub fn render_design_md(system: &DesignSystem) -> String {
             let _ = writeln!(md, "- Typeface: {f}");
         }
     }
-    let sizes = list_or(&tokens_of(TokenKind::Size), &system.font_sizes);
+    let sizes = list_or(&tokens_of(system, TokenKind::Size), &system.font_sizes);
     if !sizes.is_empty() {
         let _ = writeln!(md, "- Sizes in use: {sizes}");
     }
     md.push_str("- Headings are tight (`margin: 0`); body text inherits the root size.\n\n");
+    md
+}
 
-    let _ = write!(md, "## 4. {}\n\n", DESIGN_MD_SECTIONS[3]);
+fn section_4_components() -> String {
+    let mut md = section_heading(4);
     md.push_str("- Buttons: panel background, 1px border, small radius; the primary button fills with the accent colour.\n- Inputs: full width, panel background, same border and radius as buttons.\n- Focus: a visible 2px outline in the focus colour on every interactive element.\n- _List any other components that have a fixed look._\n\n");
+    md
+}
 
-    let _ = write!(md, "## 5. {}\n\n", DESIGN_MD_SECTIONS[4]);
-    let spacing = list_or(&tokens_of(TokenKind::Spacing), &system.spacing);
+fn section_5_layout(system: &DesignSystem) -> String {
+    let mut md = section_heading(5);
+    let spacing = list_or(&tokens_of(system, TokenKind::Spacing), &system.spacing);
     let _ = write!(md,
         "- Spacing steps: {}\n- Prefer grid and flex layouts with `gap` over margins.\n- Dense, desktop-first panels; content never touches the window edge.\n\n",
         if spacing.is_empty() { "_none found_".to_string() } else { spacing }
     );
+    md
+}
 
-    let _ = write!(md, "## 6. {}\n\n", DESIGN_MD_SECTIONS[5]);
-    let radii = list_or(&tokens_of(TokenKind::Radius), &system.radii);
-    let shadows = list_or(&tokens_of(TokenKind::Shadow), &system.shadows);
+fn section_6_depth(system: &DesignSystem) -> String {
+    let mut md = section_heading(6);
+    let radii = list_or(&tokens_of(system, TokenKind::Radius), &system.radii);
+    let shadows = list_or(&tokens_of(system, TokenKind::Shadow), &system.shadows);
     let _ = write!(md,
         "- Radii: {}\n- Shadows: {}\n- Separate surfaces with borders and background steps before reaching for shadows.\n\n",
         if radii.is_empty() { "_none found_".to_string() } else { radii },
         if shadows.is_empty() { "none (flat)".to_string() } else { shadows }
     );
+    md
+}
 
-    let _ = write!(md, "## 7. {}\n\n", DESIGN_MD_SECTIONS[6]);
+fn section_7_dos_and_donts() -> String {
+    let mut md = section_heading(7);
     md.push_str("- Do use the tokens in `tokens.css` (`var(--name)`) instead of raw values.\n- Do keep contrast at WCAG AA or better in both themes.\n- Don't introduce new colours, fonts or radii without adding a token.\n- Don't load web fonts, images or scripts from the network.\n\n");
+    md
+}
 
-    let _ = write!(md, "## 8. {}\n\n", DESIGN_MD_SECTIONS[7]);
+fn section_8_responsive() -> String {
+    let mut md = section_heading(8);
     md.push_str("- Desktop first; layouts must still work down to 375px wide.\n- Collapse side panels below about 900px.\n\n");
+    md
+}
 
-    let _ = write!(md, "## 9. {}\n\n", DESIGN_MD_SECTIONS[8]);
+fn section_9_agent_prompt(system: &DesignSystem) -> String {
+    let mut md = section_heading(9);
     md.push_str("When designing for this project: link `tokens.css` or inline its `:root` block, use only its variables for colour, type, spacing and radius, support both colour schemes, and make every control keyboard-reachable with a visible focus ring.\n");
     if !system.sources.is_empty() {
         let _ = write!(
@@ -597,7 +665,7 @@ pub fn render_design_md(system: &DesignSystem) -> String {
             system
                 .sources
                 .iter()
-                .take(12)
+                .take(MAX_SOURCES_LISTED)
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -610,7 +678,7 @@ fn list_or(tokens: &[&Token], fallback: &[String]) -> String {
     if tokens.is_empty() {
         fallback
             .iter()
-            .take(8)
+            .take(MAX_FALLBACK_LISTED)
             .map(|v| format!("`{v}`"))
             .collect::<Vec<_>>()
             .join(", ")

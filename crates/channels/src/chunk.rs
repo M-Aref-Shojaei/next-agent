@@ -10,6 +10,12 @@
 /// Telegram's `sendMessage` text limit.
 pub const TELEGRAM_TEXT_LIMIT: usize = 4096;
 
+/// Smallest chunk limit honoured; below this there is no room for a fence.
+const MIN_CHUNK_LIMIT: usize = 16;
+/// Units reserved for closing an open fence: `\n` plus a three-character
+/// marker. All ASCII, so the byte length equals the UTF-16 unit count.
+const FENCE_CLOSE_UNITS: usize = "\n```".len();
+
 fn units(text: &str) -> usize {
     text.encode_utf16().count()
 }
@@ -67,8 +73,7 @@ pub fn chunk_text(text: &str, limit: usize) -> Vec<String> {
     if text.is_empty() {
         return Vec::new();
     }
-    // Room for a closing fence (`\n` + marker) and a reopen line.
-    let limit = limit.max(16);
+    let limit = limit.max(MIN_CHUNK_LIMIT);
     let mut chunks = Vec::new();
     let mut reopen = String::new();
     let mut rest = text;
@@ -84,8 +89,7 @@ pub fn chunk_text(text: &str, limit: usize) -> Vec<String> {
             break;
         }
         // Reserve room to close a fence that might be open at the cut.
-        let close_room = 4;
-        let hard = prefix_end(rest, budget.saturating_sub(close_room).max(1));
+        let hard = prefix_end(rest, budget.saturating_sub(FENCE_CLOSE_UNITS).max(1));
         let hard = if hard == 0 {
             rest.chars().next().map_or(rest.len(), char::len_utf8)
         } else {

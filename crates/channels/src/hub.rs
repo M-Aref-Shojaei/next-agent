@@ -29,6 +29,8 @@ use tokio::sync::mpsc;
 /// untrusted) into the next task's prompt. In memory only.
 pub const HISTORY_TURNS: usize = 6;
 const HISTORY_CHARS: usize = 1_500;
+/// How much of a failed task output is echoed back to the chat.
+const FAILURE_CHARS: usize = 500;
 const LOG_CHARS: usize = 300;
 const TYPING_EVERY: Duration = Duration::from_secs(4);
 
@@ -136,6 +138,11 @@ pub struct Hub {
     notify: Mutex<Option<Notify>>,
     clock: Clock,
     throttle: Duration,
+}
+
+/// How a sender is named in logs and access checks.
+fn peer_label(message: &Inbound) -> String {
+    format!("{} ({})", message.sender_label, message.sender_id)
 }
 
 fn now_secs() -> u64 {
@@ -305,7 +312,7 @@ impl Hub {
             return Handled::Duplicate;
         }
         let config = channel.config().clone();
-        let peer = format!("{} ({})", message.sender_label, message.sender_id);
+        let peer = peer_label(&message);
         if let Err(handled) = self.check_access(channel.as_ref(), &message, &peer).await {
             return handled;
         }
@@ -621,7 +628,7 @@ impl Hub {
         job.prompt = untrusted::task_prompt(&channel.config().name, &message, &history);
         let channel_id = job.channel_id.clone();
         let session = job.session_key.clone();
-        let peer = format!("{} ({})", message.sender_label, message.sender_id);
+        let peer = peer_label(&message);
         let typing = channel.capabilities().typing.then(|| {
             let channel = Arc::clone(&channel);
             let chat = message.chat_id.clone();
@@ -658,16 +665,7 @@ impl Hub {
             typing.abort();
         }
         let task_id = outcome.task_id.clone().or(task_id);
-        let text = match outcome.status.as_str() {
-            "completed" if outcome.answer.trim().is_empty() => "Done.".to_string(),
-            "completed" => outcome.answer.clone(),
-            "cancelled" => "Stopped.".to_string(),
-            "refused" => {
-                "This request could not be started. The owner can see why in the desktop app."
-                    .to_string()
-            }
-            _ => format!("The task failed: {}", clip(&outcome.answer, 500)),
-        };
+        let text = reply_text(&outcome);
         if outcome.status == "refused" {
             self.log(&channel_id, "system", "error", &peer, &outcome.answer, None);
         }
@@ -683,17 +681,35 @@ impl Hub {
             ),
         }
         if outcome.status == "completed" {
-            let mut history = self.lock_history();
-            let turns = history.entry(session).or_default();
-            turns.push_back(Turn {
-                sender: untrusted::sender_of(&message),
-                asked: clip(&message.text, HISTORY_CHARS),
-                answered: clip(&outcome.answer, HISTORY_CHARS),
-            });
-            while turns.len() > HISTORY_TURNS {
-                turns.pop_front();
-            }
+            self.remember_turn(session, &message, &outcome);
         }
+    }
+
+    /// Keep a completed exchange in the session history, dropping the oldest
+    /// turns past [`HISTORY_TURNS`].
+    fn remember_turn(&self, session: String, message: &Inbound, outcome: &TaskOutcome) {
+        let mut history = self.lock_history();
+        let turns = history.entry(session).or_default();
+        turns.push_back(Turn {
+            sender: untrusted::sender_of(message),
+            asked: clip(&message.text, HISTORY_CHARS),
+            answered: clip(&outcome.answer, HISTORY_CHARS),
+        });
+        while turns.len() > HISTORY_TURNS {
+            turns.pop_front();
+        }
+    }
+}
+
+/// The chat reply for a finished task.
+fn reply_text(outcome: &TaskOutcome) -> String {
+    match outcome.status.as_str() {
+        "completed" if outcome.answer.trim().is_empty() => "Done.".to_string(),
+        "completed" => outcome.answer.clone(),
+        "cancelled" => "Stopped.".to_string(),
+        "refused" => "This request could not be started. The owner can see why in the desktop app."
+            .to_string(),
+        _ => format!("The task failed: {}", clip(&outcome.answer, FAILURE_CHARS)),
     }
 }
 

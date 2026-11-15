@@ -11,6 +11,11 @@ use crate::DesignError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Fewest directions a generation run returns.
+const MIN_DIRECTIONS: usize = 3;
+/// Most directions a generation run returns.
+const MAX_DIRECTIONS: usize = 5;
+
 pub use crate::sandbox::FrameKind as Frame;
 
 /// One chat turn sent to the model.
@@ -132,7 +137,7 @@ fn rationales(reply: &str) -> Vec<String> {
         .collect()
 }
 
-/// Generate 3–5 directions, lint them, and (optionally) run the
+/// Generate [`MIN_DIRECTIONS`]–[`MAX_DIRECTIONS`] directions, lint them, and (optionally) run the
 /// five-dimension self-critique on each before returning.
 ///
 /// # Errors
@@ -142,7 +147,7 @@ pub fn generate(
     req: &GenerateRequest<'_>,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<Vec<Direction>, DesignError> {
-    let count = req.count.clamp(3, 5);
+    let count = req.count.clamp(MIN_DIRECTIONS, MAX_DIRECTIONS);
     progress(Progress::Generating { count });
     let system = prompts::generate_system(req.design_md, req.tokens_css, req.frame, count);
     let reply = model
