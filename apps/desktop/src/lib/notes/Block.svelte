@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { Icon, IconButton } from "$lib/ds/index.ts";
+  import { Icon, IconButton, TextArea } from "$lib/ds/index.ts";
   import Self from "./Block.svelte";
   import BlockBody from "./BlockBody.svelte";
   import { completeLink, editableText, isCollapsed, linkContext, markerOf } from "./content.ts";
@@ -17,6 +17,7 @@
   const hasChildren = $derived(block.children.length > 0);
 
   let area = $state<HTMLTextAreaElement | null>(null);
+  let editor: { fit: () => void } | undefined = $state();
   let popup = $state<{ start: number; query: string } | null>(null);
   let selected = $state(0);
 
@@ -40,7 +41,7 @@
     void tick().then(() => {
       if (!area) return;
       area.value = editableText(block.content);
-      resize();
+      editor?.fit();
       area.focus();
       const at = request.caret === "end" ? area.value.length : Math.min(request.caret, area.value.length);
       area.setSelectionRange(at, at);
@@ -53,15 +54,9 @@
     const text = editableText(block.content);
     if (area && area.value !== text) {
       area.value = text;
-      resize();
+      editor?.fit();
     }
   });
-
-  function resize() {
-    if (!area) return;
-    area.style.height = "auto";
-    area.style.height = `${area.scrollHeight}px`;
-  }
 
   function updatePopup() {
     if (!area) return;
@@ -97,7 +92,6 @@
 
   function oninput() {
     if (!area) return;
-    resize();
     outliner.input(block.id, area.value);
     updatePopup();
   }
@@ -130,11 +124,13 @@
     <span class="bullet" class:folded={collapsed && hasChildren} aria-hidden="true"></span>
     <div class="content">
       {#if editing}
-        <textarea
-          bind:this={area}
-          class="editor"
+        <TextArea
+          bind:this={editor}
+          bind:ref={area}
+          autogrow
+          compact
           data-block={block.id}
-          rows="1"
+          rows={1}
           spellcheck="false"
           aria-label="Block text"
           {onkeydown}
@@ -142,7 +138,7 @@
           onclick={updatePopup}
           onkeyup={(e) => (e.key.startsWith("Arrow") ? updatePopup() : undefined)}
           onblur={onblur}
-        ></textarea>
+        />
         {#if popup && suggestions.length}
           <ul class="popup" role="listbox" aria-label="Pages">
             {#each suggestions as s, i (s.name + s.create)}
@@ -186,8 +182,6 @@
   .content { flex: 1; min-width: 0; position: relative; }
   .view { min-height: var(--space-5); border-radius: var(--radius-sm); cursor: text; }
   .view:focus-visible { outline: var(--border-width-strong) solid var(--color-focus); outline-offset: 1px; }
-  .editor { display: block; width: 100%; resize: none; overflow: hidden; border: var(--border-width) solid var(--color-accent); border-radius: var(--radius-sm); padding: 0 var(--space-1); margin: 0; line-height: var(--line-height-normal); background: var(--color-surface); font: inherit; }
-  .editor:focus-visible { outline: none; }
   .children { margin: 0 0 0 var(--space-2); padding: 0 0 0 var(--space-5); border-left: var(--border-width) solid var(--color-border); }
   .popup { position: absolute; z-index: var(--z-dropdown); left: 0; top: 100%; margin: var(--space-0-5) 0 0; padding: var(--space-1); list-style: none; min-width: 220px; max-width: 420px; background: var(--color-surface-raised); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
   .popup button { all: unset; display: block; width: 100%; box-sizing: border-box; padding: var(--space-1) var(--space-2); border-radius: var(--radius-md); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

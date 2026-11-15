@@ -77,6 +77,7 @@
   let dangerOpen = $state(false);
   let largeOpen = $state(false);
   let progress = $state(42);
+  let grow = $state("A note that grows as you type.\nPress Enter to add a line.");
   let focusField = $state<HTMLInputElement | null>(null);
   let nameOpen = $state(false);
   let typedName = $state("");
@@ -264,6 +265,8 @@
         <Field label="Custom control in a Field" hint="Field wraps anything: it hands the control its id.">
           {#snippet children(ctl)}<Slider id={ctl.id} aria-describedby={ctl.describedby} bind:value={volume} format={(v) => `${v}%`} />{/snippet}
         </Field>
+        <TextArea label="Autogrow" autogrow rows={1} bind:value={grow} hint="Grows with its content; rows is the minimum." />
+        <TextArea label="Autogrow, compact" autogrow compact rows={1} value="Compact edits text in place, like an outline block." />
         <div class="demo">
           <TextField label="Focus me from code" bind:ref={focusField} />
           <Button onclick={() => focusField?.focus()}>Focus the field</Button>
