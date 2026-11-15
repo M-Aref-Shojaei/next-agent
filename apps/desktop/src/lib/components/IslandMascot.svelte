@@ -28,26 +28,23 @@
 
 <style>
   /* Gradient orb in place of Coucou's character. Colour follows what the
-     agent is doing (Coucou's BotEngine glow colours); it turns while
-     working and breathes while an approval waits. */
+     agent is doing; it turns while working and breathes while an approval
+     waits. At rest it is the brand mark (--brand-gradient). */
   .mascot {
     position: absolute;
-    border-radius: 50%;
+    border-radius: var(--radius-full);
     pointer-events: none;
-    --tone: #9398a1;
-    --tone-2: #5b5f66;
-    background:
-      radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.55), transparent 42%),
-      conic-gradient(from 210deg, var(--tone), var(--tone-2), var(--tone));
+    --tone: var(--color-neutral);
+    --tone-2: var(--color-neutral-text);
+    background: conic-gradient(from 210deg, var(--tone), var(--tone-2), var(--tone));
     box-shadow: 0 0 calc(var(--glow, 6) * 1px) var(--tone);
-    transition: opacity 0.25s ease-in-out, box-shadow 0.3s ease;
+    transition: opacity var(--duration-slow) var(--ease-standard), box-shadow var(--duration-slow) var(--ease-standard);
   }
-  .tone-working { --tone: #3b9eff; --tone-2: #8b5cf6; animation: turn 2.4s linear infinite; }
-  .tone-approval { --tone: #f5a524; --tone-2: #f4505e; animation: breathe 1.6s ease-in-out infinite; }
-  .tone-error { --tone: #f4505e; --tone-2: #b4233c; }
-  /* At rest beside the notch: the little red gradient orb. */
-  .tone-rest { --tone: #ff5f6d; --tone-2: #c0263f; --glow: 4; }
-  .tone-finished { --tone: #34d399; --tone-2: #0ea5e9; }
+  .tone-working { --tone: var(--color-info); --tone-2: var(--color-accent); animation: turn 2.4s linear infinite; }
+  .tone-approval { --tone: var(--color-warn); --tone-2: var(--color-danger); animation: breathe 1.6s ease-in-out infinite; }
+  .tone-error { --tone: var(--color-danger); --tone-2: var(--color-danger-text); }
+  .tone-rest { --tone: var(--color-brand); --glow: 4; background: var(--brand-gradient); }
+  .tone-finished { --tone: var(--color-ok); --tone-2: var(--color-info); }
   @keyframes turn { to { transform: rotate(360deg); } }
   @keyframes breathe { 50% { --glow: 14; transform: scale(1.06); } }
   @media (prefers-reduced-motion: reduce) {
