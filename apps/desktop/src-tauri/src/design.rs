@@ -269,9 +269,11 @@ fn read_doc(path: &Path) -> Result<Option<String>, String> {
         Ok(meta) if meta.file_type().is_symlink() || !meta.is_file() => {
             Err(format!("{} is not a regular file", path.display()))
         }
-        Ok(meta) if meta.len() > MAX_DOC_BYTES as u64 => {
-            Err(format!("{} is larger than 256 KB", path.display()))
-        }
+        Ok(meta) if meta.len() > MAX_DOC_BYTES as u64 => Err(format!(
+            "{} is larger than {} KB",
+            path.display(),
+            MAX_DOC_BYTES / 1024
+        )),
         Ok(_) => std::fs::read_to_string(path)
             .map(Some)
             .map_err(|e| e.to_string()),
@@ -281,7 +283,7 @@ fn read_doc(path: &Path) -> Result<Option<String>, String> {
 /// Write one of the two design files (fixed names only), atomically.
 fn write_doc(dir: &Path, name: &str, text: &str) -> Result<(), String> {
     if text.len() > MAX_DOC_BYTES {
-        return Err(format!("{name} is larger than 256 KB"));
+        return Err(format!("{name} is larger than {} KB", MAX_DOC_BYTES / 1024));
     }
     if std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(format!("{} is a symlink", dir.display()));
