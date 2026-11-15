@@ -96,6 +96,12 @@ fn ratio(lines: &[&str], pred: impl Fn(&str) -> bool) -> (usize, f64) {
     (hits, share)
 }
 
+/// True when at least `min_hits` non-empty lines match and they make up `min_share` of them.
+fn dominant(lines: &[&str], pred: impl Fn(&str) -> bool, min_hits: usize, min_share: f64) -> bool {
+    let (hits, share) = ratio(lines, pred);
+    hits >= min_hits && share >= min_share
+}
+
 /// First matching detector, in 9Router's order.
 #[must_use]
 pub fn detect(text: &str) -> Option<Filter> {
@@ -132,16 +138,13 @@ pub fn detect(text: &str) -> Option<Filter> {
     if head_lines.iter().filter(|l| is_build_line(l)).count() >= 2 {
         return Some(Filter::Build);
     }
-    let (hits, share) = ratio(&head_lines, is_porcelain_line);
-    if hits >= 3 && share >= 0.6 {
+    if dominant(&head_lines, is_porcelain_line, 3, 0.6) {
         return Some(Filter::Porcelain);
     }
-    let (hits, share) = ratio(&head_lines, |l| grep_parts(l).is_some());
-    if hits >= 3 && share >= 0.6 {
+    if dominant(&head_lines, |l| grep_parts(l).is_some(), 3, 0.6) {
         return Some(Filter::Grep);
     }
-    let (hits, share) = ratio(&head_lines, is_path_line);
-    if hits >= 5 && share >= 0.8 {
+    if dominant(&head_lines, is_path_line, 5, 0.8) {
         return Some(Filter::Find);
     }
     if head.contains("├── ") || head.contains("└── ") {
@@ -157,8 +160,7 @@ pub fn detect(text: &str) -> Option<Filter> {
     {
         return Some(Filter::Ls);
     }
-    let (hits, share) = ratio(&head_lines, |l| count_parts(l).is_some());
-    if hits >= 3 && share >= 0.6 {
+    if dominant(&head_lines, |l| count_parts(l).is_some(), 3, 0.6) {
         return Some(Filter::SearchList);
     }
     if all_lines.len() >= LONG_OUTPUT_LINES {

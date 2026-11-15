@@ -9,11 +9,14 @@
 
 use serde_json::Value;
 
+/// Rough bytes-per-token ratio for JSON prompt text.
+const BYTES_PER_TOKEN: usize = 4;
+
 /// Rough prompt + output token estimate for an OpenAI body.
 #[must_use]
 pub fn estimate_tokens(body: &Value) -> u64 {
     let bytes = |key: &str| body.get(key).map_or(0, |v| v.to_string().len());
-    let prompt = (bytes("messages") + bytes("tools")) as u64 / 4;
+    let prompt = ((bytes("messages") + bytes("tools")) / BYTES_PER_TOKEN) as u64;
     let output = body
         .get("max_completion_tokens")
         .or_else(|| body.get("max_tokens"))

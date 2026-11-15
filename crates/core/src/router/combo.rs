@@ -15,14 +15,19 @@
 //! Not ported: 9Router's `fusion`; OmniRoute's `p2c`, `least-used` and
 //! `strict-random` (load balancing across many keys).
 
-use super::breaker::Breakers;
+use super::breaker::{backoff, Breakers};
 use super::smart::{Sticky, DEFAULT_THRESHOLD};
 use crate::store::ComboRow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
+
+/// Lock `m`, recovering the guard if a previous holder panicked.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// How a combo orders its models.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,8 +278,7 @@ impl CooldownPolicy {
     /// Cooldown for a backoff level (1-based).
     #[must_use]
     pub fn delay(&self, level: u32) -> Duration {
-        let factor = 2u32.saturating_pow(level.saturating_sub(1).min(31));
-        self.base.saturating_mul(factor).min(self.max)
+        backoff(self.base, self.max, level)
     }
 }
 
@@ -325,7 +329,7 @@ pub struct Reservation {
 
 impl Drop for Reservation {
     fn drop(&mut self) {
-        let mut map = self.reserved.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut map = lock(&self.reserved);
         if let Some(total) = map.get_mut(&self.role) {
             *total -= self.usd;
             if *total <= 1e-12 {
@@ -388,7 +392,7 @@ impl GatewayState {
     #[must_use]
     pub fn available(&self, connection_id: &str, model: &str) -> bool {
         let now = Instant::now();
-        let accounts = self.accounts.lock().unwrap_or_else(PoisonError::into_inner);
+        let accounts = lock(&self.accounts);
         accounts.get(connection_id).is_none_or(|state| {
             state.rate_limited_until.is_none_or(|until| until <= now)
                 && state
@@ -401,7 +405,7 @@ impl GatewayState {
     /// Record a failure; returns the cooldown applied. With `model`, only that
     /// model is locked on the account; otherwise the whole account.
     pub fn penalize(&self, connection_id: &str, model: Option<&str>, reason: &str) -> Duration {
-        let mut accounts = self.accounts.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut accounts = lock(&self.accounts);
         let state = accounts.entry(connection_id.to_string()).or_default();
         state.backoff_level = state.backoff_level.saturating_add(1);
         state.last_error = reason.to_string();
@@ -418,7 +422,7 @@ impl GatewayState {
 
     /// A success clears the account's backoff and the model's lock.
     pub fn succeed(&self, connection_id: &str, model: &str) {
-        let mut accounts = self.accounts.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut accounts = lock(&self.accounts);
         if let Some(state) = accounts.get_mut(connection_id) {
             state.backoff_level = 0;
             state.rate_limited_until = None;
@@ -430,7 +434,7 @@ impl GatewayState {
     #[must_use]
     pub fn cooldowns(&self) -> Vec<CooldownInfo> {
         let now = Instant::now();
-        let accounts = self.accounts.lock().unwrap_or_else(PoisonError::into_inner);
+        let accounts = lock(&self.accounts);
         let mut out: Vec<CooldownInfo> = accounts
             .iter()
             .filter_map(|(id, state)| {
@@ -454,7 +458,7 @@ impl GatewayState {
 
     /// Count one use of a combo; returns the count before this use.
     pub fn next_use(&self, combo: &str) -> u64 {
-        let mut uses = self.uses.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut uses = lock(&self.uses);
         let counter = uses.entry(combo.to_string()).or_default();
         let before = *counter;
         *counter += 1;
@@ -463,7 +467,7 @@ impl GatewayState {
 
     /// A value in `[0, 1)` (xorshift seeded from the clock; tests can seed).
     pub fn draw(&self) -> f64 {
-        let mut state = self.rng.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = lock(&self.rng);
         if *state == 0 {
             *state = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -484,25 +488,18 @@ impl GatewayState {
 
     /// Seed the random draws (tests).
     pub fn seed(&self, seed: u64) {
-        *self.rng.lock().unwrap_or_else(PoisonError::into_inner) = seed | 1;
+        *lock(&self.rng) = seed | 1;
     }
 
     /// Serialize budget check + reservation across concurrent requests.
     pub fn budget_gate(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.budget_gate
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        lock(&self.budget_gate)
     }
 
     /// Reserve `usd` of budget for a request of `role` until the guard drops.
     pub fn reserve(&self, role: &str, usd: f64) -> Reservation {
         let usd = if usd.is_finite() { usd.max(0.0) } else { 0.0 };
-        *self
-            .reserved
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entry(role.to_string())
-            .or_default() += usd;
+        *lock(&self.reserved).entry(role.to_string()).or_default() += usd;
         Reservation {
             reserved: Arc::clone(&self.reserved),
             role: role.to_string(),
@@ -513,7 +510,7 @@ impl GatewayState {
     /// USD reserved by in-flight requests of `role` (all roles with `None`).
     #[must_use]
     pub fn reserved(&self, role: Option<&str>) -> f64 {
-        let map = self.reserved.lock().unwrap_or_else(PoisonError::into_inner);
+        let map = lock(&self.reserved);
         match role {
             Some(role) => map.get(role).copied().unwrap_or(0.0),
             None => map.values().sum(),
@@ -522,28 +519,19 @@ impl GatewayState {
 
     #[must_use]
     pub fn last_good(&self, combo: &str) -> Option<String> {
-        let map = self
-            .last_good
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let map = lock(&self.last_good);
         map.get(combo).cloned()
     }
 
     pub fn set_last_good(&self, combo: &str, label: &str) {
-        let mut map = self
-            .last_good
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut map = lock(&self.last_good);
         map.insert(combo.to_string(), label.to_string());
     }
 
     /// Keep `details` for the answer's tool calls (keys from
     /// [`tool_call_key`]; the oldest are dropped beyond the limit).
     pub fn remember_reasoning(&self, call_keys: &[String], details: &Value) {
-        let mut memory = self
-            .reasoning
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut memory = lock(&self.reasoning);
         for key in call_keys {
             if memory
                 .entries
@@ -563,10 +551,7 @@ impl GatewayState {
     /// Put remembered `reasoning_details` back on assistant messages that
     /// carry tool calls but lost them (the agent keeps only text and calls).
     pub fn restore_reasoning(&self, body: &mut Value) {
-        let memory = self
-            .reasoning
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let memory = lock(&self.reasoning);
         if memory.entries.is_empty() {
             return;
         }
@@ -598,14 +583,14 @@ impl GatewayState {
     /// Cached sticky choice of `session` for `combo`.
     #[must_use]
     pub fn sticky(&self, session: &str, combo: &str) -> Option<Sticky> {
-        let sticky = self.sticky.lock().unwrap_or_else(PoisonError::into_inner);
+        let sticky = lock(&self.sticky);
         sticky
             .get(&(session.to_string(), combo.to_string()))
             .cloned()
     }
 
     pub fn set_sticky(&self, session: &str, combo: &str, value: Sticky) {
-        let mut sticky = self.sticky.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut sticky = lock(&self.sticky);
         sticky.insert((session.to_string(), combo.to_string()), value);
     }
 }

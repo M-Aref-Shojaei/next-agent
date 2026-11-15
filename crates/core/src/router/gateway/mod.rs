@@ -31,7 +31,7 @@
 
 use super::budget::{Budget, BudgetAction, BudgetStatus, Level, Period};
 use super::cache::{self, Entry, ResponseCacheSettings};
-use super::client::{classify_status, describe};
+use super::client::{classify_status, describe, parse_models};
 use super::combo::{
     reorder_by_caps, required_caps, rotate, sort_known, weighted_order, Combo, GatewayState,
     Reservation, Strategy,
@@ -63,6 +63,10 @@ pub const SETTINGS_KEY: &str = "gateway.settings";
 /// Cooldowns up to this long are waited out before moving on (5xx).
 const SHORT_COOLDOWN: Duration = Duration::from_secs(5);
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+/// Output ceiling assumed when the price table has no `max_output` for a model.
+const FALLBACK_OUTPUT_TOKENS: u32 = 16_384;
+/// HTTP status returned when a budget refuses a request.
+const BUDGET_BLOCKED_STATUS: u16 = 402;
 
 /// User-editable gateway settings.
 #[allow(clippy::struct_excessive_bools)] // Independent on/off switches.
@@ -1053,7 +1057,7 @@ impl Gateway {
                         self.config
                             .pricing
                             .max_output(&provider, &t.model)
-                            .unwrap_or(16_384),
+                            .unwrap_or(FALLBACK_OUTPUT_TOKENS),
                     )
                 });
                 let usage = Usage {
@@ -1083,7 +1087,7 @@ impl Gateway {
         let statuses = self.budgets_for(Some(role)).map_err(|error| {
             tracing::warn!(target: "router", %error, "could not read spend; budgets fail closed");
             LlmError::Http {
-                status: 402,
+                status: BUDGET_BLOCKED_STATUS,
                 body: format!("Budgets are set but today's spend could not be read ({error}); the request was not sent."),
             }
         })?;
@@ -1100,13 +1104,13 @@ impl Gateway {
             targets.retain(|t| priced(t));
             if targets.is_empty() {
                 return Err(LlmError::Http {
-                    status: 402,
+                    status: BUDGET_BLOCKED_STATUS,
                     body: "A budget is set, and none of these models has a known price, so their spend could not be counted. Add a price in pricing.json, refresh the model catalog, or allow unpriced models in Settings → Providers → Budgets.".into(),
                 });
             }
         }
         for status in statuses.iter().filter(|s| s.level == Level::Warn) {
-            tracing::warn!(target: "router", budget = %status.budget.label(), spent = status.spent, "budget above 80%");
+            tracing::warn!(target: "router", budget = %status.budget.label(), spent = status.spent, "budget above {:.0}%", super::budget::WARN_AT * 100.0);
         }
         let estimate = self.estimate_cost(body, targets);
         let over = statuses
@@ -1114,7 +1118,7 @@ impl Gateway {
             .find(|s| s.spent + estimate >= s.budget.limit_usd);
         if let Some(over) = over {
             let blocked = || LlmError::Http {
-                status: 402,
+                status: BUDGET_BLOCKED_STATUS,
                 body: over.message(),
             };
             if self.config.settings.budget_action == BudgetAction::Block {
@@ -1360,7 +1364,11 @@ impl Gateway {
         match account.kind {
             ProviderKind::OpenAi => {
                 base["stream_options"] = json!({"include_usage": true});
-                reasoning::apply_openai(&mut base, &account.provider, max_output.unwrap_or(16_384));
+                reasoning::apply_openai(
+                    &mut base,
+                    &account.provider,
+                    max_output.unwrap_or(FALLBACK_OUTPUT_TOKENS),
+                );
                 (base, Format::OpenAi, gemini::NameMap::new())
             }
             ProviderKind::Anthropic => {
@@ -1714,14 +1722,7 @@ impl Gateway {
                 .filter_map(|m| m.get("name").and_then(Value::as_str))
                 .map(|n| n.trim_start_matches("models/").to_string())
                 .collect(),
-            _ => body
-                .get("data")
-                .and_then(Value::as_array)
-                .ok_or_else(|| LlmError::Protocol("models response has no `data` array".into()))?
-                .iter()
-                .filter_map(|m| m.get("id").and_then(Value::as_str))
-                .map(str::to_string)
-                .collect(),
+            _ => parse_models(&body)?,
         };
         Ok(ids)
     }

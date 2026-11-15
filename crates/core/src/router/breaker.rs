@@ -79,6 +79,12 @@ struct Entry {
     probe_started: Option<Instant>,
 }
 
+/// Exponential backoff `base·2^(level−1)`, capped at `max`. Level 0 and 1 both give `base`.
+pub(crate) fn backoff(base: Duration, max: Duration, level: u32) -> Duration {
+    let factor = 2u32.saturating_pow(level.saturating_sub(1).min(31));
+    base.saturating_mul(factor).min(max)
+}
+
 /// All providers' breakers.
 #[derive(Debug, Default)]
 pub struct Breakers {
@@ -96,8 +102,7 @@ impl Breakers {
     }
 
     fn cooldown(&self, trips: u32) -> Duration {
-        let factor = 2u32.saturating_pow(trips.saturating_sub(1).min(31));
-        self.policy.base.saturating_mul(factor).min(self.policy.max)
+        backoff(self.policy.base, self.policy.max, trips)
     }
 
     fn state_of(entry: &Entry, now: Instant) -> BreakerState {

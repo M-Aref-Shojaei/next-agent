@@ -113,73 +113,76 @@ fn compress_text(text: &mut String, report: &mut SaverReport) {
 
 fn compress_tool_results(body: &mut Value, format: Format, report: &mut SaverReport) {
     match format {
-        Format::OpenAi => {
-            for message in body
-                .get_mut("messages")
-                .and_then(Value::as_array_mut)
-                .into_iter()
-                .flatten()
-            {
-                if message["role"] != "tool" || message.get("is_error") == Some(&Value::Bool(true))
-                {
-                    continue;
-                }
-                if let Some(Value::String(text)) = message.get_mut("content") {
-                    compress_text(text, report);
-                }
-            }
+        Format::OpenAi => compress_openai(body, report),
+        Format::Anthropic => compress_anthropic(body, report),
+        Format::Gemini => compress_gemini(body, report),
+    }
+}
+
+fn compress_openai(body: &mut Value, report: &mut SaverReport) {
+    for message in body
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if message["role"] != "tool" || message.get("is_error") == Some(&Value::Bool(true)) {
+            continue;
         }
-        Format::Anthropic => {
-            for message in body
-                .get_mut("messages")
-                .and_then(Value::as_array_mut)
-                .into_iter()
-                .flatten()
-            {
-                for block in message
-                    .get_mut("content")
-                    .and_then(Value::as_array_mut)
-                    .into_iter()
-                    .flatten()
-                {
-                    if block["type"] != "tool_result"
-                        || block.get("is_error") == Some(&Value::Bool(true))
-                    {
-                        continue;
-                    }
-                    match block.get_mut("content") {
-                        Some(Value::String(text)) => compress_text(text, report),
-                        Some(Value::Array(parts)) => {
-                            for part in parts {
-                                if let Some(Value::String(text)) = part.get_mut("text") {
-                                    compress_text(text, report);
-                                }
-                            }
+        if let Some(Value::String(text)) = message.get_mut("content") {
+            compress_text(text, report);
+        }
+    }
+}
+
+fn compress_anthropic(body: &mut Value, report: &mut SaverReport) {
+    for message in body
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        for block in message
+            .get_mut("content")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if block["type"] != "tool_result" || block.get("is_error") == Some(&Value::Bool(true)) {
+                continue;
+            }
+            match block.get_mut("content") {
+                Some(Value::String(text)) => compress_text(text, report),
+                Some(Value::Array(parts)) => {
+                    for part in parts {
+                        if let Some(Value::String(text)) = part.get_mut("text") {
+                            compress_text(text, report);
                         }
-                        _ => {}
                     }
                 }
+                _ => {}
             }
         }
-        Format::Gemini => {
-            for content in body
-                .get_mut("contents")
-                .and_then(Value::as_array_mut)
-                .into_iter()
-                .flatten()
+    }
+}
+
+fn compress_gemini(body: &mut Value, report: &mut SaverReport) {
+    for content in body
+        .get_mut("contents")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        for part in content
+            .get_mut("parts")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(Value::String(text)) =
+                part.pointer_mut("/functionResponse/response/content")
             {
-                for part in content
-                    .get_mut("parts")
-                    .and_then(Value::as_array_mut)
-                    .into_iter()
-                    .flatten()
-                {
-                    if let Some(Value::String(text)) =
-                        part.pointer_mut("/functionResponse/response/content")
-                    {
-                        compress_text(text, report);
-                    }
-                }
+                compress_text(text, report);
             }
         }
     }
