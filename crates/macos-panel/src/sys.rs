@@ -104,10 +104,13 @@ pub fn display_scale_at(x: f64, y: f64) -> f64 {
     pixels as f64 / points as f64
 }
 
+/// Bit of `pressedMouseButtons` set while the left button is held.
+const LEFT_MOUSE_BUTTON_BIT: usize = 1;
+
 /// True while the left mouse button is held.
 #[must_use]
 pub fn left_button_down() -> bool {
-    NSEvent::pressedMouseButtons() & 1 != 0
+    NSEvent::pressedMouseButtons() & LEFT_MOUSE_BUTTON_BIT != 0
 }
 
 /// Whether the key with this virtual key code is held now (the combined
