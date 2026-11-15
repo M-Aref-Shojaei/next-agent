@@ -1,6 +1,7 @@
 // In-memory stand-in for the Rust commands, used outside Tauri.
 import type { Api, BoardDoc, Workspace } from "./api.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
+import { memoryUsage, type CronJob, type LearningSettings, type SkillInfo } from "./learning.ts";
 import {
   defaultSettings,
   type Combo,
@@ -36,6 +37,28 @@ const waiting = new Map<string, (choice: ApprovalChoice) => void>();
 let counter = 0;
 
 const EMPTY_SCENE = JSON.stringify({ type: "excalidraw", version: 2, source: "next-agent", elements: [], appState: {}, files: {} });
+let learningSettings: LearningSettings = { backgroundReview: true };
+const memoryText = { memory: "Project uses pnpm and cargo nextest.", user: "Name: Sam\n§\nPrefers concise answers." };
+const mockSkills: SkillInfo[] = [
+  { name: "deploy", description: "Use when shipping a release.", category: "ops", scope: "workspace", root: "/ws/.next-agent/skills", state: "active", pinned: false, createdBy: "agent", useCount: 4, viewCount: 4, patchCount: 1, lastActivityAt: null },
+  { name: "notes", description: "Use when writing daily notes.", category: null, scope: "user", root: "/vault/skills", state: "stale", pinned: true, createdBy: null, useCount: 1, viewCount: 1, patchCount: 0, lastActivityAt: null },
+];
+const cronJobs: CronJob[] = [];
+const memoryFile = (target: "memory" | "user") => {
+  const { entries, used } = memoryUsage(memoryText[target]);
+  return { target, text: entries.join("\n§\n"), entries: entries.length, used, limit: target === "memory" ? 2200 : 1375, path: `/data/memory/${target === "memory" ? "MEMORY" : "USER"}.md` };
+};
+const findSkill = (name: string) => {
+  const skill = mockSkills.find((s) => s.name === name);
+  if (!skill) throw `no skill named ${name}`;
+  return skill;
+};
+const findJob = (id: string) => {
+  const job = cronJobs.find((j) => j.id === id);
+  if (!job) throw `No job '${id}'.`;
+  return job;
+};
+
 const boards = new Map<string, { content: string; rev: number; modifiedMs: number }>();
 const trash: string[] = [];
 const assets = new Map<string, string>();
@@ -387,5 +410,93 @@ export const mockApi: Api = {
     for (let i = 1; assets.has(path); i += 1) path = `assets/${boardName(name)}-${i}.${ext}`;
     assets.set(path, data);
     return path;
+  },
+  async learningSettingsGet() {
+    return { ...learningSettings };
+  },
+  async learningSettingsSet(next) {
+    learningSettings = { ...next };
+  },
+  async memoryGet() {
+    return { memory: memoryFile("memory"), user: memoryFile("user") };
+  },
+  async memorySave(_ws, target, text) {
+    const limit = target === "memory" ? 2200 : 1375;
+    const { used } = memoryUsage(text);
+    if (used > limit) throw `${target === "memory" ? "MEMORY" : "USER"}.md would be ${used}/${limit} chars; shorten or remove entries first.`;
+    memoryText[target] = text;
+    return { memory: memoryFile("memory"), user: memoryFile("user") };
+  },
+  async skillsOverview() {
+    return mockSkills.map((s) => ({ ...s }));
+  },
+  async skillRead(_ws, name) {
+    const s = findSkill(name);
+    return `---\nname: ${s.name}\ndescription: ${s.description}\n---\n# ${s.name}\n\n1. Do the thing.\n`;
+  },
+  async skillPin(_ws, _root, name, pinned) {
+    findSkill(name).pinned = pinned;
+  },
+  async skillArchive(_ws, name) {
+    findSkill(name).state = "archived";
+  },
+  async skillRestore(_ws, _root, name) {
+    findSkill(name).state = "active";
+  },
+  async curatorRun() {
+    return { checked: mockSkills.length, markedStale: [], archived: [], reactivated: [] };
+  },
+  async cronJobs(workspaceId) {
+    return cronJobs.filter((j) => !workspaceId || j.workspaceId === workspaceId).map((j) => ({ ...j }));
+  },
+  async cronSave(input) {
+    if (!input.schedule.trim()) throw "Schedule is required.";
+    if (input.mode === "bypassPermissions") throw "Scheduled jobs never run in bypass mode.";
+    const existing = input.id ? findJob(input.id) : undefined;
+    const job: CronJob = {
+      id: existing?.id ?? `job${(counter += 1)}`,
+      workspaceId: input.workspaceId,
+      name: input.name || input.prompt.slice(0, 50) || "cron job",
+      prompt: input.prompt,
+      schedule: input.schedule,
+      scheduleLabel: input.schedule,
+      skills: input.skills,
+      modelRole: input.modelRole || null,
+      mode: input.mode || "auto",
+      workdir: input.workdir || null,
+      timezone: input.timezone || null,
+      graceMinutes: input.graceMinutes ?? null,
+      repeat: input.repeat ?? null,
+      runCount: existing?.runCount ?? 0,
+      state: existing?.state ?? "scheduled",
+      nextRunAt: Math.floor(Date.now() / 1000) + 3600,
+      lastRunAt: existing?.lastRunAt ?? null,
+      lastStatus: existing?.lastStatus ?? null,
+      lastError: null,
+      lastTaskId: existing?.lastTaskId ?? null,
+      origin: "user",
+    };
+    if (existing) cronJobs.splice(cronJobs.indexOf(existing), 1, job);
+    else cronJobs.push(job);
+    return { ...job };
+  },
+  async cronPause(id, paused) {
+    const job = findJob(id);
+    job.state = paused ? "paused" : "scheduled";
+    job.nextRunAt = paused ? null : Math.floor(Date.now() / 1000) + 3600;
+    return { ...job };
+  },
+  async cronDelete(id) {
+    const index = cronJobs.findIndex((j) => j.id === id);
+    if (index >= 0) cronJobs.splice(index, 1);
+    return index >= 0;
+  },
+  async cronRunNow(id) {
+    const job = findJob(id);
+    job.runCount += 1;
+    job.lastRunAt = Math.floor(Date.now() / 1000);
+    job.lastStatus = "started";
+    job.lastTaskId = `t${(counter += 1)}`;
+    return job.lastTaskId;
   },
 };

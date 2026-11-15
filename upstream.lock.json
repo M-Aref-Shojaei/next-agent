@@ -53,12 +53,13 @@
       "role": "agent engine"
     },
     "hermes-agent": {
-      "pin": "main (pin exact commit when porting); agent-engine design refs @ a9ee443d58714a73805bd0e4551091543aa479c6",
+      "pin": "main @ fa1aab3187fa9951fa7c3620e0aa6f922d6636f6 (studied; ported, not bundled); agent-engine design refs @ a9ee443d58714a73805bd0e4551091543aa479c6",
       "licence": "MIT",
       "adapter": "crates/core/src",
-      "checked": "2026-11-14",
+      "checked": "2026-11-15",
       "risk": "medium",
-      "role": "memory, skills, cron; prompt-cache rules and delegate design (subagent.rs, builtin.rs)"
+      "role": "memory, skills, cron; prompt-cache rules and delegate design (subagent.rs, builtin.rs)",
+      "ported": "tools/memory_tool.py, tools/memory_tool_store.py, tools/threat_patterns.py, tools/skills_tool.py, tools/skills_tool_plugin.py, tools/skill_manager_tool.py, tools/skill_manager_batch.py, tools/skill_manager_guards.py, agent/skill_utils.py, agent/curator.py, hermes_state_common.py, hermes_state_search.py, tools/session_search_tool.py, agent/background_review.py, cron/jobs.py, cron/jobs_time.py, cron/missed_runs.py, cron/scheduler_tick.py -> crates/core/src/learning/{memory,threats,skills,sessions,review,cron}.rs"
     },
     "openclaw": {
       "pin": "2026.11.3 (pin exact commit when porting)",

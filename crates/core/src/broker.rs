@@ -90,6 +90,26 @@ pub trait Approver {
     fn records_events(&self) -> bool {
         false
     }
+
+    /// Who answers, for the audit log and `approval_resolved.by`: `user` for
+    /// the approval card, or a setting such as `background-review`.
+    fn answered_by(&self) -> &'static str {
+        "user"
+    }
+}
+
+impl Approver for Box<dyn Approver + Send + '_> {
+    fn approve(&mut self, call_id: &str, request: &ToolRequest, reason: &str) -> Approval {
+        (**self).approve(call_id, request, reason)
+    }
+
+    fn records_events(&self) -> bool {
+        (**self).records_events()
+    }
+
+    fn answered_by(&self) -> &'static str {
+        (**self).answered_by()
+    }
 }
 
 /// Performs the side effect once policy has allowed it.
@@ -307,9 +327,13 @@ impl SqliteBroker<'_> {
                     .as_mut()
                     .map(|approver| approver.approve(call_id, request, &reason));
                 self.record_answer(ctx, call_id, choice);
+                let by = self
+                    .approver
+                    .as_ref()
+                    .map_or("user", |approver| approver.answered_by());
                 match choice {
                     Some(Approval::Allow) => {
-                        self.audit(request, "allow", "approved once by user");
+                        self.audit(request, "allow", &format!("approved once by {by}"));
                         reason
                     }
                     Some(Approval::AlwaysForWorkspace) => {
@@ -317,7 +341,7 @@ impl SqliteBroker<'_> {
                         reason
                     }
                     Some(Approval::Deny) => {
-                        self.audit(request, "deny", "user declined the approval");
+                        self.audit(request, "deny", &format!("{by} declined the approval"));
                         return BrokerOutcome {
                             decision: "deny",
                             reason: "user declined the approval".into(),
@@ -437,10 +461,14 @@ impl SqliteBroker<'_> {
             .as_ref()
             .is_some_and(|approver| approver.records_events());
         if let (Some(ctx), Some(answer), false) = (ctx, choice, self_recording) {
+            let by = self
+                .approver
+                .as_ref()
+                .map_or("user", |approver| approver.answered_by());
             ctx.events.emit(EventKind::ApprovalResolved {
                 approval_id: call_id.to_string(),
                 choice: answer.as_str().to_string(),
-                by: "user".to_string(),
+                by: by.to_string(),
             });
         }
     }
@@ -520,6 +548,7 @@ pub fn describe(request: &ToolRequest) -> String {
         ToolRequest::Exec { command, .. } => command.clone(),
         ToolRequest::Network { url } => url.clone(),
         ToolRequest::AskUser { question } => question.clone(),
+        ToolRequest::Learn(learn) => format!("{} {}", learn.tool, learn.target.display()),
     }
 }
 
@@ -540,6 +569,12 @@ pub fn to_policy_request(request: &ToolRequest) -> Request {
         ToolRequest::Network { url } => Request::Network { url: url.clone() },
         ToolRequest::AskUser { question } => Request::AskUser {
             question: question.clone(),
+        },
+        ToolRequest::Learn(learn) if learn.mutating => Request::Write {
+            path: learn.target.clone(),
+        },
+        ToolRequest::Learn(learn) => Request::Read {
+            path: learn.target.clone(),
         },
     }
 }

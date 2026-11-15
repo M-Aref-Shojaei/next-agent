@@ -281,6 +281,7 @@ fn describe(request: Option<&ToolRequest>, tool: &str, root: Option<&Path>) -> S
         Some(ToolRequest::Search { pattern, .. }) => format!("{tool} {pattern}"),
         Some(ToolRequest::Network { url }) => url.clone(),
         Some(ToolRequest::AskUser { question }) => format!("{tool} {question}"),
+        Some(ToolRequest::Learn(learn)) => learn.tool.to_string(),
         None => tool.to_string(),
     }
 }

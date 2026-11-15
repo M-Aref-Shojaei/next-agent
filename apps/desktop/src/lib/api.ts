@@ -17,6 +17,7 @@ import type {
   UsageSummary,
   CatalogStatus,
 } from "./gateway.ts";
+import type { CronInput, CronJob, CuratorReport, LearningSettings, MemoryState, SkillInfo } from "./learning.ts";
 
 export interface Workspace {
   id: string;
@@ -90,6 +91,8 @@ export interface TaskStarted {
   taskId: string;
   title: string;
   mode: string;
+  /** `cron` for scheduled runs started by the app itself. */
+  source?: string;
 }
 export interface BoardMeta {
   name: string;
@@ -182,6 +185,24 @@ export interface Api {
   boardSketch(name: string): Promise<BoardSketchData>;
   /** `data` is base64 for png, text for svg. Returns the vault-relative path. */
   boardExport(name: string, ext: "png" | "svg", data: string): Promise<string>;
+  // Memory and skills (Settings → Memory and skills), ported from Hermes Agent.
+  learningSettingsGet(): Promise<LearningSettings>;
+  learningSettingsSet(settings: LearningSettings): Promise<void>;
+  memoryGet(workspaceId: string): Promise<MemoryState>;
+  memorySave(workspaceId: string, target: "memory" | "user", text: string): Promise<MemoryState>;
+  skillsOverview(workspaceId: string): Promise<SkillInfo[]>;
+  skillRead(workspaceId: string, name: string): Promise<string>;
+  skillPin(workspaceId: string, root: string, name: string, pinned: boolean): Promise<void>;
+  /** Moves the skill to `.archive/` (never deletes). */
+  skillArchive(workspaceId: string, name: string): Promise<void>;
+  skillRestore(workspaceId: string, root: string, name: string): Promise<void>;
+  curatorRun(): Promise<CuratorReport>;
+  cronJobs(workspaceId?: string): Promise<CronJob[]>;
+  cronSave(input: CronInput): Promise<CronJob>;
+  cronPause(id: string, paused: boolean): Promise<CronJob>;
+  cronDelete(id: string): Promise<boolean>;
+  /** Starts the job now as its own task; returns the task id. */
+  cronRunNow(id: string): Promise<string>;
 }
 
 const tauriApi: Api = {
@@ -216,6 +237,21 @@ const tauriApi: Api = {
   boardDelete: (name) => invoke("board_delete", { name }),
   boardSketch: (name) => invoke("board_sketch", { name }),
   boardExport: (name, ext, data) => invoke("board_export", { name, ext, data }),
+  learningSettingsGet: () => invoke("learning_settings_get"),
+  learningSettingsSet: (settings) => invoke("learning_settings_set", { settings }),
+  memoryGet: (workspaceId) => invoke("memory_get", { workspaceId }),
+  memorySave: (workspaceId, target, text) => invoke("memory_save", { workspaceId, target, text }),
+  skillsOverview: (workspaceId) => invoke("skills_overview", { workspaceId }),
+  skillRead: (workspaceId, name) => invoke("skill_read", { workspaceId, name }),
+  skillPin: (workspaceId, root, name, pinned) => invoke("skill_pin", { workspaceId, root, name, pinned }),
+  skillArchive: (workspaceId, name) => invoke("skill_archive", { workspaceId, name }),
+  skillRestore: (workspaceId, root, name) => invoke("skill_restore", { workspaceId, root, name }),
+  curatorRun: () => invoke("curator_run"),
+  cronJobs: (workspaceId) => invoke("cron_jobs", { workspaceId: workspaceId ?? null }),
+  cronSave: (input) => invoke("cron_save", { input }),
+  cronPause: (id, paused) => invoke("cron_pause", { id, paused }),
+  cronDelete: (id) => invoke("cron_delete", { id }),
+  cronRunNow: (id) => invoke("cron_run_now", { id }),
   onRouterHealth: (callback) =>
     listen<RouterHealthReport | null>("router-health", (event) => {
       if (event.payload) callback(event.payload);

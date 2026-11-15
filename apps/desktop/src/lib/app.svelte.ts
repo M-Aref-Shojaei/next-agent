@@ -61,6 +61,21 @@ class AppStore {
       // Optional.
     }
     try {
+      // Scheduled (cron) runs start in the app itself: show them like any task.
+      const adopted = new Set<string>();
+      await api.onTaskStarted((started) => {
+        if (started.source !== "cron" || this.tasks.some((t) => t.id === started.taskId)) return;
+        adopted.add(started.taskId);
+        this.tasks = [{ ...newTask(started.taskId, started.title), status: "running" }, ...this.tasks];
+      });
+      await api.onTaskStream((message) => {
+        const id = message.type === "event" ? message.event.task_id : message.task_id;
+        if (adopted.has(id)) this.apply(id, message);
+      });
+    } catch {
+      // Optional.
+    }
+    try {
       this.workspaces = await api.workspaceList();
       this.activeWorkspaceId ??= this.workspaces[0]?.id ?? null;
     } catch (e) {

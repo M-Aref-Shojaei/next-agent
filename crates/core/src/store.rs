@@ -220,6 +220,125 @@ pub const MIGRATIONS: &[&str] = &[
         saved_cost REAL NOT NULL DEFAULT 0
     )",
     // --- end llm-gateway ---
+    // --- memory-skills ---
+    // Session store (Hermes `hermes_state`): every task run is a session; its
+    // messages are searchable through an external-content FTS5 index over a
+    // view that cuts tool output to 8,192 characters.
+    "CREATE TABLE IF NOT EXISTS agent_system_prompts (
+        hash TEXT PRIMARY KEY,
+        prompt TEXT NOT NULL
+    )",
+    "CREATE TABLE IF NOT EXISTS agent_sessions (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        task_id TEXT,
+        parent_session_id TEXT,
+        source TEXT NOT NULL DEFAULT 'task',
+        title TEXT,
+        model TEXT,
+        system_prompt_hash TEXT,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        end_reason TEXT,
+        message_count INTEGER NOT NULL DEFAULT 0
+    )",
+    "CREATE INDEX IF NOT EXISTS agent_sessions_by_workspace
+        ON agent_sessions(workspace_id, started_at DESC)",
+    "CREATE TABLE IF NOT EXISTS agent_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        content TEXT,
+        tool_calls TEXT,
+        tool_call_id TEXT,
+        tool_name TEXT,
+        ts INTEGER NOT NULL,
+        token_count INTEGER,
+        active INTEGER NOT NULL DEFAULT 1,
+        compacted INTEGER NOT NULL DEFAULT 0
+    )",
+    "CREATE INDEX IF NOT EXISTS agent_messages_by_session ON agent_messages(session_id, id)",
+    "CREATE VIEW IF NOT EXISTS agent_messages_fts_src AS
+        SELECT id,
+               CASE WHEN role = 'tool' THEN substr(COALESCE(content, ''), 1, 8192)
+                    ELSE content END AS content,
+               tool_name, tool_calls
+        FROM agent_messages",
+    "CREATE VIRTUAL TABLE IF NOT EXISTS agent_messages_fts USING fts5(
+        content, tool_name, tool_calls,
+        content='agent_messages_fts_src', content_rowid='id'
+    )",
+    "CREATE TRIGGER IF NOT EXISTS agent_messages_fts_insert AFTER INSERT ON agent_messages BEGIN
+        INSERT INTO agent_messages_fts(rowid, content, tool_name, tool_calls)
+        VALUES (new.id,
+                CASE WHEN new.role = 'tool' THEN substr(COALESCE(new.content, ''), 1, 8192) ELSE new.content END,
+                new.tool_name, new.tool_calls);
+    END",
+    "CREATE TRIGGER IF NOT EXISTS agent_messages_fts_delete AFTER DELETE ON agent_messages BEGIN
+        INSERT INTO agent_messages_fts(agent_messages_fts, rowid, content, tool_name, tool_calls)
+        VALUES ('delete', old.id,
+                CASE WHEN old.role = 'tool' THEN substr(COALESCE(old.content, ''), 1, 8192) ELSE old.content END,
+                old.tool_name, old.tool_calls);
+    END",
+    "CREATE TRIGGER IF NOT EXISTS agent_messages_fts_update
+        AFTER UPDATE OF content, tool_name, tool_calls, role ON agent_messages
+        WHEN old.content IS NOT new.content OR old.tool_name IS NOT new.tool_name
+          OR old.tool_calls IS NOT new.tool_calls OR old.role IS NOT new.role
+    BEGIN
+        INSERT INTO agent_messages_fts(agent_messages_fts, rowid, content, tool_name, tool_calls)
+        VALUES ('delete', old.id,
+                CASE WHEN old.role = 'tool' THEN substr(COALESCE(old.content, ''), 1, 8192) ELSE old.content END,
+                old.tool_name, old.tool_calls);
+        INSERT INTO agent_messages_fts(rowid, content, tool_name, tool_calls)
+        VALUES (new.id,
+                CASE WHEN new.role = 'tool' THEN substr(COALESCE(new.content, ''), 1, 8192) ELSE new.content END,
+                new.tool_name, new.tool_calls);
+    END",
+    // Skill usage telemetry (Hermes keeps it in `.usage.json`), keyed by the
+    // skills folder and the skill name.
+    "CREATE TABLE IF NOT EXISTS skill_usage (
+        root TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_by TEXT,
+        use_count INTEGER NOT NULL DEFAULT 0,
+        view_count INTEGER NOT NULL DEFAULT 0,
+        patch_count INTEGER NOT NULL DEFAULT 0,
+        last_used_at INTEGER,
+        last_viewed_at INTEGER,
+        last_patched_at INTEGER,
+        created_at INTEGER NOT NULL,
+        state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale','archived')),
+        pinned INTEGER NOT NULL DEFAULT 0,
+        archived_at INTEGER,
+        PRIMARY KEY (root, name)
+    )",
+    // Cron jobs (Hermes `cron/jobs.json`). `next_run_at` is advanced with a
+    // compare-and-swap before a run is dispatched (at most once per slot).
+    "CREATE TABLE IF NOT EXISTS cron_jobs (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        schedule TEXT NOT NULL,
+        skills TEXT NOT NULL DEFAULT '[]',
+        model_role TEXT,
+        mode TEXT NOT NULL DEFAULT 'auto',
+        workdir TEXT,
+        timezone TEXT,
+        grace_minutes INTEGER,
+        repeat_times INTEGER,
+        run_count INTEGER NOT NULL DEFAULT 0,
+        state TEXT NOT NULL DEFAULT 'scheduled'
+            CHECK (state IN ('scheduled','paused','completed','error')),
+        next_run_at INTEGER,
+        last_run_at INTEGER,
+        last_status TEXT,
+        last_error TEXT,
+        last_task_id TEXT,
+        origin TEXT NOT NULL DEFAULT 'user',
+        created_at INTEGER NOT NULL
+    )",
+    // --- end memory-skills ---
 ];
 
 /// Handle to the metadata database.
@@ -1875,3 +1994,971 @@ mod gateway_tests {
     }
 }
 // --- end llm-gateway -----------------------------------------------------------
+
+// --- memory-skills ---------------------------------------------------------------
+// Storage for `crate::learning` (ported from Hermes Agent): the session store
+// and its FTS5 search, skill usage telemetry and cron jobs. Kept in one block
+// so parallel branches merge cleanly.
+
+/// `(task_id, action, target, decision, reason)` from [`Store::audit_recent`].
+pub type AuditRowTuple = (Option<String>, String, String, String, String);
+
+/// One `agent_sessions` row.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SessionRow {
+    pub id: String,
+    pub workspace_id: String,
+    pub task_id: Option<String>,
+    /// Lineage: the session this one continues (search dedupes by root).
+    pub parent_session_id: Option<String>,
+    /// `task`, `cron` or `review`.
+    pub source: String,
+    pub title: Option<String>,
+    pub model: Option<String>,
+    pub system_prompt_hash: Option<String>,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+    pub end_reason: Option<String>,
+    pub message_count: i64,
+}
+
+/// One `agent_messages` row.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MessageRow {
+    pub id: i64,
+    pub session_id: String,
+    pub role: String,
+    pub content: Option<String>,
+    /// JSON array of tool calls (assistant messages).
+    pub tool_calls: Option<String>,
+    pub tool_call_id: Option<String>,
+    pub tool_name: Option<String>,
+    pub ts: i64,
+    pub token_count: Option<i64>,
+    pub active: bool,
+    pub compacted: bool,
+}
+
+/// Ordering of search hits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchSort {
+    #[default]
+    Relevance,
+    Newest,
+    Oldest,
+}
+
+/// An FTS query over one workspace's messages.
+#[derive(Debug, Clone, Default)]
+pub struct MessageSearch<'a> {
+    pub workspace_id: &'a str,
+    /// An already-sanitised FTS5 expression.
+    pub fts: &'a str,
+    pub roles: &'a [&'a str],
+    pub exclude_sources: &'a [&'a str],
+    pub exclude_sessions: &'a [String],
+    /// Session start bounds (unix seconds): `after` inclusive, `before` exclusive.
+    pub after: Option<i64>,
+    pub before: Option<i64>,
+    pub sort: SearchSort,
+    pub limit: usize,
+}
+
+/// One search hit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MessageHit {
+    pub message: MessageRow,
+    pub snippet: String,
+    pub session: SessionRow,
+}
+
+/// One `skill_usage` row.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SkillUsageRow {
+    pub root: String,
+    pub name: String,
+    pub created_by: Option<String>,
+    pub use_count: i64,
+    pub view_count: i64,
+    pub patch_count: i64,
+    pub last_used_at: Option<i64>,
+    pub last_viewed_at: Option<i64>,
+    pub last_patched_at: Option<i64>,
+    pub created_at: i64,
+    pub state: String,
+    pub pinned: bool,
+    pub archived_at: Option<i64>,
+}
+
+/// Which usage counter to bump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillCounter {
+    /// `skill_view`: view and use.
+    View,
+    /// Any change through `skill_manage`.
+    Patch,
+}
+
+/// One `cron_jobs` row.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CronJobRow {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub prompt: String,
+    /// What the user typed (`every monday 9am`, `0 9 * * *`, …).
+    pub schedule: String,
+    /// JSON array of skill names loaded into the run's first message.
+    pub skills: String,
+    pub model_role: Option<String>,
+    pub mode: String,
+    pub workdir: Option<String>,
+    pub timezone: Option<String>,
+    pub grace_minutes: Option<i64>,
+    /// `None` = forever.
+    pub repeat_times: Option<i64>,
+    pub run_count: i64,
+    pub state: String,
+    pub next_run_at: Option<i64>,
+    pub last_run_at: Option<i64>,
+    pub last_status: Option<String>,
+    pub last_error: Option<String>,
+    pub last_task_id: Option<String>,
+    /// Who scheduled it: `user`, or e.g. `channel:telegram:<chat>`.
+    pub origin: String,
+    pub created_at: i64,
+}
+
+fn session_from_row(row: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<SessionRow> {
+    Ok(SessionRow {
+        id: row.get(at)?,
+        workspace_id: row.get(at + 1)?,
+        task_id: row.get(at + 2)?,
+        parent_session_id: row.get(at + 3)?,
+        source: row.get(at + 4)?,
+        title: row.get(at + 5)?,
+        model: row.get(at + 6)?,
+        system_prompt_hash: row.get(at + 7)?,
+        started_at: row.get(at + 8)?,
+        ended_at: row.get(at + 9)?,
+        end_reason: row.get(at + 10)?,
+        message_count: row.get(at + 11)?,
+    })
+}
+
+const SESSION_COLUMNS: &str = "s.id, s.workspace_id, s.task_id, s.parent_session_id, s.source, s.title, s.model, s.system_prompt_hash, s.started_at, s.ended_at, s.end_reason, s.message_count";
+const MESSAGE_COLUMNS: &str = "m.id, m.session_id, m.role, m.content, m.tool_calls, m.tool_call_id, m.tool_name, m.ts, m.token_count, m.active, m.compacted";
+
+fn message_from_row(row: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<MessageRow> {
+    Ok(MessageRow {
+        id: row.get(at)?,
+        session_id: row.get(at + 1)?,
+        role: row.get(at + 2)?,
+        content: row.get(at + 3)?,
+        tool_calls: row.get(at + 4)?,
+        tool_call_id: row.get(at + 5)?,
+        tool_name: row.get(at + 6)?,
+        ts: row.get(at + 7)?,
+        token_count: row.get(at + 8)?,
+        active: row.get::<_, i64>(at + 9)? != 0,
+        compacted: row.get::<_, i64>(at + 10)? != 0,
+    })
+}
+
+const SKILL_USAGE_COLUMNS: &str = "root, name, created_by, use_count, view_count, patch_count, last_used_at, last_viewed_at, last_patched_at, created_at, state, pinned, archived_at";
+
+fn skill_usage_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SkillUsageRow> {
+    Ok(SkillUsageRow {
+        root: row.get(0)?,
+        name: row.get(1)?,
+        created_by: row.get(2)?,
+        use_count: row.get(3)?,
+        view_count: row.get(4)?,
+        patch_count: row.get(5)?,
+        last_used_at: row.get(6)?,
+        last_viewed_at: row.get(7)?,
+        last_patched_at: row.get(8)?,
+        created_at: row.get(9)?,
+        state: row.get(10)?,
+        pinned: row.get::<_, i64>(11)? != 0,
+        archived_at: row.get(12)?,
+    })
+}
+
+const CRON_COLUMNS: &str = "id, workspace_id, name, prompt, schedule, skills, model_role, mode, workdir, timezone, grace_minutes, repeat_times, run_count, state, next_run_at, last_run_at, last_status, last_error, last_task_id, origin, created_at";
+
+fn cron_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CronJobRow> {
+    Ok(CronJobRow {
+        id: row.get(0)?,
+        workspace_id: row.get(1)?,
+        name: row.get(2)?,
+        prompt: row.get(3)?,
+        schedule: row.get(4)?,
+        skills: row.get(5)?,
+        model_role: row.get(6)?,
+        mode: row.get(7)?,
+        workdir: row.get(8)?,
+        timezone: row.get(9)?,
+        grace_minutes: row.get(10)?,
+        repeat_times: row.get(11)?,
+        run_count: row.get(12)?,
+        state: row.get(13)?,
+        next_run_at: row.get(14)?,
+        last_run_at: row.get(15)?,
+        last_status: row.get(16)?,
+        last_error: row.get(17)?,
+        last_task_id: row.get(18)?,
+        origin: row.get(19)?,
+        created_at: row.get(20)?,
+    })
+}
+
+impl Store {
+    // -- sessions ------------------------------------------------------------
+
+    /// Start (or restart) a session.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn session_start(&self, row: &SessionRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO agent_sessions (id, workspace_id, task_id, parent_session_id, source, title, model, system_prompt_hash, started_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(id) DO UPDATE SET model = excluded.model, system_prompt_hash = excluded.system_prompt_hash",
+            rusqlite::params![
+                row.id, row.workspace_id, row.task_id, row.parent_session_id, row.source, row.title,
+                row.model, row.system_prompt_hash, row.started_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Store a system prompt once by content hash.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn system_prompt_put(&self, hash: &str, prompt: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO agent_system_prompts (hash, prompt) VALUES (?1, ?2)",
+            rusqlite::params![hash, prompt],
+        )?;
+        Ok(())
+    }
+
+    /// Set a session's system prompt hash.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn session_set_prompt(&self, id: &str, hash: &str, model: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE agent_sessions SET system_prompt_hash = ?2, model = ?3 WHERE id = ?1",
+            rusqlite::params![id, hash, model],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a session finished.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn session_end(&self, id: &str, at: i64, reason: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE agent_sessions SET ended_at = ?2, end_reason = ?3 WHERE id = ?1",
+            rusqlite::params![id, at, reason],
+        )?;
+        Ok(())
+    }
+
+    /// Append one message. Returns its id.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails (unknown session included).
+    pub fn message_append(&self, message: &MessageRow) -> Result<i64, StoreError> {
+        self.conn.execute(
+            "INSERT INTO agent_messages (session_id, role, content, tool_calls, tool_call_id, tool_name, ts, token_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                message.session_id, message.role, message.content, message.tool_calls,
+                message.tool_call_id, message.tool_name, message.ts, message.token_count
+            ],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        self.conn.execute(
+            "UPDATE agent_sessions SET message_count = message_count + 1 WHERE id = ?1",
+            rusqlite::params![message.session_id],
+        )?;
+        Ok(id)
+    }
+
+    /// Compaction replaced the live context: archive the active messages.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn messages_compacted(&self, session_id: &str) -> Result<usize, StoreError> {
+        Ok(self.conn.execute(
+            "UPDATE agent_messages SET active = 0, compacted = 1 WHERE session_id = ?1 AND active = 1",
+            rusqlite::params![session_id],
+        )?)
+    }
+
+    /// One session.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn session_get(&self, id: &str) -> Result<Option<SessionRow>, StoreError> {
+        let sql = format!("SELECT {SESSION_COLUMNS} FROM agent_sessions s WHERE s.id = ?1");
+        let mut statement = self.conn.prepare(&sql)?;
+        let mut rows =
+            statement.query_map(rusqlite::params![id], |row| session_from_row(row, 0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Most recent sessions of a workspace.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn sessions_recent(
+        &self,
+        workspace_id: &str,
+        exclude_sources: &[&str],
+        limit: usize,
+    ) -> Result<Vec<SessionRow>, StoreError> {
+        let excluded = serde_json::to_string(exclude_sources).unwrap_or_else(|_| "[]".into());
+        let sql = format!(
+            "SELECT {SESSION_COLUMNS} FROM agent_sessions s
+             WHERE s.workspace_id = ?1 AND s.source NOT IN (SELECT value FROM json_each(?2))
+             ORDER BY s.started_at DESC, s.rowid DESC LIMIT ?3"
+        );
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(
+            rusqlite::params![
+                workspace_id,
+                excluded,
+                i64::try_from(limit).unwrap_or(i64::MAX)
+            ],
+            |row| session_from_row(row, 0),
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// A session's messages in order (`active_only` skips compacted ones).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn session_messages(
+        &self,
+        session_id: &str,
+        active_only: bool,
+    ) -> Result<Vec<MessageRow>, StoreError> {
+        let sql = format!(
+            "SELECT {MESSAGE_COLUMNS} FROM agent_messages m WHERE m.session_id = ?1 {} ORDER BY m.id",
+            if active_only { "AND m.active = 1" } else { "" }
+        );
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params![session_id], |row| {
+            message_from_row(row, 0)
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Up to `window` messages on each side of `around` (inclusive).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn messages_around(
+        &self,
+        session_id: &str,
+        around: i64,
+        window: usize,
+    ) -> Result<Vec<MessageRow>, StoreError> {
+        let window = i64::try_from(window).unwrap_or(i64::MAX);
+        let sql = format!(
+            "SELECT * FROM (
+                SELECT {MESSAGE_COLUMNS} FROM agent_messages m WHERE m.session_id = ?1 AND m.id < ?2 ORDER BY m.id DESC LIMIT ?3
+             )
+             UNION ALL
+             SELECT * FROM (
+                SELECT {MESSAGE_COLUMNS} FROM agent_messages m WHERE m.session_id = ?1 AND m.id >= ?2 ORDER BY m.id ASC LIMIT ?3 + 1
+             )
+             ORDER BY 1"
+        );
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params![session_id, around, window], |row| {
+            message_from_row(row, 0)
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Full-text search over a workspace's messages.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails (including an FTS syntax
+    /// error the sanitiser did not catch).
+    pub fn messages_search(
+        &self,
+        query: &MessageSearch<'_>,
+    ) -> Result<Vec<MessageHit>, StoreError> {
+        let roles = serde_json::to_string(query.roles).unwrap_or_else(|_| "[]".into());
+        let sources = serde_json::to_string(query.exclude_sources).unwrap_or_else(|_| "[]".into());
+        let sessions =
+            serde_json::to_string(query.exclude_sessions).unwrap_or_else(|_| "[]".into());
+        let order = match query.sort {
+            SearchSort::Relevance => "rank",
+            SearchSort::Newest => "m.ts DESC, rank",
+            SearchSort::Oldest => "m.ts ASC, rank",
+        };
+        let sql = format!(
+            "SELECT {MESSAGE_COLUMNS}, snippet(agent_messages_fts, 0, '>>>', '<<<', '...', 40), {SESSION_COLUMNS}
+             FROM agent_messages_fts f
+             JOIN agent_messages m ON m.id = f.rowid
+             JOIN agent_sessions s ON s.id = m.session_id
+             WHERE agent_messages_fts MATCH ?1
+               AND s.workspace_id = ?2
+               AND m.role IN (SELECT value FROM json_each(?3))
+               AND s.source NOT IN (SELECT value FROM json_each(?4))
+               AND s.id NOT IN (SELECT value FROM json_each(?5))
+               AND (?6 IS NULL OR s.started_at >= ?6)
+               AND (?7 IS NULL OR s.started_at < ?7)
+             ORDER BY {order}
+             LIMIT ?8"
+        );
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(
+            rusqlite::params![
+                query.fts,
+                query.workspace_id,
+                roles,
+                sources,
+                sessions,
+                query.after,
+                query.before,
+                i64::try_from(query.limit).unwrap_or(i64::MAX)
+            ],
+            |row| {
+                Ok(MessageHit {
+                    message: message_from_row(row, 0)?,
+                    snippet: row.get::<_, Option<String>>(11)?.unwrap_or_default(),
+                    session: session_from_row(row, 12)?,
+                })
+            },
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Recent audit rows `(task_id, action, target, decision, reason)`,
+    /// newest first, optionally of one task.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn audit_recent(
+        &self,
+        task_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<AuditRowTuple>, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT task_id, action, target, decision, reason FROM audit_log
+             WHERE ?1 IS NULL OR task_id = ?1 ORDER BY seq DESC LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            rusqlite::params![task_id, i64::try_from(limit).unwrap_or(i64::MAX)],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    // -- skill usage ---------------------------------------------------------
+
+    /// Usage rows of one skills folder.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn skill_usage(&self, root: &str) -> Result<Vec<SkillUsageRow>, StoreError> {
+        let sql =
+            format!("SELECT {SKILL_USAGE_COLUMNS} FROM skill_usage WHERE root = ?1 ORDER BY name");
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params![root], skill_usage_from_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// A skill was created: reset its record and note who made it.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn skill_created(
+        &self,
+        root: &str,
+        name: &str,
+        created_by: &str,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO skill_usage (root, name, created_by, created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(root, name) DO UPDATE SET created_by = excluded.created_by, created_at = excluded.created_at,
+                use_count = 0, view_count = 0, patch_count = 0, last_used_at = NULL, last_viewed_at = NULL,
+                last_patched_at = NULL, state = 'active', archived_at = NULL",
+            rusqlite::params![root, name, created_by, now],
+        )?;
+        Ok(())
+    }
+
+    /// Bump a usage counter (creates the row on first sight).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn skill_bump(
+        &self,
+        root: &str,
+        name: &str,
+        counter: SkillCounter,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO skill_usage (root, name, created_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![root, name, now],
+        )?;
+        let sql = match counter {
+            SkillCounter::View => "UPDATE skill_usage SET view_count = view_count + 1, use_count = use_count + 1,
+                last_viewed_at = ?3, last_used_at = ?3, state = CASE WHEN state = 'stale' THEN 'active' ELSE state END
+                WHERE root = ?1 AND name = ?2",
+            SkillCounter::Patch => "UPDATE skill_usage SET patch_count = patch_count + 1, last_patched_at = ?3,
+                state = CASE WHEN state = 'stale' THEN 'active' ELSE state END
+                WHERE root = ?1 AND name = ?2",
+        };
+        self.conn.execute(sql, rusqlite::params![root, name, now])?;
+        Ok(())
+    }
+
+    /// Set a skill's lifecycle state (`active`, `stale`, `archived`).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails or the state is unknown.
+    pub fn skill_set_state(
+        &self,
+        root: &str,
+        name: &str,
+        state: &str,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO skill_usage (root, name, created_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![root, name, now],
+        )?;
+        self.conn.execute(
+            "UPDATE skill_usage SET state = ?3,
+                archived_at = CASE WHEN ?3 = 'archived' THEN ?4 WHEN ?3 = 'active' THEN NULL ELSE archived_at END
+             WHERE root = ?1 AND name = ?2",
+            rusqlite::params![root, name, state, now],
+        )?;
+        Ok(())
+    }
+
+    /// Pin or unpin a skill (pinned skills are never curated or deleted).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn skill_set_pinned(
+        &self,
+        root: &str,
+        name: &str,
+        pinned: bool,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO skill_usage (root, name, created_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![root, name, now],
+        )?;
+        self.conn.execute(
+            "UPDATE skill_usage SET pinned = ?3 WHERE root = ?1 AND name = ?2",
+            rusqlite::params![root, name, i64::from(pinned)],
+        )?;
+        Ok(())
+    }
+
+    // -- cron ----------------------------------------------------------------
+
+    /// Insert or replace a job.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn cron_put(&self, job: &CronJobRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            &format!("INSERT OR REPLACE INTO cron_jobs ({CRON_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)"),
+            rusqlite::params![
+                job.id, job.workspace_id, job.name, job.prompt, job.schedule, job.skills, job.model_role,
+                job.mode, job.workdir, job.timezone, job.grace_minutes, job.repeat_times, job.run_count,
+                job.state, job.next_run_at, job.last_run_at, job.last_status, job.last_error,
+                job.last_task_id, job.origin, job.created_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// One job.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn cron_get(&self, id: &str) -> Result<Option<CronJobRow>, StoreError> {
+        let sql = format!("SELECT {CRON_COLUMNS} FROM cron_jobs WHERE id = ?1");
+        let mut statement = self.conn.prepare(&sql)?;
+        let mut rows = statement.query_map(rusqlite::params![id], cron_from_row)?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Jobs, optionally of one workspace, oldest first.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn cron_list(&self, workspace_id: Option<&str>) -> Result<Vec<CronJobRow>, StoreError> {
+        let sql = format!(
+            "SELECT {CRON_COLUMNS} FROM cron_jobs WHERE ?1 IS NULL OR workspace_id = ?1 ORDER BY created_at, id"
+        );
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params![workspace_id], cron_from_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Delete a job. Returns whether it existed.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn cron_delete(&self, id: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM cron_jobs WHERE id = ?1", rusqlite::params![id])?
+            > 0)
+    }
+
+    /// Claim a due run: move `next_run_at` from `expected` to `next` (and the
+    /// state, for a finished one-shot) only if nobody else did. `true` means
+    /// this caller owns the run. This is the at-most-once step: it happens
+    /// before the run is dispatched.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn cron_claim(
+        &self,
+        id: &str,
+        expected: i64,
+        next: Option<i64>,
+        state: &str,
+        runs: bool,
+    ) -> Result<bool, StoreError> {
+        // The run counts toward `repeat_times` at claim time, so a run that
+        // later fails to start still uses its slot (at most once).
+        Ok(self.conn.execute(
+            "UPDATE cron_jobs SET next_run_at = ?3, state = ?4, run_count = run_count + ?5
+             WHERE id = ?1 AND next_run_at = ?2 AND state = 'scheduled'",
+            rusqlite::params![id, expected, next, state, i64::from(runs)],
+        )? == 1)
+    }
+
+    /// Record a dispatched run.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn cron_record_run(
+        &self,
+        id: &str,
+        at: i64,
+        status: &str,
+        error: Option<&str>,
+        task_id: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE cron_jobs SET last_run_at = ?2, last_status = ?3, last_error = ?4,
+                last_task_id = COALESCE(?5, last_task_id)
+             WHERE id = ?1",
+            rusqlite::params![id, at, status, error, task_id],
+        )?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::assert_is_empty, clippy::bool_assert_comparison)]
+mod memory_skills_tests {
+    use super::*;
+
+    fn session(
+        store: &Store,
+        id: &str,
+        ws: &str,
+        source: &str,
+        started: i64,
+        parent: Option<&str>,
+    ) {
+        store
+            .session_start(&SessionRow {
+                id: id.into(),
+                workspace_id: ws.into(),
+                source: source.into(),
+                started_at: started,
+                parent_session_id: parent.map(str::to_string),
+                ..SessionRow::default()
+            })
+            .expect("session");
+    }
+
+    fn message(store: &Store, session: &str, role: &str, content: &str) -> i64 {
+        store
+            .message_append(&MessageRow {
+                session_id: session.into(),
+                role: role.into(),
+                content: Some(content.into()),
+                ts: 1,
+                ..MessageRow::default()
+            })
+            .expect("append")
+    }
+
+    fn search<'a>(ws: &'a str, fts: &'a str, roles: &'a [&'a str]) -> MessageSearch<'a> {
+        MessageSearch {
+            workspace_id: ws,
+            fts,
+            roles,
+            limit: 300,
+            ..MessageSearch::default()
+        }
+    }
+
+    #[test]
+    fn fts_finds_messages_in_one_workspace_only() {
+        let store = Store::open_in_memory().expect("open");
+        session(&store, "s1", "ws1", "task", 10, None);
+        session(&store, "s2", "ws2", "task", 20, None);
+        message(&store, "s1", "user", "fix the flaky websocket test");
+        message(&store, "s2", "user", "websocket in another workspace");
+        let hits = store
+            .messages_search(&search("ws1", "websocket", &["user", "assistant"]))
+            .expect("search");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session.id, "s1");
+        assert!(
+            hits[0].snippet.contains(">>>websocket<<<"),
+            "{}",
+            hits[0].snippet
+        );
+        assert_eq!(
+            store
+                .session_get("s1")
+                .expect("get")
+                .expect("row")
+                .message_count,
+            1
+        );
+    }
+
+    #[test]
+    fn tool_output_is_indexed_only_up_to_8192_chars() {
+        let store = Store::open_in_memory().expect("open");
+        session(&store, "s1", "ws", "task", 1, None);
+        let long = format!(
+            "{} needleearly {} needlelate",
+            "x ".repeat(10),
+            "y ".repeat(5_000)
+        );
+        message(&store, "s1", "tool", &long);
+        let tool = ["tool"];
+        assert_eq!(
+            store
+                .messages_search(&search("ws", "needleearly", &tool))
+                .expect("q")
+                .len(),
+            1
+        );
+        assert!(store
+            .messages_search(&search("ws", "needlelate", &tool))
+            .expect("q")
+            .is_empty());
+        // The full text is still stored.
+        assert!(store.session_messages("s1", false).expect("m")[0]
+            .content
+            .as_deref()
+            .expect("c")
+            .ends_with("needlelate"));
+    }
+
+    #[test]
+    fn index_follows_updates_and_deletes() {
+        let store = Store::open_in_memory().expect("open");
+        session(&store, "s1", "ws", "task", 1, None);
+        let id = message(&store, "s1", "user", "alpha");
+        store
+            .conn
+            .execute(
+                "UPDATE agent_messages SET content = 'beta' WHERE id = ?1",
+                [id],
+            )
+            .expect("update");
+        let roles = ["user"];
+        assert!(store
+            .messages_search(&search("ws", "alpha", &roles))
+            .expect("q")
+            .is_empty());
+        assert_eq!(
+            store
+                .messages_search(&search("ws", "beta", &roles))
+                .expect("q")
+                .len(),
+            1
+        );
+        store
+            .conn
+            .execute("DELETE FROM agent_sessions WHERE id = 's1'", [])
+            .expect("delete");
+        assert!(store
+            .messages_search(&search("ws", "beta", &roles))
+            .expect("q")
+            .is_empty());
+        // The index stays consistent after the cascade.
+        store
+            .conn
+            .execute(
+                "INSERT INTO agent_messages_fts(agent_messages_fts) VALUES('integrity-check')",
+                [],
+            )
+            .expect("integrity");
+    }
+
+    #[test]
+    fn search_filters_sources_sessions_and_time() {
+        let store = Store::open_in_memory().expect("open");
+        session(&store, "a", "ws", "task", 100, None);
+        session(&store, "b", "ws", "review", 200, None);
+        session(&store, "c", "ws", "cron", 300, None);
+        for s in ["a", "b", "c"] {
+            message(&store, s, "assistant", "deploy notes");
+        }
+        let roles = ["assistant"];
+        let excluded = ["c".to_string()];
+        let q = MessageSearch {
+            exclude_sources: &["review"],
+            exclude_sessions: &excluded,
+            ..search("ws", "deploy", &roles)
+        };
+        let ids: Vec<String> = store
+            .messages_search(&q)
+            .expect("q")
+            .into_iter()
+            .map(|h| h.session.id)
+            .collect();
+        assert_eq!(ids, ["a"]);
+        let q = MessageSearch {
+            after: Some(150),
+            before: Some(301),
+            ..search("ws", "deploy", &roles)
+        };
+        assert_eq!(store.messages_search(&q).expect("q").len(), 2);
+    }
+
+    #[test]
+    fn windows_compaction_and_recent_sessions() {
+        let store = Store::open_in_memory().expect("open");
+        session(&store, "s", "ws", "task", 5, None);
+        session(&store, "t", "ws", "review", 6, None);
+        let ids: Vec<i64> = (0..10)
+            .map(|i| message(&store, "s", "user", &format!("m{i}")))
+            .collect();
+        let window = store.messages_around("s", ids[5], 2).expect("window");
+        assert_eq!(
+            window.iter().map(|m| m.id).collect::<Vec<_>>(),
+            ids[3..=7].to_vec()
+        );
+        assert_eq!(store.messages_compacted("s").expect("compact"), 10);
+        assert!(store
+            .session_messages("s", true)
+            .expect("active")
+            .is_empty());
+        assert_eq!(store.session_messages("s", false).expect("all").len(), 10);
+        let recent = store
+            .sessions_recent("ws", &["review"], 10)
+            .expect("recent");
+        assert_eq!(
+            recent.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["s"]
+        );
+    }
+
+    #[test]
+    fn skill_usage_counters_and_state() {
+        let store = Store::open_in_memory().expect("open");
+        store
+            .skill_created("/r", "deploy", "agent", 10)
+            .expect("create");
+        store
+            .skill_bump("/r", "deploy", SkillCounter::View, 20)
+            .expect("view");
+        store
+            .skill_bump("/r", "deploy", SkillCounter::Patch, 30)
+            .expect("patch");
+        store
+            .skill_bump("/r", "hand", SkillCounter::View, 40)
+            .expect("view");
+        store
+            .skill_set_state("/r", "deploy", "archived", 50)
+            .expect("state");
+        store.skill_set_pinned("/r", "hand", true, 60).expect("pin");
+        let rows = store.skill_usage("/r").expect("rows");
+        let deploy = &rows[0];
+        assert_eq!(
+            (deploy.use_count, deploy.view_count, deploy.patch_count),
+            (1, 1, 1)
+        );
+        assert_eq!(
+            (deploy.state.as_str(), deploy.archived_at),
+            ("archived", Some(50))
+        );
+        assert_eq!(deploy.created_by.as_deref(), Some("agent"));
+        assert!(rows[1].pinned);
+        assert_eq!(rows[1].created_by, None);
+        assert!(store.skill_set_state("/r", "deploy", "bogus", 1).is_err());
+    }
+
+    #[test]
+    fn cron_claim_is_compare_and_swap() {
+        let store = Store::open_in_memory().expect("open");
+        let job = CronJobRow {
+            id: "j1".into(),
+            workspace_id: "ws".into(),
+            name: "n".into(),
+            prompt: "p".into(),
+            schedule: "every 1h".into(),
+            skills: "[]".into(),
+            mode: "auto".into(),
+            state: "scheduled".into(),
+            next_run_at: Some(100),
+            origin: "user".into(),
+            created_at: 1,
+            ..CronJobRow::default()
+        };
+        store.cron_put(&job).expect("put");
+        assert!(store
+            .cron_claim("j1", 100, Some(3_700), "scheduled", true)
+            .expect("claim"));
+        // A second claimer for the same slot loses.
+        assert!(!store
+            .cron_claim("j1", 100, Some(3_700), "scheduled", true)
+            .expect("again"));
+        store
+            .cron_record_run("j1", 101, "started", None, Some("task1"))
+            .expect("run");
+        let row = store.cron_get("j1").expect("get").expect("row");
+        assert_eq!(
+            (row.next_run_at, row.run_count, row.last_task_id.as_deref()),
+            (Some(3_700), 1, Some("task1"))
+        );
+        assert_eq!(store.cron_list(Some("ws")).expect("list").len(), 1);
+        assert!(store.cron_list(Some("other")).expect("list").is_empty());
+        assert!(store.cron_delete("j1").expect("delete"));
+    }
+}
+
+// --- end memory-skills -----------------------------------------------------------

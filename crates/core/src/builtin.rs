@@ -27,6 +27,8 @@
 use crate::agent::{AgentExecutor, AgentStep, TaskSpec};
 use crate::compaction::{self, CompactionConfig, CompactionError, Reason};
 use crate::events::{Emitter, EventKind};
+use crate::learning::sessions::Transcript;
+use crate::learning::{self, Learning};
 use crate::llm::{ChatMessage, ChatRequest, Completion, CompletionClient, TokenUsage, ToolCall};
 use crate::profiles::{self, AgentProfile};
 use crate::runner::Floor;
@@ -159,6 +161,13 @@ pub struct BuiltinExecutor {
     sub_counter: usize,
     id_prefix: String,
     active: Option<SubagentRun>,
+    // Memory, skills and session search (`crate::learning`).
+    learning: Option<Learning>,
+    /// The frozen memory snapshot and skills index of this task, put in
+    /// front of the first user message (and of every checkpoint).
+    preamble: Option<String>,
+    transcript: Option<Box<dyn Transcript>>,
+    recorded: usize,
 }
 
 impl std::fmt::Debug for BuiltinExecutor {
@@ -213,6 +222,51 @@ impl BuiltinExecutor {
             sub_counter: 0,
             id_prefix: String::new(),
             active: None,
+            learning: None,
+            preamble: None,
+            transcript: None,
+            recorded: 0,
+        }
+    }
+
+    /// Offer the memory, skills and session-search tools. The memory
+    /// snapshot and skills index are read once, when the task starts.
+    /// Subagents never inherit these tools.
+    #[must_use]
+    pub fn with_learning(mut self, learning: Learning) -> Self {
+        self.learning = Some(learning);
+        self
+    }
+
+    /// Record the conversation into the session store as it grows.
+    #[must_use]
+    pub fn with_transcript(mut self, transcript: Box<dyn Transcript>) -> Self {
+        self.transcript = Some(transcript);
+        self
+    }
+
+    /// The frozen context this task started with (tests).
+    #[must_use]
+    pub fn preamble(&self) -> Option<&str> {
+        self.preamble.as_deref()
+    }
+
+    /// Hand new messages to the transcript (never the system prompt).
+    fn flush_transcript(&mut self) {
+        let start = self.recorded.max(1);
+        if let Some(transcript) = self.transcript.as_mut() {
+            if start < self.messages.len() {
+                transcript.record(&self.messages[start..]);
+            }
+        }
+        self.recorded = self.messages.len();
+    }
+
+    /// Put the frozen preamble in front of `text`.
+    fn with_preamble(&self, text: &str) -> String {
+        match &self.preamble {
+            Some(preamble) => format!("{preamble}\n\n{text}"),
+            None => text.to_string(),
         }
     }
 
@@ -310,6 +364,7 @@ impl BuiltinExecutor {
     /// `with_tools: false` sends no tool schemas (the final summary turn).
     fn request(&mut self, with_tools: bool) -> Result<Completion, AgentStep> {
         let mut retried = false;
+        self.flush_transcript();
         loop {
             if let Err(error) = self.check_invariants() {
                 self.exit = Exit::Error;
@@ -397,7 +452,20 @@ impl BuiltinExecutor {
                         summary_chars: done.summary.chars().count(),
                         error: None,
                     }));
+                self.flush_transcript();
                 self.messages = done.messages;
+                // Compaction is the one place history changes; the frozen
+                // preamble rides on the checkpoint so it is not lost.
+                if let Some(preamble) = self.preamble.clone() {
+                    if let Some(first) = self.messages.get_mut(1).filter(|m| m.role == "user") {
+                        let text = first.content.take().unwrap_or_default();
+                        first.content = Some(format!("{preamble}\n\n{text}"));
+                    }
+                }
+                if let Some(transcript) = self.transcript.as_mut() {
+                    transcript.compacted();
+                }
+                self.recorded = 1;
                 self.anchor = None;
                 self.compactions += 1;
                 Ok(())
@@ -549,6 +617,36 @@ impl BuiltinExecutor {
                 Err(error) => invalid(error),
             };
         }
+        if let Some(learning) = &self.learning {
+            let args = match parse_args(&call.function.arguments) {
+                Ok(args) => args,
+                Err(error)
+                    if learning::tools::TOOL_NAMES.contains(&call.function.name.as_str()) =>
+                {
+                    return invalid(error)
+                }
+                Err(_) => Value::Null,
+            };
+            match learning.request(&call.function.name, &args) {
+                Some(Ok(request))
+                    if !profiles::chain_offers(&self.chain, request.name(), request.kind()) =>
+                {
+                    return invalid(format!(
+                        "tool `{}` is not available to the `{}` agent",
+                        request.name(),
+                        self.own_profile()
+                    ));
+                }
+                Some(Ok(request)) => {
+                    return Queued::Call {
+                        call_id: call.id.clone(),
+                        request,
+                    }
+                }
+                Some(Err(error)) => return invalid(error),
+                None => {}
+            }
+        }
         match parse_call(call, &self.root) {
             Ok(request) if !profiles::chain_offers(&self.chain, request.name(), request.kind()) => {
                 invalid(format!(
@@ -609,6 +707,7 @@ impl BuiltinExecutor {
             if self.exit == Exit::Running {
                 self.exit = Exit::Done;
             }
+            self.flush_transcript();
             return self.done();
         }
         self.turn()
@@ -859,12 +958,36 @@ impl AgentExecutor for BuiltinExecutor {
             &self.profiles,
             &self.limits,
         );
-        let system = system_prompt(spec.mode, &self.root, &profile, self.depth);
+        let mut system = system_prompt(spec.mode, &self.root, &profile, self.depth);
+        self.preamble = None;
+        if let Some(learning) = &self.learning {
+            let offered: Vec<Value> = learning
+                .schemas()
+                .into_iter()
+                .filter(|tool| {
+                    let name = tool["function"]["name"].as_str().unwrap_or_default();
+                    profiles::chain_offers(&self.chain, name, learning::tools::policy_kind(name))
+                })
+                .collect();
+            if !offered.is_empty() {
+                // Static text only: the system prompt stays byte-stable.
+                if let Some(guidance) = learning.guidance() {
+                    system.push_str("\n\n");
+                    system.push_str(&guidance);
+                }
+                // Frozen now: writes during the task reach the disk, not
+                // this task's prompt.
+                self.preamble = learning.preamble();
+                self.tools.extend(offered);
+            }
+        }
         self.system_prompt.clone_from(&system);
-        self.messages = vec![
-            ChatMessage::system(system),
-            ChatMessage::user(spec.prompt.clone()),
-        ];
+        let first = self.with_preamble(&spec.prompt);
+        self.messages = vec![ChatMessage::system(system), ChatMessage::user(first)];
+        self.recorded = 1;
+        if let Some(transcript) = self.transcript.as_mut() {
+            transcript.start(&self.system_prompt, &self.model);
+        }
         self.turn()
     }
 

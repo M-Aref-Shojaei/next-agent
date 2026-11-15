@@ -26,10 +26,15 @@ eventsource-stream = "0.2"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+# Memory, skills and cron (crates/core/src/learning/): threat patterns and
+# time zones for schedules.
+regex = "1"
+jiff = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
 wiremock = "0.6"
+tempfile = "3"
 
 [lints]
 workspace = true
