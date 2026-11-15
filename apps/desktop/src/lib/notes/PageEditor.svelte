@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { api } from "$lib/api.ts";
   import { Badge, Banner, Button } from "$lib/ds/index.ts";
   import Backlinks from "./Backlinks.svelte";
@@ -64,8 +64,11 @@
   // The index changed (an external edit, or our own save echoing back).
   $effect(() => {
     const v = ctx.version();
-    // Only a change to this page's file (or an unknown one) is worth a re-read.
-    if (v > 0 && current && (!view?.file || notes.changed.includes(view.file))) void load(current, "idle");
+    const changed = notes.changed;
+    // Only a change to this page's file (or an unknown one) is worth a re-read. `view` is read
+    // untracked: the reload writes it, and tracking it would re-run this effect forever.
+    const file = untrack(() => view?.file);
+    if (v > 0 && current && (!file || changed.includes(file))) void load(current, "idle");
   });
 
   onDestroy(() => void outliner.flush());

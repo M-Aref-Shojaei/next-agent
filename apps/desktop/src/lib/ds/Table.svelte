@@ -50,6 +50,7 @@
   <div class="ds-table-empty"><EmptyState compact title={empty} description={emptyDescription} /></div>
 {:else}
   <!-- A scrollable region must be focusable so keyboard users can scroll it. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div class="ds-table-scroll" role="region" aria-label={label} tabindex="0">
     <table class="ds-table">
       <thead>
