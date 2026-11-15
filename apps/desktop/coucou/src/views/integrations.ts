@@ -63,12 +63,12 @@ export function idleStatus(
   info: { configured: boolean; error: string | null } | undefined,
   chatModel: string,
 ): { label: string; color: string } {
-  if (isComingSoon(id)) return { label: t("Coming soon"), color: "#6B7079" };
-  if (info?.error) return { label: info.error, color: "#F4505E" };
+  if (isComingSoon(id)) return { label: t("Coming soon"), color: "var(--color-text-tertiary)" }; // Next Agent: design-system token (ADR-0012)
+  if (info?.error) return { label: info.error, color: "var(--color-danger)" }; // Next Agent: design-system token (ADR-0012)
   const configured = info?.configured ?? false;
   const def = pillDefinition(id);
-  const ok = (label: string) => ({ label, color: "#22C55E" });
-  const missing = (label: string) => ({ label, color: "#F4505E" });
+  const ok = (label: string) => ({ label, color: "var(--color-ok)" }); // Next Agent: design-system token (ADR-0012)
+  const missing = (label: string) => ({ label, color: "var(--color-danger)" }); // Next Agent: design-system token (ADR-0012)
   // Pills driven by hooks never have a key: they are connected once the hooks
   // are in place (Mac #183). A session replaces this card; nothing is loading.
   if (def?.connect.kind === "hooks") return configured ? ok(t("Hooks installed")) : missing(t("Hooks not installed"));
@@ -140,7 +140,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
     );
   } else if (!configured) {
     actions.append(
-      h("button", { class: "link-btn", style: "color:#8e939c", text: t("Settings…"), onclick: openSettings }),
+      h("button", { class: "link-btn", style: "color:var(--color-text-secondary)", text: t("Settings…"), onclick: openSettings }), // Next Agent: design-system token (ADR-0012)
     );
   }
 
@@ -303,7 +303,7 @@ function stripeCard(): HTMLElement {
         h("span", { class: "int-name", text: String(p.description ?? t("Payment")) }),
         h("span", {
           class: "int-amount",
-          style: "color:#22c55e",
+          style: "color:var(--color-ok)", // Next Agent: design-system token (ADR-0012)
           text: `+${(Number(p.amount ?? 0) / 100).toFixed(2)}`,
         }),
         h("span", { class: "int-ago", text: timeAgo(p.createdAt) }),

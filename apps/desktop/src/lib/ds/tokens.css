@@ -12,7 +12,9 @@
 /* ---------- Theme-independent scales ---------- */
 :root {
   /* Type */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, "Nirmala UI",
+    "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans", "Noto Sans Devanagari", "Noto Sans Bengali", "Noto Sans Arabic",
+    "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --font-size-xs: 11px;
   --font-size-sm: 12px;
@@ -79,6 +81,10 @@
   --z-popover: 400;
   --z-toast: 500;
   --z-tooltip: 600;
+
+  /* Fixed black of the island (Coucou's notch window): it must join the hardware notch, so it never follows the theme.
+     Also the ink of the island's shadows and masks. */
+  --color-island: #000000;
 
   /* Layout */
   --content-max-width: 880px;
@@ -159,11 +165,19 @@
   --color-scrim: rgb(15 17 21 / 0.42);
   --color-selection: rgb(59 91 219 / 0.22);
 
+  /* Translucent fills over any surface (hover, track, hairline). Stronger number = more opaque. */
+  --color-fill-1: rgb(16 18 24 / 0.04);
+  --color-fill-2: rgb(16 18 24 / 0.07);
+  --color-fill-3: rgb(16 18 24 / 0.1);
+  --color-fill-4: rgb(16 18 24 / 0.16);
+  --color-fill-5: rgb(16 18 24 / 0.3);
+
   /* Brand: the red island orb (IslandMascot.svelte, tone "rest"). */
   --color-brand: #ff5f6d;
   --color-brand-2: #c0263f;
+  --brand-sheen: radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.55), transparent 42%);
   --brand-gradient:
-    radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.55), transparent 42%),
+    var(--brand-sheen),
     conic-gradient(from 210deg, var(--color-brand), var(--color-brand-2), var(--color-brand));
 
   --shadow-sm: 0 1px 2px rgb(16 18 24 / 0.06);
@@ -237,6 +251,12 @@
     --color-scrim: rgb(0 0 0 / 0.6);
     --color-selection: rgb(124 147 245 / 0.3);
 
+    --color-fill-1: rgb(255 255 255 / 0.04);
+    --color-fill-2: rgb(255 255 255 / 0.07);
+    --color-fill-3: rgb(255 255 255 / 0.1);
+    --color-fill-4: rgb(255 255 255 / 0.16);
+    --color-fill-5: rgb(255 255 255 / 0.3);
+
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
     --shadow-md: 0 2px 8px rgb(0 0 0 / 0.4), 0 1px 2px rgb(0 0 0 / 0.3);
     --shadow-lg: 0 10px 28px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
@@ -307,6 +327,12 @@
   --color-focus: #8ea2f7;
   --color-scrim: rgb(0 0 0 / 0.6);
   --color-selection: rgb(124 147 245 / 0.3);
+
+  --color-fill-1: rgb(255 255 255 / 0.04);
+  --color-fill-2: rgb(255 255 255 / 0.07);
+  --color-fill-3: rgb(255 255 255 / 0.1);
+  --color-fill-4: rgb(255 255 255 / 0.16);
+  --color-fill-5: rgb(255 255 255 / 0.3);
 
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-md: 0 2px 8px rgb(0 0 0 / 0.4), 0 1px 2px rgb(0 0 0 / 0.3);

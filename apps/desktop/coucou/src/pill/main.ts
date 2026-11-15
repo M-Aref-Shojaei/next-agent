@@ -179,7 +179,7 @@ function content(l: Look): HTMLElement {
       if (vertical()) {
         const icon = el("span");
         icon.append(svgIcon(state.phase === "failed" ? "mic" : "copy"));
-        icon.querySelector("svg")!.setAttribute("style", "width:13px;height:13px;fill:none;stroke:#e8e9ec;stroke-width:2");
+        icon.querySelector("svg")!.setAttribute("style", "width:13px;height:13px;fill:none;stroke:var(--color-text);stroke-width:2"); // Next Agent: design-system token (ADR-0012)
         c.append(mochiSlot(), icon);
       } else {
         c.append(mochiSlot(), el("span", "message", messageText() ?? ""));

@@ -79,7 +79,9 @@ In CSS, use tokens only:
 | Status | `{info,ok,warn,danger}`, `-subtle`, `-border`, `-text`, `on-{tone}` | Solid colour for dots and bars; `-subtle` + `-border` + `-text` for banners and badges (AA contrast). |
 | Neutral | `neutral`, `neutral-subtle`, `neutral-border`, `neutral-text` | Grey badges and dots. |
 | Misc | `focus`, `scrim`, `selection`, `control-thumb` | Focus ring, dialog backdrop, text selection, switch and slider thumbs. |
-| Brand | `brand`, `brand-2`, plus `--brand-gradient` | The red orb only. |
+| Fill | `fill-1` … `fill-5` | Translucent washes over any surface: hover, tracks, hairlines, scrollbar thumbs. About 4 / 7 / 10 / 16 / 30 % of the text colour (dark ink in light, white in dark). |
+| Island | `island` | The fixed black of Coucou's island: it joins the hardware notch, so it is the same in every theme. Also the ink of the island's shadows and masks. |
+| Brand | `brand`, `brand-2`, plus `--brand-sheen` and `--brand-gradient` | The red orb only. `--brand-sheen` is the white highlight over the conic gradient; `IslandMascot` reuses it for its other tones. |
 
 Derived: `--focus-ring` (a two-layer box-shadow) and `--focus-ring-inset`.
 
@@ -88,7 +90,7 @@ Legacy aliases (do not use in new code): `--bg --panel --sidebar --border --text
 ### Type
 | Token | Value |
 |---|---|
-| `--font-sans` | system UI stack (`-apple-system`, `Segoe UI`, `system-ui` …) |
+| `--font-sans` | system UI stack (`-apple-system`, `Segoe UI`, `system-ui` …), then the fallbacks for Devanagari, Bengali, Arabic and CJK (`Nirmala UI`, `Microsoft YaHei`, the Noto families) |
 | `--font-mono` | `ui-monospace`, `SF Mono`, `Menlo`, `Consolas` … |
 | `--font-size-xs / sm / md / lg / xl / 2xl` | 11 / 12 / **14** (base) / 16 / 20 / 26 px |
 | `--font-weight-regular / medium / semibold / bold` | 400 / 500 / 600 / 700 |
@@ -196,13 +198,67 @@ Pure helpers (tested in `apps/desktop/tests/ds.test.ts`):
   - Named colours in colour properties.
   - `font-family` with anything other than `var(--font-…)` or a CSS-wide keyword.
   - In Svelte files, the checker reads `<style>` blocks, `style="…"`, `style:prop="…"`, and colour attributes (`fill`, `stroke`, `stop-color` …). Scripts are scanned as TS.
-  - In TS files, CSS-like declarations (`backgroundColor: "#fff"`, `"color: red"`).
+  - In TS files, CSS-like declarations (`backgroundColor: "#fff"`, `"color: red"`), also inside style strings (`style: "color:#fff;width:1px"`). `${expr}` in a template and an unquoted `CONSTANT` are code, not colours.
 - **Allowlist:** `scripts/design-tokens-allowlist.json` has one entry per offending file, with `max`, the count today.
   - The check fails when a file goes over its `max`, when an allowlisted file is clean (remove its entry), or when an allowlisted file no longer exists.
   - It prints a note when a count drops, so you can lower `max`.
-  - `apps/desktop/coucou/**` is one pending entry: the vendored Coucou UI, which gets restyled and has its settings moved.
+  - The checker also scans `apps/desktop/coucou/src/**`. `coucou/src/settings/**` is the one pending entry: it is not scanned until it moves into Next Agent Settings.
+  - A few Coucou files are listed because they hold identity colours as data (see "Coucou's windows").
 - **Dark-theme parity:** the two dark blocks in `tokens.css` must match.
 - **Run it:** `node scripts/check-design-tokens.mjs --list` prints every finding. Tests: `scripts/tests/design-tokens.test.ts`.
+
+## Coucou's windows
+
+The island, the dictation pill, the desktop orb and the hub (the vendored Coucou UI, ADR-0011) use these tokens too. Their CSS keeps its selectors, sizes, positions and animation timings; only colour, type and surface styling moved.
+
+- `routes/coucou/+layout.svelte` loads `tokens.css` and forces `data-theme="dark"`. These windows are fixed dark surfaces (the island sits on the notch, the pill on the screen edge), so they use the dark tokens whatever the OS theme is.
+- Coucou's variable names stay as aliases of tokens (`--ink`, `--dim`, `--card`, `--hub-*`, `--font` …), so a re-sync of its CSS is a plain diff. Each changed file carries a `Next Agent:` comment.
+- Where Coucou had a translucent white wash (`rgba(255,255,255,0.06)`), the code uses `--color-fill-N`. A tinted wash (`rgba(47,140,255,0.14)`) is `color-mix(in srgb, var(--color-accent) 14%, transparent)`.
+- Radii and `transition` times use a token only when the value is exactly the token's, so no shape or timing changes. `animation` times stay raw: the duration tokens drop to about 0 under reduced motion, which would turn a looping spinner into a flicker.
+- Canvas code (Mochi's orb, the drop sequence, the share image) cannot use CSS variables. Its colours, and the per-agent and per-pill identity colours, are data: they are persisted, alpha-suffixed and drawn on canvas. Those files are on the allowlist (`pills.ts`, `agents.ts`, `hero.ts`, `integrations.ts`) until the owner's own palette replaces them.
+
+| Coucou | Token |
+|---|---|
+| `#000` island, `body.hub-window` | `--color-island` (island), `--color-bg` (hub window) |
+| `#f5f6f8`, `#f1f2f4`, `#e8e9ec`, `#c5c8cd` … `#d5d7db` (text) | `--color-text` |
+| `#b0b5be` … `#b9bdc4`, `#9398a1`, `#8e939c`, `#8a8f98` (secondary text) | `--color-text-secondary` |
+| `#7b8089`, `#6b7079`, `#5c6370` | `--color-text-tertiary` |
+| `#5f646d`, `#4d5159`, `#4b5563`, `#454850` (text) | `--color-text-disabled` |
+| `#5a5f68`, `#4d5159` (borders, rules) | `--color-border-strong` |
+| `#0e0f11`, `#0b0c0e`, `#0d0e12`, `#020203` (backgrounds) | `--color-bg` |
+| `#141518`, `#16171b` | `--color-surface-sunken` |
+| `#18191c`, `#1d1f23` | `--color-surface` |
+| `#1f2024` | `--color-surface-raised` |
+| `#252830` | `--color-surface-overlay` |
+| `#fff` button or thumb, `#000` text on it | `--color-surface-inverse`, `--color-text-inverse` |
+| `#0b0c0e`, `#000` text on a light chip | `--color-text-inverse` |
+| `#7c818a` (shimmer) | `--color-neutral` |
+| `rgba(255,255,255,0.035 … 0.05)` | `--color-fill-1` |
+| `rgba(255,255,255,0.06 … 0.08)` | `--color-fill-2` |
+| `rgba(255,255,255,0.09 … 0.12)` | `--color-fill-3` |
+| `rgba(255,255,255,0.13 … 0.2)` | `--color-fill-4` |
+| `rgba(255,255,255,0.3 … 0.35)` | `--color-fill-5` |
+| other `rgba(255,255,255,a)` (0.4, 0.75, 0.85, 0.94), `rgba(245,246,248,a)` | `color-mix(in srgb, var(--color-text) a%, transparent)` |
+| `rgba(0,0,0,a)` (shadows, scrims, masks, `#000` masks) | `color-mix(in srgb, var(--color-island) a%, transparent)`, `var(--color-island)` |
+| `#fb923c` hub accent, `#2f8cff`, `#6366f1`, `#7c5cff`, `#a78bfa` (fills, strokes) | `--color-accent` |
+| `#fdab63` (hub primary hover) | `--color-accent-hover` |
+| `#818cf8`, `#2f8cff` (text) | `--color-accent-text` |
+| `#170c04` (text on the hub accent), `#fff` on `#2f8cff` | `--color-on-accent` |
+| `#6e56cf` (hub focus ring) | `--color-focus` |
+| `#60a5fa`, `#93c5fd` (text), `rgba(59,130,246,a)` | `--color-info-text`, `--color-info` |
+| `#22d3ee`, `#38bdf8` | `--color-info` |
+| `#22c55e`, `#34d399` (fills), `#2dd4a7`, `#1fa87a`, `#1ed760`, `rgba(34,197,94,a)`, `rgba(52,211,153,a)` | `--color-ok` |
+| `#34d399`, `#86efac` (text) | `--color-ok-text` |
+| `#f4505e`, `#ff453a`, `#ff6b5b`, `rgba(255,69,58,a)`, `rgba(244,80,94,a)` | `--color-danger` |
+| `#ff8d97`, `#ff8a80`, `#fca5a5` | `--color-danger-text` |
+| `#f5a524`, `#f7b32b`, `rgba(247,179,43,a)`, `rgba(245,165,36,a)`, `rgba(249,115,22,a)` | `--color-warn` |
+| `#f5d28a`, `#c9956a` | `--color-warn-text` |
+| `#f472b6` (unused alias `--pink`) | `--color-brand` |
+| Font stacks `--font`, `--mono`, pill `system-ui, "Segoe UI" …` | `--font-sans`, `--font-mono` |
+| `border-radius` 3 / 4 / 6 / 10 / 14 / 999 px | `--radius-xs / sm / md / lg / xl / full` |
+| `transition` 0.06 / 0.12 / 0.2 / 0.32 s | `--duration-instant / fast / normal / slow` |
+
+Hue shifts to expect: the hub's orange accent is the system's blue-indigo, the island's blue (`#2f8cff`) is the accent, and every grey is the nearest step of the text, surface or border scale.
 
 ## Moving a page or an upstream onto the system
 

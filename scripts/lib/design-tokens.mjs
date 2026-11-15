@@ -55,7 +55,8 @@ export function checkDeclaration(prop, value) {
   if (COLOUR_FN.test(v)) return `raw colour function in ${p}: ${v.replace(/\s+/g, " ")}`;
   // Named colours: any word of a colour property's value (outside var()/url()), or a
   // custom property whose whole value is one.
-  const words = v.replace(/\b(?:var|url)\([^)]*\)/gi, " ").toLowerCase().split(/[^a-z]+/);
+  // `${expr}` in a template string is code, not a colour word (`background:${MAIL_BLUE}`).
+  const words = v.replace(/\$\{[^}]*\}/g, " ").replace(/\b(?:var|url)\([^)]*\)/gi, " ").toLowerCase().split(/[^a-z]+/);
   const named = COLOUR_PROPS.test(p)
     ? words.find((w) => NAMED_COLOURS.has(w))
     : p.startsWith("--") && NAMED_COLOURS.has(v.toLowerCase()) ? v : undefined;
@@ -93,13 +94,28 @@ function cssFindings(css, offset = 0) {
 
 function scriptFindings(code, offset = 0) {
   const out = [];
+  const seen = new Set();
+  const add = (index, prop, value, quoted) => {
+    prop = kebab(prop).toLowerCase();
+    if (prop !== "font-family" && !COLOUR_PROPS.test(prop) && !prop.startsWith("--")) return;
+    // An unquoted CONSTANT (`color: GITHUB_RED`) is a reference, not a literal.
+    if (!quoted && /^[A-Z_][A-Z0-9_.]*$/.test(value.trim())) return;
+    const why = checkDeclaration(prop, value);
+    if (why && !seen.has(index)) {
+      seen.add(index);
+      out.push({ index: offset + index, why });
+    }
+  };
+  // `${expr}` in a template string is code, not a colour word: mask it, keeping offsets.
+  const text = stripJsComments(code).replace(/\$\{[^}]*\}/g, (x) => "_".repeat(x.length));
   // prop: "value" | prop: 'value' | prop: `value` | "prop: value;" inside a string
-  const re = /([a-zA-Z-]+|--[\w-]+)["']?\s*:\s*(["'`]?)([^"'`;,\n}]+)\2/g;
-  for (const m of stripJsComments(code).matchAll(re)) {
-    const prop = kebab(m[1]).toLowerCase();
-    if (prop !== "font-family" && !COLOUR_PROPS.test(prop) && !prop.startsWith("--")) continue;
-    const why = checkDeclaration(prop, m[3]);
-    if (why) out.push({ index: offset + m.index, why });
+  for (const m of text.matchAll(/([a-zA-Z-]+|--[\w-]+)["']?\s*:\s*(["'`]?)([^"'`;,\n}]+)\2/g)) add(m.index, m[1], m[3], Boolean(m[2]));
+  // Declarations inside a string literal: style: "color:#fff;width:1px", `background:${x}`.
+  for (const lit of text.matchAll(/(["'`])((?:\\.|(?!\1)[^\\])*)\1/g)) {
+    const at = lit.index + 1;
+    for (const m of lit[2].matchAll(/(?:^|[;{\s])([a-zA-Z-]+|--[\w-]+)\s*:\s*([^;{}]+?)\s*(?=[;}]|$)/g)) {
+      add(at + m.index + m[0].indexOf(m[1]), m[1], m[2], true);
+    }
   }
   return out;
 }

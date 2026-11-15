@@ -38,7 +38,7 @@ export async function dictationPage(page: HTMLElement, ctx: HubContext) {
   const record = button(t("Record a call"), () => {
     void FlowBridge.startNote().then(() => ctx.navigate("notes"), (err) => alertLine.replaceChildren(String(err)));
   }, "primary");
-  record.prepend(h("span", { class: "hub-rec", style: "background:#170c04;box-shadow:none;margin-inline-end:8px" }));
+  record.prepend(h("span", { class: "hub-rec", style: "background:var(--color-on-accent);box-shadow:none;margin-inline-end:8px" })); // Next Agent: design-system token (ADR-0012)
   const alertLine = h("div", { class: "hub-note" });
   const hello = status.userName ? t("Hello {0}", { 0: status.userName }) : t("Hello");
   page.append(ctx.hero("dictation", hello, t("Hold {0} anywhere, speak, let go: it's pasted.", { 0: key }), [record]));
@@ -132,7 +132,7 @@ function promo(ctx: HubContext): HTMLElement {
   return glowCard(
     "#FB923C",
     h("div", { style: "font:700 15px var(--font)", text: t("The Notetaker") }),
-    h("div", { class: "hub-note", style: "color:#b7bbc2", text: t("Your calls transcribed person by person, with a summary and the to-dos. No bot in the meeting.") }),
+    h("div", { class: "hub-note", style: "color:var(--color-text-secondary)", text: t("Your calls transcribed person by person, with a summary and the to-dos. No bot in the meeting.") }), // Next Agent: design-system token (ADR-0012)
     h("button", { class: "hub-link", text: t("Open the Notetaker →"), onclick: () => ctx.navigate("notes") }),
   );
 }
@@ -144,7 +144,7 @@ function setup(ctx: HubContext): HTMLElement {
   const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
   body.append(
     h("div", { style: "font:700 17px var(--font)", text: t("Dictate anywhere on your computer") }),
-    h("div", { class: "hub-note", style: "color:#b7bbc2;font-size:13px", text: t("Hold {0} in any app, speak, let go: your words are pasted where you type.", { 0: key }) }),
+    h("div", { class: "hub-note", style: "color:var(--color-text-secondary);font-size:13px", text: t("Hold {0} in any app, speak, let go: your words are pasted where you type.", { 0: key }) }), // Next Agent: design-system token (ADR-0012)
   );
   body.append(row(t("Turn on dictation"), null, toggle(status.prefs.enabled, (on) => {
     void ctx.setPrefs((p) => (p.enabled = on)).then(() => ctx.navigate("dictation"));
