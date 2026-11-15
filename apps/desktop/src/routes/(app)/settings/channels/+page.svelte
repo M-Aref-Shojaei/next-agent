@@ -103,76 +103,79 @@
     }
   }
 
-  async function remove() {
-    if (!selected) return;
-    if (!confirm(`Delete ${selected.config.name}? Its token, pairings, allow-list and activity are removed.`)) return;
+  /** Run an action; on success set `done` as the message, on failure show the error. */
+  async function run(work: () => Promise<unknown>, done?: string) {
     try {
-      await api.channelDelete(selected.config.id);
-      form = null;
-      selectedId = null;
-      await loadList();
-      message = "Channel deleted.";
+      await work();
+      if (done) message = done;
     } catch (e) {
       message = String(e);
     }
   }
 
-  async function restart() {
-    if (!selectedId) return;
-    try {
-      await api.channelRestart(selectedId);
+  async function remove() {
+    if (!selected) return;
+    if (!confirm(`Delete ${selected.config.name}? Its token, pairings, allow-list and activity are removed.`)) return;
+    const id = selected.config.id;
+    await run(async () => {
+      await api.channelDelete(id);
+      form = null;
+      selectedId = null;
       await loadList();
-    } catch (e) {
-      message = String(e);
-    }
+    }, "Channel deleted.");
+  }
+
+  async function restart() {
+    const id = selectedId;
+    if (!id) return;
+    await run(async () => {
+      await api.channelRestart(id);
+      await loadList();
+    });
   }
 
   /** Approve the request whose code the owner typed (never one picked from a list). */
   async function approveCode(event: SubmitEvent) {
     event.preventDefault();
-    if (!selectedId || !pairCode.trim()) return;
-    try {
-      const request = await api.channelPairingResolve(selectedId, pairCode.trim(), true);
+    const id = selectedId;
+    if (!id || !pairCode.trim()) return;
+    await run(async () => {
+      const request = await api.channelPairingResolve(id, pairCode.trim(), true);
       pairCode = "";
       message = `Paired ${request.label || request.senderId} (id ${request.senderId}).`;
       await loadDetails();
-    } catch (e) {
-      message = String(e);
-    }
+    });
   }
 
   async function deny(request: PairingRequest) {
-    if (!selectedId) return;
-    try {
-      await api.channelPairingResolve(selectedId, request.code, false);
+    const id = selectedId;
+    if (!id) return;
+    await run(async () => {
+      await api.channelPairingResolve(id, request.code, false);
       message = `Denied ${request.label || request.senderId}.`;
       await loadDetails();
-    } catch (e) {
-      message = String(e);
-    }
+    });
   }
 
   async function addAllowed(event: SubmitEvent) {
     event.preventDefault();
-    if (!selectedId || !newSender.trim()) return;
-    try {
-      await api.channelAllowAdd(selectedId, newSender.trim(), newLabel.trim());
+    const id = selectedId;
+    if (!id || !newSender.trim()) return;
+    await run(async () => {
+      await api.channelAllowAdd(id, newSender.trim(), newLabel.trim());
       newSender = "";
       newLabel = "";
       await loadDetails();
-    } catch (e) {
-      message = String(e);
-    }
+    });
   }
 
   async function removeAllowed(entry: AllowEntry) {
-    if (!selectedId) return;
-    try {
-      await api.channelAllowRemove(selectedId, entry.senderId);
+    const id = selectedId;
+    if (!id) return;
+    await run(async () => {
+      await api.channelAllowRemove(id, entry.senderId);
       await loadDetails();
-    } catch (e) {
-      message = String(e);
-    }
+    });
   }
 
   onMount(() => {
