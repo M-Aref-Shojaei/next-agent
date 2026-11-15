@@ -138,6 +138,11 @@ pub struct Hub {
     throttle: Duration,
 }
 
+/// How a sender is named in logs and access checks.
+fn peer_label(message: &Inbound) -> String {
+    format!("{} ({})", message.sender_label, message.sender_id)
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -305,7 +310,7 @@ impl Hub {
             return Handled::Duplicate;
         }
         let config = channel.config().clone();
-        let peer = format!("{} ({})", message.sender_label, message.sender_id);
+        let peer = peer_label(&message);
         if let Err(handled) = self.check_access(channel.as_ref(), &message, &peer).await {
             return handled;
         }
@@ -621,7 +626,7 @@ impl Hub {
         job.prompt = untrusted::task_prompt(&channel.config().name, &message, &history);
         let channel_id = job.channel_id.clone();
         let session = job.session_key.clone();
-        let peer = format!("{} ({})", message.sender_label, message.sender_id);
+        let peer = peer_label(&message);
         let typing = channel.capabilities().typing.then(|| {
             let channel = Arc::clone(&channel);
             let chat = message.chat_id.clone();
