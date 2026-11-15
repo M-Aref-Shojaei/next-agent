@@ -123,7 +123,7 @@
 <li class="block">
   <div class="row">
     <span class="twisty" class:invisible={!hasChildren}>
-      <IconButton label={collapsed ? "Expand" : "Collapse"} size="sm" aria-expanded={!collapsed} tabindex={-1} onclick={() => outliner.toggleCollapsed(block.id)}>
+      <IconButton label={collapsed ? "Expand" : "Collapse"} size="xs" aria-expanded={!collapsed} tabindex={-1} onclick={() => outliner.toggleCollapsed(block.id)}>
         <span class="chev" class:open={!collapsed}><Icon name="chevron-right" size={14} /></span>
       </IconButton>
     </span>
@@ -177,7 +177,6 @@
   .block { list-style: none; }
   .row { display: flex; align-items: flex-start; gap: var(--space-0-5); }
   .twisty { flex: none; display: flex; opacity: 0; }
-  .twisty :global(button) { width: var(--space-4); height: var(--space-5); padding: 0; }
   .row:hover .twisty, .twisty:focus-within { opacity: 1; }
   .twisty.invisible { visibility: hidden; }
   .chev { display: inline-flex; transition: transform var(--duration-fast) var(--ease-standard); }

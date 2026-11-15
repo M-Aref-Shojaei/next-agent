@@ -232,6 +232,7 @@
           <IconButton label="Delete" variant="danger"><Icon name="trash" /></IconButton>
           <IconButton label="Pin" pressed><Icon name="check" /></IconButton>
           <IconButton label="Settings" size="sm"><Icon name="settings" size={14} /></IconButton>
+          <IconButton label="Expand" size="xs"><Icon name="chevron-right" size={12} /></IconButton>
           <IconButton label="Disabled" disabled><Icon name="more" /></IconButton>
         </div>
         <div class="demo icons">

@@ -104,7 +104,7 @@ Legacy aliases (do not use in new code): `--bg --panel --sidebar --border --text
 | `--radius-xs / sm / md / lg / xl / full` | 3 / 4 / 6 / 10 / 14 / 999 px |
 | `--border-width`, `--border-width-strong` | 1px, 2px |
 | `--shadow-sm / md / lg / xl` | resting card / raised control / popover / dialog |
-| `--control-height-sm / md / lg` | 24 / 30 / 36 px, for buttons, fields and segmented controls |
+| `--control-height-xs / sm / md / lg` | 20 / 24 / 30 / 36 px; xs is for dense in-row controls (an outline twisty), the rest for buttons, fields and segmented controls |
 | `--content-max-width`, `--settings-nav-width` | 880px, 200px |
 
 ### Motion and layers
@@ -122,7 +122,7 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 | Component | Props | Use when |
 |---|---|---|
 | **Button** | `variant` primary\|secondary\|ghost\|danger, `size` sm\|md\|lg, `loading`, `block`, `disabled`, snippets `icon`, `iconEnd` | Any text action. Use one primary per view. Danger is only for destructive actions. Ghost is for toolbars and low emphasis. `loading` keeps the width, sets `aria-busy` and blocks clicks. |
-| **IconButton** | `label` (required), `variant` ghost\|secondary\|danger, `size`, `pressed` | Icon-only actions. `label` is the accessible name and tooltip. `pressed` makes it a toggle. |
+| **IconButton** | `label` (required), `variant` ghost\|secondary\|danger, `size` xs (20px)\|sm\|md\|lg, `pressed` | Icon-only actions. `size="xs"` is for dense rows. `label` is the accessible name and tooltip. `pressed` makes it a toggle. |
 | **Icon** | `name` (see `ICON_NAMES`), `size`, `label` | The built-in stroke icons. They are decorative unless `label` is set. |
 
 ### Inputs

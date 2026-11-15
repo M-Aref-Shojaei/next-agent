@@ -7,7 +7,8 @@
     /** Required: the accessible name, also shown as the native tooltip. */
     label: string;
     variant?: "ghost" | "secondary" | "danger";
-    size?: Size;
+    /** "xs" is 20px, for dense rows (an outline twisty). */
+    size?: "xs" | Size;
     /** Toggle buttons: sets aria-pressed. */
     pressed?: boolean;
     children: Snippet;
@@ -49,6 +50,7 @@
     cursor: pointer;
     transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
   }
+  .xs { width: var(--control-height-xs); height: var(--control-height-xs); border-radius: var(--radius-sm); }
   .sm { width: var(--control-height-sm); height: var(--control-height-sm); border-radius: var(--radius-sm); }
   .lg { width: var(--control-height-lg); height: var(--control-height-lg); }
   .ds-icon-btn:hover:not(:disabled) { background: var(--color-surface-hover); color: var(--color-text); border-color: transparent; }

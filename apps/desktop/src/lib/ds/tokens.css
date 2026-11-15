@@ -58,6 +58,7 @@
   --border-width-strong: 2px;
 
   /* Control heights (buttons, fields, segmented controls) */
+  --control-height-xs: 20px;
   --control-height-sm: 24px;
   --control-height-md: 30px;
   --control-height-lg: 36px;
