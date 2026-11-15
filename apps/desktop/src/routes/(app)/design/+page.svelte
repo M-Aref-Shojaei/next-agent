@@ -3,6 +3,7 @@
   import { onDestroy, untrack } from "svelte";
   import { app } from "$lib/app.svelte.ts";
   import { api, type BoardMeta } from "$lib/api.ts";
+  import { errorText } from "$lib/errors.ts";
   import DesignFrame from "$lib/components/DesignFrame.svelte";
   import {
     DIRECTION_SANDBOX,
@@ -34,7 +35,7 @@
   let tab = $state<"explore" | "edit">("explore");
   let problem = $state("");
   let notices = $state<string[]>([]);
-  const fail = (e: unknown) => (problem = String(e instanceof Error ? e.message : e));
+  const fail = (e: unknown) => (problem = errorText(e));
 
   // ---- design system ----
   let files = $state<DesignFiles | null>(null);

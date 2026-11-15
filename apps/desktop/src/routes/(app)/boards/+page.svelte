@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { api, type BoardDoc, type BoardMeta } from "$lib/api.ts";
+  import { errorText } from "$lib/errors.ts";
   import BoardCanvas from "$lib/components/BoardCanvas.svelte";
   import { judgeSave } from "$lib/boards/guard.ts";
   import { createAutosaver, type Autosaver, type SaveStatus } from "$lib/boards/autosave.ts";
@@ -45,7 +46,7 @@
   /** Bumped whenever a canvas unmounts, so a late onReady from a dead canvas is ignored. */
   let generation = 0;
 
-  const fail = (e: unknown) => (problem = String(e instanceof Error ? e.message : e));
+  const fail = (e: unknown) => (problem = errorText(e));
 
   async function loadEngine(): Promise<Engine> {
     engine ??= await import("$lib/boards/excalidraw.ts");
