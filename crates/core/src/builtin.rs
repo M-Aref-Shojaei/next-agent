@@ -45,6 +45,12 @@ pub const DEFAULT_STEP_BUDGET: usize = 50;
 /// Longest tool output fed back to the model.
 pub const TOOL_RESULT_LIMIT: usize = 16 * 1024;
 
+/// Longest final text kept as a task's summary preview.
+const LAST_TEXT_PREVIEW_CHARS: usize = 500;
+
+/// Longest goal kept in a subagent's preview.
+const GOAL_PREVIEW_CHARS: usize = 500;
+
 /// Context window assumed when the caller does not set one. Conservative:
 /// a larger real window only means compacting earlier than necessary, and a
 /// smaller one is still caught by the provider's "too long" rejection.
@@ -681,7 +687,7 @@ impl BuiltinExecutor {
         let summary = if self.last_text.is_empty() {
             "done".to_string()
         } else {
-            crate::runner::truncate(&self.last_text, 500)
+            crate::runner::truncate(&self.last_text, LAST_TEXT_PREVIEW_CHARS)
         };
         AgentStep::Done { summary }
     }
@@ -765,7 +771,7 @@ impl BuiltinExecutor {
                 subagent_id: id.clone(),
                 parent_call_id: call_id.clone(),
                 profile: profile.name.clone(),
-                goal: crate::runner::truncate(&task.goal, 500),
+                goal: crate::runner::truncate(&task.goal, GOAL_PREVIEW_CHARS),
                 depth: self.depth + 1,
             });
             run.children.push(Child {
