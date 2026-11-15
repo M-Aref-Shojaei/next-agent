@@ -2,6 +2,10 @@
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
   import {
+    Badge, Banner, Button, List, ListRow, Select, SettingsLayout, SettingsRow, SettingsSection, Switch, TextArea,
+    TextField, type Option, type SettingsNavItem,
+  } from "$lib/ds/index.ts";
+  import {
     ROLES,
     defaultSettings,
     parseList,
@@ -32,6 +36,7 @@
   let cacheEntries = $state(0);
   let refreshing = $state(false);
   let message = $state("");
+  let failed = $state(false);
 
   // Connection form. The key field is write-only: it is never filled from the backend.
   const blankConnection = () => ({
@@ -61,15 +66,27 @@
     // Every role gets an editable entry; "off" ones are dropped on save.
     for (const role of ROLES) settings.reasoning[role] ??= { effort: "off", maxTokens: null };
   }
-  onMount(() => void load().catch((e) => (message = String(e))));
+  onMount(() => void load().catch(fail));
+
+  function fail(e: unknown) {
+    message = String(e);
+    failed = true;
+  }
 
   async function attempt(work: () => Promise<void>, done: string) {
+    failed = false;
     try {
       await work();
+    } catch (e) {
+      fail(e);
+      return;
+    }
+    // The action worked; a failed reload must not read as a failed save.
+    try {
       message = done;
       await load();
     } catch (e) {
-      message = String(e);
+      fail(e);
     }
   }
 
@@ -173,11 +190,36 @@
   const updatedText = (status: CatalogStatus) =>
     status.updatedAt ? new Date(status.updatedAt * 1000).toLocaleString() : "never";
 
-  const levelOptions: Array<{ value: CavemanLevel | null; label: string }> = [
-    { value: null, label: "Off" },
+  // <Select> values are strings; "off" stands for null.
+  const levelOptions: Option<"off" | CavemanLevel>[] = [
+    { value: "off", label: "Off" },
     { value: "lite", label: "Lite" },
     { value: "full", label: "Full" },
     { value: "ultra", label: "Ultra" },
+  ];
+  const comboStrategyOptions: Option<"" | ComboStrategy>[] = [{ value: "", label: "Use the global strategy" }, ...STRATEGIES];
+  const effortOptions: Option[] = EFFORTS.map((e) => ({ value: e, label: e === "off" ? "Off (provider default)" : e }));
+  const thresholdOptions: Option[] = THRESHOLDS.map((t) => ({ value: String(t), label: `${t}${t === DEFAULT_THRESHOLD ? " (default)" : ""}` }));
+  const roleOptions: Option[] = [{ value: "", label: "All roles" }, ...ROLES.map((r) => ({ value: r, label: r }))];
+  const periodOptions: Option<"daily" | "monthly">[] = [
+    { value: "daily", label: "per day" },
+    { value: "monthly", label: "per month" },
+  ];
+  const budgetActionOptions: Option[] = [
+    { value: "block", label: "Stop with a message" },
+    { value: "cheapest", label: "Use the cheapest model in the combo" },
+  ];
+  const cap = (word: string) => word[0].toUpperCase() + word.slice(1);
+
+  const nav: SettingsNavItem[] = [
+    { id: "conns", label: "Connections", href: "#conns" },
+    { id: "roles", label: "Default model and roles", href: "#roles" },
+    { id: "combos", label: "Combos", href: "#combos" },
+    { id: "savers", label: "Token savers", href: "#savers" },
+    { id: "reasoning", label: "Reasoning", href: "#reasoning" },
+    { id: "cache", label: "Routing and caching", href: "#cache" },
+    { id: "budgets", label: "Budgets", href: "#budgets" },
+    { id: "catalog", label: "Model catalog", href: "#catalog" },
   ];
   const ROLE_HELP: Record<string, string> = {
     chat: "Agent tasks and chat (falls back to the default model)",
@@ -187,288 +229,289 @@
   };
 </script>
 
-<div class="page">
-  <h1>Providers</h1>
-  <p><a href="/settings">← Settings</a> · <a href="/usage">Usage →</a></p>
-  <p class="muted">
-    Next Agent talks to model providers directly through its built-in gateway. No external router is needed.
-    API keys are saved in the OS keychain and are never shown again.
-  </p>
-  {#if message}<p role="status">{message}</p>{/if}
+<SettingsLayout
+  title="Providers"
+  description="Next Agent talks to model providers directly through its built-in gateway. No external router is needed. API keys are saved in the OS keychain and are never shown again."
+  {nav}
+>
+  {#snippet top()}<a href="/settings">← Settings</a> · <a href="/usage">Usage →</a>{/snippet}
 
-  <section aria-labelledby="h-conns">
-    <h2 id="h-conns">Connections</h2>
+  {#if message}<Banner tone={failed ? "danger" : "info"}>{message}</Banner>{/if}
+
+  <SettingsSection id="conns" title="Connections" description="Several connections for the same provider act as accounts: the lowest priority is tried first and the next takes over after auth errors or rate limits.">
     {#if connections.length === 0}
-      <p class="muted">No providers yet. Add one below. The local Ollama and LM Studio presets need no key.</p>
+      <p class="note">No providers yet. Add one below. The local Ollama and LM Studio presets need no key.</p>
     {:else}
-      <table>
-        <thead><tr><th>Name</th><th>Provider</th><th>Endpoint</th><th>Key</th><th>Priority</th><th></th></tr></thead>
-        <tbody>
-          {#each connections as conn (conn.id)}
-            {@const result = tests[conn.id]}
-            <tr class:inactive={!conn.isActive}>
-              <td>{conn.name}{#if !conn.isActive} <span class="muted">(off)</span>{/if}</td>
-              <td>{conn.provider}</td>
-              <td><code>{conn.baseUrl}</code></td>
-              <td>{conn.hasKey ? "stored" : conn.needsKey ? "missing" : "not needed"}</td>
-              <td>{conn.priority}</td>
-              <td class="actions">
-                <button type="button" onclick={() => editConnection(conn)} aria-label="Edit {conn.name}">Edit</button>
-                <button type="button" onclick={() => testConnection(conn)} aria-label="Test {conn.name}">Test</button>
-                <button type="button" class="danger" onclick={() => removeConnection(conn)} aria-label="Remove {conn.name}">Remove</button>
-              </td>
-            </tr>
+      <List bordered={false} label="Connections">
+        {#each connections as conn (conn.id)}
+          {@const result = tests[conn.id]}
+          <ListRow
+            title={conn.name}
+            description="{conn.provider} · key {conn.hasKey ? 'stored' : conn.needsKey ? 'missing' : 'not needed'} · priority {conn.priority}"
+            disabled={!conn.isActive}
+          >
+            <code>{conn.baseUrl}</code>
+            {#if !conn.isActive}<Badge size="sm">off</Badge>{/if}
             {#if result}
-              <tr><td colspan="6" class={result === "running" ? "muted" : result.ok ? "ok" : "bad"}>
-                <span role="status">{result === "running" ? "Testing…" : result.detail}</span>
+              <span class="result {result === 'running' ? '' : result.ok ? 'ok' : 'bad'}" role="status">
+                {result === "running" ? "Testing…" : result.detail}
                 {#if result !== "running" && result.models.length}
                   <span class="muted"> · {result.models.slice(0, 8).join(", ")}{result.models.length > 8 ? "…" : ""}</span>
                 {/if}
-              </td></tr>
+              </span>
             {/if}
-          {/each}
-        </tbody>
-      </table>
+            {#snippet actions()}
+              <Button size="sm" variant="ghost" onclick={() => editConnection(conn)} aria-label="Edit {conn.name}">Edit</Button>
+              <Button size="sm" variant="ghost" onclick={() => testConnection(conn)} aria-label="Test {conn.name}">Test</Button>
+              <Button size="sm" variant="danger" onclick={() => removeConnection(conn)} aria-label="Remove {conn.name}">Remove</Button>
+            {/snippet}
+          </ListRow>
+        {/each}
+      </List>
     {/if}
+  </SettingsSection>
 
-    <h3>{form.id ? "Edit connection" : "Add a connection"}</h3>
-    <form class="grid" onsubmit={saveConnection}>
-      <label for="c-provider">Provider</label>
-      <select id="c-provider" bind:value={form.provider}>
-        {#each presets as preset (preset.id)}<option value={preset.id}>{preset.label}</option>{/each}
-      </select>
-      <label for="c-name">Name</label>
-      <input id="c-name" bind:value={form.name} placeholder={formPreset?.label ?? ""} />
-      <label for="c-url">Base URL</label>
-      <input id="c-url" bind:value={form.baseUrl} placeholder={formPreset?.baseUrl ?? ""} />
-      <label for="c-models">Models</label>
-      <input id="c-models" bind:value={form.models} placeholder={formPreset?.models.join(", ") || "model-a, model-b"} />
-      <label for="c-key">API key</label>
-      <input
-        id="c-key" type="password" autocomplete="off" bind:value={form.apiKey}
-        placeholder={form.id ? "Leave blank to keep the stored key" : formPreset?.needsKey ? "Required" : "Optional"}
-      />
-      <label for="c-priority">Priority</label>
-      <input id="c-priority" type="number" min="0" bind:value={form.priority} />
-      <span></span>
-      <div class="checks">
-        <label><input type="checkbox" bind:checked={form.isActive} /> Active</label>
-        {#if form.id}<label><input type="checkbox" bind:checked={form.clearKey} /> Remove the stored key</label>{/if}
-      </div>
-      <span></span>
-      <div class="buttons">
-        <button type="submit" class="primary">{form.id ? "Save changes" : "Add connection"}</button>
-        {#if form.id}<button type="button" onclick={() => (form = blankConnection())}>Cancel</button>{/if}
-      </div>
-    </form>
-    <p class="muted">
-      Several connections for the same provider act as accounts: the lowest priority is tried first and the
-      next takes over after auth errors or rate limits.
-    </p>
-  </section>
+  <form onsubmit={saveConnection}>
+    <SettingsSection title={form.id ? "Edit connection" : "Add a connection"}>
+      {#snippet actions()}
+        {#if form.id}<Button onclick={() => (form = blankConnection())}>Cancel</Button>{/if}
+        <Button type="submit" variant="primary">{form.id ? "Save changes" : "Add connection"}</Button>
+      {/snippet}
+      <SettingsRow label="Provider">
+        {#snippet children(c)}<Select id={c.id} bind:value={form.provider} options={presets.map((p) => ({ value: p.id, label: p.label }))} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Name">
+        {#snippet children(c)}<TextField id={c.id} bind:value={form.name} placeholder={formPreset?.label ?? ""} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Base URL">
+        {#snippet children(c)}<TextField id={c.id} mono bind:value={form.baseUrl} placeholder={formPreset?.baseUrl ?? ""} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Models">
+        {#snippet children(c)}<TextField id={c.id} bind:value={form.models} placeholder={formPreset?.models.join(", ") || "model-a, model-b"} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="API key">
+        {#snippet children(c)}
+          <TextField
+            id={c.id} type="password" autocomplete="off" mono bind:value={form.apiKey}
+            placeholder={form.id ? "Leave blank to keep the stored key" : formPreset?.needsKey ? "Required" : "Optional"}
+          />
+        {/snippet}
+      </SettingsRow>
+      <SettingsRow label="Priority">
+        {#snippet children(c)}<TextField id={c.id} type="number" min="0" bind:value={form.priority} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Active">
+        {#snippet children(c)}<Switch id={c.id} bind:checked={form.isActive} />{/snippet}
+      </SettingsRow>
+      {#if form.id}
+        <SettingsRow label="Remove the stored key">
+          {#snippet children(c)}<Switch id={c.id} bind:checked={form.clearKey} />{/snippet}
+        </SettingsRow>
+      {/if}
+    </SettingsSection>
+  </form>
 
   <datalist id="targets">
     {#each targets as target (target.value)}<option value={target.value}>{target.label}</option>{/each}
   </datalist>
 
-  <section aria-labelledby="h-roles">
-    <h2 id="h-roles">Default model and roles</h2>
-    <form class="grid" onsubmit={(e) => saveSettings(e, "Models saved.")}>
-      <label for="r-default">Default model</label>
-      <input id="r-default" list="targets" placeholder="provider/model or combo" bind:value={settings.defaultModel} />
+  <form onsubmit={(e) => saveSettings(e, "Models saved.")}>
+    <SettingsSection id="roles" title="Default model and roles" description="Write provider/model (for example anthropic/claude-sonnet-4-5) or a combo name. Empty roles use the chat role, then the default model.">
+      {#snippet actions()}<Button type="submit" variant="primary">Save models</Button>{/snippet}
+      <SettingsRow label="Default model">
+        {#snippet children(c)}<TextField id={c.id} list="targets" placeholder="provider/model or combo" bind:value={() => settings.defaultModel ?? "", (v) => (settings.defaultModel = String(v))} />{/snippet}
+      </SettingsRow>
       {#each ROLES as role (role)}
-        <label for="r-{role}">{role}</label>
-        <input id="r-{role}" list="targets" placeholder={ROLE_HELP[role]} bind:value={settings.roles[role]} />
+        <SettingsRow label={cap(role)}>
+          {#snippet children(c)}<TextField id={c.id} list="targets" placeholder={ROLE_HELP[role]} bind:value={() => settings.roles[role] ?? "", (v) => (settings.roles[role] = String(v))} />{/snippet}
+        </SettingsRow>
       {/each}
-      <span></span>
-      <div class="buttons"><button type="submit" class="primary">Save models</button></div>
-    </form>
-    <p class="muted">Write <code>provider/model</code> (for example <code>anthropic/claude-sonnet-4-5</code>) or a combo name. Empty roles use the chat role, then the default model.</p>
-  </section>
+    </SettingsSection>
+  </form>
 
-  <section aria-labelledby="h-combos">
-    <h2 id="h-combos">Combos</h2>
-    {#if combos.length === 0}
-      <p class="muted">A combo is a list of models tried in order (fallback), in rotation (round-robin), or kept per task until it fails or its answers get worse (smart).</p>
-    {:else}
-      <table>
-        <thead><tr><th>Name</th><th>Models</th><th>Strategy</th><th></th></tr></thead>
-        <tbody>
-          {#each combos as combo (combo.id)}
-            <tr>
-              <td>{combo.name}</td>
-              <td>{combo.models.join(" → ")}</td>
-              <td>{combo.strategy ?? `global (${settings.comboStrategy})`}{#if effectiveStrategy(combo.strategy, settings.comboStrategy) === "smart"}<span class="muted">&nbsp;(switch below {combo.confidenceThreshold ?? DEFAULT_THRESHOLD})</span>{/if}</td>
-              <td class="actions">
-                <button type="button" onclick={() => editCombo(combo)} aria-label="Edit combo {combo.name}">Edit</button>
-                <button type="button" class="danger" onclick={() => removeCombo(combo)} aria-label="Remove combo {combo.name}">Remove</button>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-    <form class="grid" onsubmit={saveCombo}>
-      <label for="k-name">Name</label>
-      <input id="k-name" bind:value={comboForm.name} placeholder="fast" />
-      <label for="k-models">Models (one per line)</label>
-      <textarea id="k-models" rows="3" bind:value={comboForm.models} placeholder={"groq/llama-3.3-70b-versatile\nopenai/gpt-4o-mini"}></textarea>
-      <label for="k-strategy">Strategy</label>
-      <select id="k-strategy" bind:value={comboForm.strategy}>
-        <option value="">Use the global strategy</option>
-        {#each STRATEGIES as strategy (strategy.value)}<option value={strategy.value}>{strategy.label}</option>{/each}
-      </select>
+  {#if combos.length > 0}
+    <SettingsSection title="Combos">
+      <List bordered={false} label="Combos">
+        {#each combos as combo (combo.id)}
+          <ListRow
+            title={combo.name}
+            description={combo.models.join(" → ")}
+            meta="{combo.strategy ?? `global (${settings.comboStrategy})`}{effectiveStrategy(combo.strategy, settings.comboStrategy) === 'smart' ? ` · switch below ${combo.confidenceThreshold ?? DEFAULT_THRESHOLD}` : ''}"
+          >
+            {#snippet actions()}
+              <Button size="sm" variant="ghost" onclick={() => editCombo(combo)} aria-label="Edit combo {combo.name}">Edit</Button>
+              <Button size="sm" variant="danger" onclick={() => removeCombo(combo)} aria-label="Remove combo {combo.name}">Remove</Button>
+            {/snippet}
+          </ListRow>
+        {/each}
+      </List>
+    </SettingsSection>
+  {/if}
+
+  <form onsubmit={saveCombo}>
+    <SettingsSection
+      id="combos"
+      title={comboForm.id ? "Edit combo" : "Add a combo"}
+      description="A combo is a list of models tried in order (fallback), in rotation (round-robin), or kept per task until it fails or its answers get worse (smart)."
+    >
+      {#snippet actions()}
+        {#if comboForm.id}<Button onclick={() => (comboForm = blankCombo())}>Cancel</Button>{/if}
+        <Button type="submit" variant="primary">{comboForm.id ? "Save combo" : "Add combo"}</Button>
+      {/snippet}
+      <SettingsRow label="Name">
+        {#snippet children(c)}<TextField id={c.id} bind:value={comboForm.name} placeholder="fast" />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Models (one per line)" stacked>
+        {#snippet children(c)}<TextArea id={c.id} mono rows={3} bind:value={comboForm.models} placeholder={"groq/llama-3.3-70b-versatile\nopenai/gpt-4o-mini"} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Strategy">
+        {#snippet children(c)}<Select id={c.id} bind:value={comboForm.strategy} options={comboStrategyOptions} />{/snippet}
+      </SettingsRow>
       {#if comboStrategy === "weighted"}
-        <label for="k-weights">Weights (one per model)</label>
-        <input id="k-weights" bind:value={comboForm.weights} placeholder="3, 1 (empty = equal)" />
+        <SettingsRow label="Weights (one per model)">
+          {#snippet children(c)}<TextField id={c.id} bind:value={comboForm.weights} placeholder="3, 1 (empty = equal)" />{/snippet}
+        </SettingsRow>
       {/if}
       {#if comboForm.strategy === "round-robin"}
-        <label for="k-sticky">Uses before rotating</label>
-        <input id="k-sticky" type="number" min="1" bind:value={comboForm.stickyLimit} />
+        <SettingsRow label="Uses before rotating">
+          {#snippet children(c)}<TextField id={c.id} type="number" min="1" bind:value={comboForm.stickyLimit} />{/snippet}
+        </SettingsRow>
       {/if}
       {#if comboIsSmart}
-        <label for="k-threshold">Switch when quality drops below</label>
-        <div>
-          <select id="k-threshold" bind:value={comboForm.threshold} aria-describedby="k-threshold-help">
-            {#each THRESHOLDS as t (t)}<option value={t}>{t}{t === DEFAULT_THRESHOLD ? " (default)" : ""}</option>{/each}
-          </select>
-          <p id="k-threshold-help" class="muted">Quality is the share of good answers over the last 10. Empty, refused, truncated answers and broken tool-call JSON count as bad. Higher switches sooner.</p>
-        </div>
+        <SettingsRow
+          label="Switch when quality drops below"
+          description="Quality is the share of good answers over the last 10. Empty, refused, truncated answers and broken tool-call JSON count as bad. Higher switches sooner."
+        >
+          {#snippet children(c)}
+            <Select
+              id={c.id} aria-describedby={c.describedby} options={thresholdOptions}
+              bind:value={() => String(comboForm.threshold), (v) => (comboForm.threshold = Number(v) as typeof comboForm.threshold)}
+            />
+          {/snippet}
+        </SettingsRow>
       {/if}
-      <span></span>
-      <div class="buttons">
-        <button type="submit" class="primary">{comboForm.id ? "Save combo" : "Add combo"}</button>
-        {#if comboForm.id}<button type="button" onclick={() => (comboForm = blankCombo())}>Cancel</button>{/if}
-      </div>
-    </form>
-  </section>
+    </SettingsSection>
+  </form>
 
-  <section aria-labelledby="h-savers">
-    <h2 id="h-savers">Token savers</h2>
-    <form class="grid" onsubmit={(e) => saveSettings(e, "Token savers saved.")}>
-      <span></span>
-      <label><input type="checkbox" bind:checked={settings.tokenSaver} /> Enable token savers</label>
-      <label for="s-caveman">Caveman (terse answers)</label>
-      <select id="s-caveman" bind:value={settings.caveman} disabled={!settings.tokenSaver}>
-        {#each levelOptions as option (option.label)}<option value={option.value}>{option.label}</option>{/each}
-      </select>
-      <label for="s-ponytail">Ponytail (minimal code)</label>
-      <select id="s-ponytail" bind:value={settings.ponytail} disabled={!settings.tokenSaver}>
-        {#each levelOptions as option (option.label)}<option value={option.value}>{option.label}</option>{/each}
-      </select>
-      <span></span>
-      <label><input type="checkbox" bind:checked={settings.rtk} disabled={!settings.tokenSaver} /> Compress tool output (RTK)</label>
-      <span></span>
-      <label><input type="checkbox" bind:checked={settings.cacheControl} disabled={!settings.tokenSaver} /> Anthropic prompt caching</label>
-      <label for="s-strategy">Global combo strategy</label>
-      <select id="s-strategy" bind:value={settings.comboStrategy}>
-        {#each STRATEGIES as strategy (strategy.value)}<option value={strategy.value}>{strategy.label}</option>{/each}
-      </select>
-      <span></span>
-      <div class="buttons"><button type="submit" class="primary">Save token savers</button></div>
-    </form>
-    <p class="muted">Savers fail open: if one errors, the request is sent unchanged.</p>
-  </section>
+  <form onsubmit={(e) => saveSettings(e, "Token savers saved.")}>
+    <SettingsSection id="savers" title="Token savers" description="Savers fail open: if one errors, the request is sent unchanged.">
+      {#snippet actions()}<Button type="submit" variant="primary">Save token savers</Button>{/snippet}
+      <SettingsRow label="Enable token savers">
+        {#snippet children(c)}<Switch id={c.id} bind:checked={settings.tokenSaver} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Caveman (terse answers)" disabled={!settings.tokenSaver}>
+        {#snippet children(c)}
+          <Select id={c.id} options={levelOptions} disabled={!settings.tokenSaver}
+            bind:value={() => settings.caveman ?? "off", (v) => (settings.caveman = v === "off" ? null : v)} />
+        {/snippet}
+      </SettingsRow>
+      <SettingsRow label="Ponytail (minimal code)" disabled={!settings.tokenSaver}>
+        {#snippet children(c)}
+          <Select id={c.id} options={levelOptions} disabled={!settings.tokenSaver}
+            bind:value={() => settings.ponytail ?? "off", (v) => (settings.ponytail = v === "off" ? null : v)} />
+        {/snippet}
+      </SettingsRow>
+      <SettingsRow label="Compress tool output (RTK)" disabled={!settings.tokenSaver}>
+        {#snippet children(c)}<Switch id={c.id} bind:checked={settings.rtk} disabled={!settings.tokenSaver} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Anthropic prompt caching" disabled={!settings.tokenSaver}>
+        {#snippet children(c)}<Switch id={c.id} bind:checked={settings.cacheControl} disabled={!settings.tokenSaver} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Global combo strategy">
+        {#snippet children(c)}<Select id={c.id} bind:value={settings.comboStrategy} options={STRATEGIES} />{/snippet}
+      </SettingsRow>
+    </SettingsSection>
+  </form>
 
-  <section aria-labelledby="h-reasoning">
-    <h2 id="h-reasoning">Reasoning</h2>
-    <form class="grid" onsubmit={(e) => saveSettings(e, "Reasoning saved.")}>
+  <form onsubmit={(e) => saveSettings(e, "Reasoning saved.")}>
+    <SettingsSection id="reasoning" title="Reasoning" description="One setting per role, mapped per provider: OpenAI reasoning_effort, Anthropic thinking budget, Gemini thinking level or budget. A token budget wins over the effort.">
+      {#snippet actions()}<Button type="submit" variant="primary">Save reasoning</Button>{/snippet}
       {#each ROLES as role (role)}
-        <label for="t-{role}">{role}</label>
-        <div class="checks">
-          <select id="t-{role}" bind:value={settings.reasoning[role].effort}>
-            {#each EFFORTS as effort (effort)}<option value={effort}>{effort === "off" ? "Off (provider default)" : effort}</option>{/each}
-          </select>
-          <label for="t-{role}-tokens" class="muted">or budget</label>
-          <input id="t-{role}-tokens" type="number" min="0" step="1024" placeholder="tokens" bind:value={settings.reasoning[role].maxTokens} />
-        </div>
+        <SettingsRow label={cap(role)}>
+          {#snippet children(c)}
+            <div class="compact">
+              <Select id={c.id} bind:value={settings.reasoning[role].effort} options={effortOptions} />
+              <TextField aria-label="Token budget for {role}" type="number" min="0" step="1024" placeholder="or tokens" bind:value={settings.reasoning[role].maxTokens} />
+            </div>
+          {/snippet}
+        </SettingsRow>
       {/each}
-      <span></span>
-      <div class="buttons"><button type="submit" class="primary">Save reasoning</button></div>
-    </form>
-    <p class="muted">One setting per role, mapped per provider: OpenAI <code>reasoning_effort</code>, Anthropic thinking budget, Gemini thinking level or budget. A token budget wins over the effort.</p>
-  </section>
+    </SettingsSection>
+  </form>
 
-  <section aria-labelledby="h-cache">
-    <h2 id="h-cache">Routing and caching</h2>
-    <form class="grid" onsubmit={(e) => saveSettings(e, "Caching saved.")}>
-      <span></span>
-      <label><input type="checkbox" bind:checked={settings.cacheAffinity} /> Keep a conversation on one account (prompt-cache affinity)</label>
-      <span></span>
-      <label><input type="checkbox" bind:checked={settings.responseCache.enabled} /> Reuse identical answers (response cache)</label>
-      <span></span>
-      <label><input type="checkbox" bind:checked={settings.responseCache.anyTemperature} disabled={!settings.responseCache.enabled} /> Also for requests with a temperature above 0</label>
-      <label for="c-ttl">Keep answers for (minutes)</label>
-      <input id="c-ttl" type="number" min="1" value={Math.round(settings.responseCache.ttlSecs / 60)}
-        oninput={(e) => (settings.responseCache.ttlSecs = Math.max(1, Number(e.currentTarget.value)) * 60)} disabled={!settings.responseCache.enabled} />
-      <label for="c-max">Most answers kept</label>
-      <input id="c-max" type="number" min="1" bind:value={settings.responseCache.maxEntries} disabled={!settings.responseCache.enabled} />
-      <span></span>
-      <div class="buttons">
-        <button type="submit" class="primary">Save caching</button>
-        <button type="button" onclick={clearCache} disabled={cacheEntries === 0}>Clear cache ({cacheEntries})</button>
-      </div>
-    </form>
-    <p class="muted">Only byte-identical requests reuse an answer. Off by default.</p>
-  </section>
+  <form onsubmit={(e) => saveSettings(e, "Caching saved.")}>
+    <SettingsSection id="cache" title="Routing and caching" description="Only byte-identical requests reuse an answer. Off by default.">
+      {#snippet actions()}
+        <Button onclick={clearCache} disabled={cacheEntries === 0}>Clear cache ({cacheEntries})</Button>
+        <Button type="submit" variant="primary">Save caching</Button>
+      {/snippet}
+      <SettingsRow label="Prompt-cache affinity" description="Keep a conversation on one account.">
+        {#snippet children(c)}<Switch id={c.id} aria-describedby={c.describedby} bind:checked={settings.cacheAffinity} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Response cache" description="Reuse identical answers.">
+        {#snippet children(c)}<Switch id={c.id} aria-describedby={c.describedby} bind:checked={settings.responseCache.enabled} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Also for requests with a temperature above 0" disabled={!settings.responseCache.enabled}>
+        {#snippet children(c)}<Switch id={c.id} bind:checked={settings.responseCache.anyTemperature} disabled={!settings.responseCache.enabled} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Keep answers for (minutes)" disabled={!settings.responseCache.enabled}>
+        {#snippet children(c)}
+          <TextField id={c.id} type="number" min="1" disabled={!settings.responseCache.enabled}
+            value={Math.round(settings.responseCache.ttlSecs / 60)}
+            oninput={(e) => (settings.responseCache.ttlSecs = Math.max(1, Number(e.currentTarget.value)) * 60)} />
+        {/snippet}
+      </SettingsRow>
+      <SettingsRow label="Most answers kept" disabled={!settings.responseCache.enabled}>
+        {#snippet children(c)}<TextField id={c.id} type="number" min="1" bind:value={settings.responseCache.maxEntries} disabled={!settings.responseCache.enabled} />{/snippet}
+      </SettingsRow>
+    </SettingsSection>
+  </form>
 
-  <section aria-labelledby="h-budgets">
-    <h2 id="h-budgets">Budgets</h2>
-    <form class="grid" onsubmit={(e) => saveSettings(e, "Budgets saved.")}>
+  <form onsubmit={(e) => saveSettings(e, "Budgets saved.")}>
+    <SettingsSection id="budgets" title="Budgets" description="Uses the estimated costs on the Usage page, plus the estimated cost of requests still running. You get a warning at 80%. If spend cannot be read, requests are stopped.">
+      {#snippet actions()}
+        <Button onclick={addBudget}>Add budget</Button>
+        <Button type="submit" variant="primary">Save budgets</Button>
+      {/snippet}
       {#each settings.budgets as budget, i (i)}
-        <label for="b-{i}-limit">Budget {i + 1}</label>
-        <div class="checks">
-          <select aria-label="Role for budget {i + 1}" bind:value={budget.role}>
-            <option value={null}>All roles</option>
-            {#each ROLES as role (role)}<option value={role}>{role}</option>{/each}
-          </select>
-          <select aria-label="Period for budget {i + 1}" bind:value={budget.period}>
-            <option value="daily">per day</option>
-            <option value="monthly">per month</option>
-          </select>
-          <span>$</span>
-          <input id="b-{i}-limit" type="number" min="0" step="0.5" bind:value={budget.limitUsd} />
-          <button type="button" class="danger" onclick={() => (settings.budgets = settings.budgets.filter((_, j) => j !== i))}>Remove</button>
-        </div>
+        <SettingsRow label="Budget {i + 1}">
+          {#snippet children(c)}
+            <div class="compact">
+              <Select aria-label="Role for budget {i + 1}" options={roleOptions}
+                bind:value={() => budget.role ?? "", (v) => (budget.role = v === "" ? null : (v as (typeof ROLES)[number]))} />
+              <Select aria-label="Period for budget {i + 1}" bind:value={budget.period} options={periodOptions} />
+              <TextField id={c.id} aria-label="Limit in dollars for budget {i + 1}" type="number" min="0" step="0.5" bind:value={budget.limitUsd}>
+                {#snippet prefix()}$&nbsp;{/snippet}
+              </TextField>
+            </div>
+            <Button variant="danger" onclick={() => (settings.budgets = settings.budgets.filter((_, j) => j !== i))}>Remove</Button>
+          {/snippet}
+        </SettingsRow>
       {/each}
-      <label for="b-action">When a budget is reached</label>
-      <select id="b-action" bind:value={settings.budgetAction}>
-        <option value="block">Stop with a message</option>
-        <option value="cheapest">Use the cheapest model in the combo</option>
-      </select>
-      <span></span>
-      <label><input type="checkbox" bind:checked={settings.budgetRefuseUnpriced} /> Refuse models without a known price while a budget is set</label>
-      <span></span>
-      <div class="buttons">
-        <button type="button" onclick={addBudget}>Add budget</button>
-        <button type="submit" class="primary">Save budgets</button>
-      </div>
-    </form>
-    <p class="muted">Uses the estimated costs on the Usage page, plus the estimated cost of requests still running. You get a warning at 80%. If spend cannot be read, requests are stopped.</p>
-  </section>
+      <SettingsRow label="When a budget is reached">
+        {#snippet children(c)}<Select id={c.id} bind:value={settings.budgetAction} options={budgetActionOptions} />{/snippet}
+      </SettingsRow>
+      <SettingsRow label="Refuse models without a known price while a budget is set">
+        {#snippet children(c)}<Switch id={c.id} bind:checked={settings.budgetRefuseUnpriced} />{/snippet}
+      </SettingsRow>
+    </SettingsSection>
+  </form>
 
-  <section aria-labelledby="h-catalog">
-    <h2 id="h-catalog">Model catalog</h2>
-    <p>{catalog.models} models imported · last refresh: {updatedText(catalog)}</p>
-    <div class="buttons">
-      <button type="button" class="primary" onclick={refreshCatalog} disabled={refreshing}>{refreshing ? "Refreshing…" : "Refresh from OpenRouter"}</button>
-    </div>
-    <p class="muted">Downloads OpenRouter's public model list once (no API key is sent) to fill in prices, context windows and capabilities. It is kept only on this computer. Your own <code>pricing.json</code> wins over it.</p>
-  </section>
-</div>
+  <SettingsSection id="catalog" title="Model catalog" description="Downloads OpenRouter's public model list once (no API key is sent) to fill in prices, context windows and capabilities. It is kept only on this computer. Your own pricing.json wins over it.">
+    <SettingsRow label="{catalog.models} models imported" description="Last refresh: {updatedText(catalog)}">
+      {#snippet children()}
+        <Button variant="primary" onclick={refreshCatalog} loading={refreshing}>{refreshing ? "Refreshing…" : "Refresh from OpenRouter"}</Button>
+      {/snippet}
+    </SettingsRow>
+  </SettingsSection>
+</SettingsLayout>
 
 <style>
-  .page { padding: 20px 28px; overflow: auto; max-width: 900px; display: grid; gap: 14px; align-content: start; }
-  section { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--panel); }
-  h3 { font-size: 14px; margin: 14px 0 4px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  td code { font-size: 12px; word-break: break-all; }
-  tr.inactive td { opacity: 0.6; }
-  .actions { white-space: nowrap; display: flex; gap: 4px; }
-  .grid { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 8px; align-items: center; margin-top: 8px; }
-  .checks, .buttons { display: flex; gap: 12px; align-items: center; }
-  textarea { font: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
-  select { font: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; }
-  .ok { color: var(--ok); } .bad { color: var(--danger); }
+  .note { margin: 0; padding: var(--space-3) var(--space-4); color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+  .compact { --ds-control-width: 180px; display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: flex-end; }
+  .muted { color: var(--color-text-tertiary); }
+  code { font-family: var(--font-mono); font-size: var(--font-size-xs); word-break: break-all; }
+  .result { font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+  .result.ok { color: var(--color-ok-text); }
+  .result.bad { color: var(--color-danger-text); }
 </style>
