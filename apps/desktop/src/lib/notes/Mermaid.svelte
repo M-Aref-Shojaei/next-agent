@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Banner } from "$lib/ds/index.ts";
   // Mermaid (MIT) is loaded on first use. `securityLevel: "strict"` makes it sanitise the
   // diagram text and the SVG; the CSP (`default-src 'self'`) keeps anything remote out.
   let { code }: { code: string } = $props();
@@ -34,7 +35,7 @@
 </script>
 
 {#if error}
-  <div class="err" role="alert">Mermaid: {error}</div>
+  <Banner tone="danger">Mermaid: {error}</Banner>
   <pre>{code}</pre>
 {:else if svg}
   <div class="mermaid">{@html svg}</div>
@@ -43,8 +44,7 @@
 {/if}
 
 <style>
-  .mermaid { overflow-x: auto; padding: 6px 0; }
+  .mermaid { overflow-x: auto; padding: var(--space-1-5) 0; }
   .mermaid :global(svg) { max-width: 100%; height: auto; }
-  .err { color: var(--danger); font-size: 12px; }
-  pre { margin: 4px 0; padding: 8px; background: var(--sidebar); border-radius: 6px; overflow: auto; font-size: 12px; }
+  pre { margin: var(--space-1) 0; padding: var(--space-2); background: var(--color-surface-sunken); border-radius: var(--radius-md); overflow: auto; font-size: var(--font-size-sm); }
 </style>

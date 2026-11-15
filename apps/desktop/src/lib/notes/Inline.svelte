@@ -26,10 +26,10 @@
 {/each}
 
 <style>
-  .ref { color: var(--accent); text-decoration: none; }
+  .ref { color: var(--color-accent-text); text-decoration: none; }
   .ref:hover { text-decoration: underline; }
   .br { opacity: 0.45; }
-  .tag { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 4px; padding: 0 4px; }
-  code { background: var(--sidebar); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-size: 0.92em; }
-  .url { color: var(--accent); text-decoration: underline dotted; cursor: default; }
+  .tag { background: var(--color-accent-subtle); border-radius: var(--radius-sm); padding: 0 var(--space-1); }
+  code { background: var(--color-surface-sunken); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); padding: 0 var(--space-1); }
+  .url { color: var(--color-accent-text); text-decoration: underline dotted; cursor: default; }
 </style>

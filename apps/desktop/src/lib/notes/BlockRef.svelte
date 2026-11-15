@@ -32,7 +32,8 @@
 {/if}
 
 <style>
-  .blockref { all: unset; cursor: pointer; border-bottom: 1px solid var(--accent); color: var(--text); }
-  .blockref:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-  .missing { color: var(--muted); font-size: 0.9em; }
+  .blockref { all: unset; cursor: pointer; border-bottom: var(--border-width) solid var(--color-accent); color: var(--color-text); }
+  .blockref:hover { background: var(--color-accent-subtle); }
+  .blockref:focus-visible { outline: var(--border-width-strong) solid var(--color-focus); outline-offset: 1px; }
+  .missing { color: var(--color-text-secondary); font-size: 0.9em; }
 </style>

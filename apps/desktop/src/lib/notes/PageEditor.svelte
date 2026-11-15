@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { api } from "$lib/api.ts";
+  import { Badge, Banner, Button } from "$lib/ds/index.ts";
   import Backlinks from "./Backlinks.svelte";
   import Block from "./Block.svelte";
   import { isHiddenProperty } from "./content.ts";
@@ -83,18 +84,18 @@
 <article class="page" class:compact>
   <header>
     {#if compact}
-      <h2><button class="title" onclick={() => ctx.open(name)}>{view?.name ?? name}</button></h2>
+      <h2><Button variant="ghost" onclick={() => ctx.open(name)}>{view?.name ?? name}</Button></h2>
     {:else}
       <h1>{view?.name ?? name}</h1>
     {/if}
     <span class="status" aria-live="polite">
-      {#if outliner.status === "dirty" || outliner.status === "saving"}Saving…{:else if outliner.status === "saved"}Saved{:else if outliner.status === "error"}<span class="err">Not saved</span>{/if}
+      {#if outliner.status === "dirty" || outliner.status === "saving"}Saving…{:else if outliner.status === "saved"}Saved{:else if outliner.status === "error"}<Badge tone="danger">Not saved</Badge>{/if}
     </span>
   </header>
-  {#if outliner.error}<div class="err" role="alert">Could not save: {outliner.error}</div>{/if}
-  {#if problem}<div class="err" role="alert">{problem}</div>{/if}
+  {#if outliner.error}<Banner tone="danger">Could not save: {outliner.error}</Banner>{/if}
+  {#if problem}<Banner tone="danger">{problem}</Banner>{/if}
   {#if extra.length}
-    <div class="props">{#each extra as p (p.rawKey)}<span><b>{p.key}</b> {p.value}</span>{/each}</div>
+    <div class="props">{#each extra as p (p.rawKey)}<span><Badge size="sm">{p.key}</Badge> {p.value}</span>{/each}</div>
   {/if}
   {#if missing && !compact}<p class="muted hint">This page has no file yet. Start typing to create it.</p>{/if}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -108,17 +109,13 @@
 </article>
 
 <style>
-  .page { padding-bottom: 12px; }
-  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
-  h1 { font-size: 26px; font-weight: 700; }
-  h2 { font-size: 17px; font-weight: 650; }
-  .title { all: unset; cursor: pointer; }
-  .title:hover { color: var(--accent); }
-  .status { margin-left: auto; font-size: 11px; color: var(--muted); }
-  .err { color: var(--danger); font-size: 12px; }
-  .props { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
-  .props b { font-weight: 600; background: var(--sidebar); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; margin-right: 4px; }
-  .hint { font-size: 12px; margin: 0 0 6px; }
-  .outline { margin: 0; padding: 0; min-height: 28px; }
-  .compact { border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+  .page { padding-bottom: var(--space-3); }
+  header { display: flex; align-items: baseline; gap: var(--space-3); margin-bottom: var(--space-2); }
+  h2 { font-size: var(--font-size-lg); }
+  h2 :global(button) { font-size: inherit; font-weight: inherit; padding-inline: var(--space-1-5); margin-inline: calc(var(--space-1-5) * -1); }
+  .status { margin-left: auto; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+  .props { display: flex; gap: var(--space-2); flex-wrap: wrap; font-size: var(--font-size-sm); color: var(--color-text-secondary); margin-bottom: var(--space-2); }
+  .hint { font-size: var(--font-size-sm); margin: 0 0 var(--space-1-5); }
+  .outline { margin: 0; padding: 0; min-height: var(--space-6); }
+  .compact { border-bottom: var(--border-width) solid var(--color-border); margin-bottom: var(--space-4); }
 </style>
