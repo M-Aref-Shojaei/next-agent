@@ -28,6 +28,7 @@ A local-first AI workstation: coding agents working on a local repo, a Markdown 
 - [[Vault Documentation Service]] — automatic task records in Markdown
 - [[Process Manager]] — sidecar lifecycle and health checks
 - [[Desktop UI]] — layout, mode badge, Shift+Tab cycling, diff reviewer
+- [[Design System]] — tokens, components and the one-design-system rule for every screen (incl. vendored upstreams)
 
 ## Decisions (ADRs)
 - [[ADR-0000 Template]]
@@ -40,6 +41,7 @@ A local-first AI workstation: coding agents working on a local repo, a Markdown 
 - [[ADR-0007 Minimize Sidecars in M1]]
 - [[ADR-0008 Modular Boundaries For Upstream Sync]]
 - [[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]]
+- [[ADR-0012 One Design System]]
 
 ## Upstream
 - [[Upstream Evaluation]] (superseded) · [[9Router]] · [[OpenRouter]] · [[OmniRoute]] · [[opencode]] · [[Hermes Agent]] · [[OpenClaw]] · [[Coucou]] · [[Logseq]] · [[Open Design]] · [[Design Studio Sources]] — opencode, 9router, openclaw, hermes-agent, coucou, Logseq

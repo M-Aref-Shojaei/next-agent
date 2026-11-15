@@ -98,6 +98,12 @@
       <a href="/settings/upstreams">Upstreams</a> page. Nothing is applied automatically.</p>
   </section>
 
+  <section aria-labelledby="h-design">
+    <h2 id="h-design">Design system</h2>
+    <p>Every token and component the app's screens are built from, in light and dark, on the
+      <a href="/settings/design-system">Design system</a> page.</p>
+  </section>
+
   <section aria-labelledby="h-vault">
     <h2 id="h-vault">Vault</h2>
     <form onsubmit={saveVault}>

@@ -7,6 +7,7 @@ status: draft
 # Desktop UI
 
 SvelteKit (SPA via `adapter-static`) + Vite inside Tauri. See [[ADR-0002 SvelteKit Frontend]].
+Every screen is built from the design system in `apps/desktop/src/lib/ds` ([[Design System]], [[ADR-0012 One Design System]]).
 
 ## Layout
 ```

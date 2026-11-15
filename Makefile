@@ -8,6 +8,7 @@ check:
 	node scripts/check-policy-parity.mjs
 	node scripts/check-boundaries.mjs
 	node scripts/check-no-coucou-assets.mjs
+	node scripts/check-design-tokens.mjs
 	node scripts/gen-capabilities.mjs --check
 	node scripts/gen-topology.mjs --check
 
