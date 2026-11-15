@@ -214,7 +214,7 @@ pub fn colors_in(value: &str) -> Vec<String> {
                 continue;
             }
         }
-        i += 1;
+        i += lower[i..].chars().next().map_or(1, char::len_utf8);
     }
     found
 }
@@ -298,6 +298,7 @@ mod tests {
         );
         assert_eq!(colors_in("#ab #abcde #zzz"), Vec::<String>::new());
         assert_eq!(colors_in("var(--x)"), Vec::<String>::new());
+        assert_eq!(colors_in("\"→\" #abc"), vec!["#abc"]);
         assert!(is_color_value("#3B5BDB"));
         assert!(is_color_value("hsl(220 50% 40%)"));
         assert!(!is_color_value("1px solid #fff"));
