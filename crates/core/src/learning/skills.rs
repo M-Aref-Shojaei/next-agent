@@ -25,6 +25,7 @@
 use crate::edit_match;
 use crate::learning::threats::first_threat_message;
 use crate::learning::yaml::{self, Yaml};
+use crate::learning::SECS_PER_DAY;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -1700,8 +1701,8 @@ pub enum Transition {
 /// touched; archiving is the most destructive outcome.
 #[must_use]
 pub fn curate(facts: &[UsageFacts], now: i64) -> Vec<(String, Transition)> {
-    let stale_cutoff = now - STALE_AFTER_DAYS * 86_400;
-    let archive_cutoff = now - ARCHIVE_AFTER_DAYS * 86_400;
+    let stale_cutoff = now - STALE_AFTER_DAYS * SECS_PER_DAY;
+    let archive_cutoff = now - ARCHIVE_AFTER_DAYS * SECS_PER_DAY;
     facts
         .iter()
         .filter(|f| f.agent_created && !f.pinned && f.state != "archived")

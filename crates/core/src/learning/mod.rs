@@ -22,6 +22,9 @@ pub use tools::{LearnChange, Learning, LearningTools, ToolSet};
 
 use serde_json::{json, Value};
 
+/// Seconds in a day, for the learning tools' age cut-offs.
+pub const SECS_PER_DAY: i64 = 86_400;
+
 /// The JSON a learning tool returns on failure.
 pub(crate) fn fail(message: impl Into<String>) -> Value {
     json!({"success": false, "error": message.into()})

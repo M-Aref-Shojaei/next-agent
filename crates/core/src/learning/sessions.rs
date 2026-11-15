@@ -8,6 +8,7 @@
 //! (one session) and browse (recent sessions). Search never leaves the
 //! current workspace.
 
+use crate::learning::SECS_PER_DAY;
 use crate::llm::ChatMessage;
 use crate::store::{MessageHit, MessageRow, MessageSearch, SearchSort, SessionRow, Store};
 use serde_json::{json, Value};
@@ -339,8 +340,8 @@ fn time_bound(value: &str, now: i64) -> Result<i64, String> {
         if let Ok(n) = lower[..lower.len() - 1].trim().parse::<i64>() {
             let secs = match unit {
                 'h' => 3_600,
-                'd' => 86_400,
-                _ => 604_800,
+                'd' => SECS_PER_DAY,
+                _ => 7 * SECS_PER_DAY,
             };
             return Ok(now - n.saturating_mul(secs));
         }
