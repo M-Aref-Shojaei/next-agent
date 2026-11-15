@@ -65,13 +65,14 @@ class NotesStore {
       throw e;
     }
     await this.refreshPages();
-    this.unlisten?.();
-    this.unlisten = await api.onGraphChanged((files) => {
+    const next = await api.onGraphChanged((files) => {
       this.changed = files;
       this.version++;
       if (this.timer) clearTimeout(this.timer);
       this.timer = setTimeout(() => void this.refreshPages(), 250);
     });
+    this.unlisten?.();
+    this.unlisten = next;
     this.phase = "ready";
   }
 
