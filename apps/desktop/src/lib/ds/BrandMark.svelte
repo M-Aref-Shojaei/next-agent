@@ -1,6 +1,7 @@
 <script lang="ts">
-  // The Next Agent brand mark: the red gradient orb the island shows at rest
-  // (IslandMascot.svelte, tone "rest"). Static here; the island animates it.
+  // The Next Agent logo (static/brand/logo.png, made from
+  // src-tauri/icons/source/logo.png). The island's resting orb is a separate
+  // mark: IslandMascot.svelte with --orb-gradient.
   let {
     size = 32,
     /** Accessible name; decorative when omitted. */
@@ -8,21 +9,21 @@
   }: { size?: number; label?: string } = $props();
 </script>
 
-<span
+<img
   class="ds-brand"
-  style:width="{size}px"
-  style:height="{size}px"
-  role={label ? "img" : undefined}
-  aria-label={label}
+  src="/brand/logo.png"
+  width={size}
+  height={size}
+  alt={label ?? ""}
   aria-hidden={label ? undefined : "true"}
-></span>
+  draggable="false"
+/>
 
 <style>
   .ds-brand {
     display: inline-block;
     flex: none;
-    border-radius: var(--radius-full);
-    background: var(--brand-gradient);
-    box-shadow: 0 0 6px var(--color-brand);
+    object-fit: contain;
+    user-select: none;
   }
 </style>

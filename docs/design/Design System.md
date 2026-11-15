@@ -59,7 +59,7 @@ In CSS, use tokens only:
 3. **Status by colour plus text or icon.** Never colour alone, for colour-blind users and screen readers.
 4. **Accessible by default.** Every control has a name, a role, keyboard support and a visible focus ring (`--focus-ring`). Motion respects `prefers-reduced-motion`.
 5. **Native first.** System fonts (the CSP forbids web fonts), native `<dialog>`, `<select>`, radio and checkbox inputs where they behave well.
-6. **Accent is blue; brand is red.** The interactive accent is blue-indigo. Red means danger, so the brand red (the island orb) appears only as the brand mark: `--brand-gradient` and `<BrandMark>`.
+6. **Accent is blue; brand is the logo.** The interactive accent is blue-indigo. The brand is the owner's Next Agent logo (blue → cyan → teal, with violet and purple): `--color-brand-*`, `--brand-gradient` and `<BrandMark>`. The island's resting orb keeps its own red (`--orb-*`); red elsewhere means danger.
 
 ## Themes
 
@@ -82,7 +82,8 @@ In CSS, use tokens only:
 | Misc | `focus`, `scrim`, `selection`, `control-thumb` | Focus ring, dialog backdrop, text selection, switch and slider thumbs. |
 | Fill | `fill-1` … `fill-5` | Translucent washes over any surface: hover, tracks, hairlines, scrollbar thumbs. About 4 / 7 / 10 / 16 / 30 % of the text colour (dark ink in light, white in dark). |
 | Island | `island` | The fixed black of Coucou's island: it joins the hardware notch, so it is the same in every theme. Also the ink of the island's shadows and masks. |
-| Brand | `brand`, `brand-2`, plus `--brand-sheen` and `--brand-gradient` | The red orb only. `--brand-sheen` is the white highlight over the conic gradient; `IslandMascot` reuses it for its other tones. |
+| Brand | `brand-blue` `#136AEF`, `brand-cyan` `#0B9FE1`, `brand-teal` `#11CAB2`, `brand-violet` `#5548EB`, `brand-purple` `#8048D6` (measured from the logo); `brand` (= blue), `brand-2` (= teal); `--brand-gradient` | Logo colours: brand surfaces and illustrations, never controls. |
+| Island orb | `orb`, `orb-2`, `--orb-gradient`, `--brand-sheen` | The red resting orb beside the notch (`IslandMascot`) and the hub sidebar orb. `--brand-sheen` is the white highlight; `IslandMascot` reuses it for its other tones. |
 
 Derived: `--focus-ring` (a two-layer box-shadow) and `--focus-ring-inset`.
 
@@ -174,7 +175,7 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 | **Tabs** | `tabs: {id,label,disabled?,badge?}[]`, bindable `value`, `label`, snippet `children(activeId)` | Switching views of the same object. Arrow keys, Home and End move between tabs. Use SettingsLayout's nav for page-level navigation instead. |
 | **Dialog** | bindable `open`, `title`, `description`, `confirmLabel`, `cancelLabel`, `tone` default\|danger, `size` md\|lg (lg: a diff or a table), `busy`, `hideConfirm`, `confirmDisabled`, `onconfirm` (may be async), `oncancel`, snippet `children` | Confirming a consequential action. It uses native `<dialog>`, which traps focus and closes on Esc. `danger` focuses Cancel first and sets `role="alertdialog"`. `confirmDisabled` keeps Confirm off until the dialog's own condition holds (a typed name matches). |
 | **Tooltip** | `text`, `placement` top\|bottom, snippet `children({describedby})` | Explaining an icon. Never hide required information in a tooltip. |
-| **BrandMark** | `size`, `label` | The red orb as a static brand mark. |
+| **BrandMark** | `size`, `label` | The Next Agent logo (`static/brand/logo.png`), e.g. the sidebar header, About and empty states. |
 
 Pure helpers (tested in `apps/desktop/tests/ds.test.ts`):
 

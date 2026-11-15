@@ -3,7 +3,7 @@
   import { page } from "$app/state";
   import { app } from "$lib/app.svelte.ts";
   import { upstreams } from "$lib/upstreams.svelte.ts";
-  import { Badge, Button, List, ListRow, StatusDot, TextField } from "$lib/ds/index.ts";
+  import { Badge, BrandMark, Button, List, ListRow, StatusDot, TextField } from "$lib/ds/index.ts";
   import type { Tone } from "$lib/ds/types.ts";
   onMount(() => void upstreams.init());
   let path = $state("");
@@ -25,6 +25,7 @@
 </script>
 
 <nav class="sidebar" aria-label="Workspaces and tasks">
+  <a class="brand" href="/"><BrandMark size={24} /><span>Next Agent</span></a>
   <h2>Workspaces</h2>
   {#if app.workspaces.length}
     <List bordered={false} label="Workspaces">
@@ -69,6 +70,16 @@
 </nav>
 
 <style>
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2) var(--space-3);
+    color: var(--color-text);
+    font-weight: var(--font-weight-semibold);
+    text-decoration: none;
+  }
+  .brand:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
   .sidebar {
     flex: 1;
     min-width: 0;

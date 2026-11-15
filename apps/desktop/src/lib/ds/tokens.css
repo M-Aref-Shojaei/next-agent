@@ -5,8 +5,9 @@
  * var(--token). Themes: light by default, dark from prefers-color-scheme, and
  * either forced with <html data-theme="light|dark">.
  *
- * Accent: interactive blue-indigo. The brand red lives only in the brand
- * gradient (the island orb), because red already means "danger" here.
+ * Accent: interactive blue-indigo. Brand: the Next Agent logo's blue → cyan →
+ * teal with violet/purple (static/brand/logo.png). The island's resting orb
+ * keeps its own red gradient (--orb-*), the owner's choice for the notch.
  */
 
 /* ---------- Theme-independent scales ---------- */
@@ -173,13 +174,30 @@
   --color-fill-4: rgb(16 18 24 / 0.16);
   --color-fill-5: rgb(16 18 24 / 0.3);
 
-  /* Brand: the red island orb (IslandMascot.svelte, tone "rest"). */
-  --color-brand: #ff5f6d;
-  --color-brand-2: #c0263f;
+  /* Brand: the Next Agent logo (apps/desktop/src-tauri/icons/source/logo.png). */
+  --color-brand-blue: #136aef;
+  --color-brand-cyan: #0b9fe1;
+  --color-brand-teal: #11cab2;
+  --color-brand-violet: #5548eb;
+  --color-brand-purple: #8048d6;
+  --color-brand: var(--color-brand-blue);
+  --color-brand-2: var(--color-brand-teal);
+  --brand-gradient: linear-gradient(
+    135deg,
+    var(--color-brand-blue) 0%,
+    var(--color-brand-cyan) 45%,
+    var(--color-brand-teal) 75%,
+    var(--color-brand-purple) 100%
+  );
+
+  /* The island orb (IslandMascot.svelte, tone "rest"): the little red gradient
+     circle beside the notch. */
   --brand-sheen: radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.55), transparent 42%);
-  --brand-gradient:
+  --color-orb: #ff5f6d;
+  --color-orb-2: #c0263f;
+  --orb-gradient:
     var(--brand-sheen),
-    conic-gradient(from 210deg, var(--color-brand), var(--color-brand-2), var(--color-brand));
+    conic-gradient(from 210deg, var(--color-orb), var(--color-orb-2), var(--color-orb));
 
   --shadow-sm: 0 1px 2px rgb(16 18 24 / 0.06);
   --shadow-md: 0 2px 6px rgb(16 18 24 / 0.08), 0 1px 2px rgb(16 18 24 / 0.06);

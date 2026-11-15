@@ -33,7 +33,8 @@
       title: s[0].toUpperCase() + s.slice(1),
       tokens: [s, `${s}-subtle`, `${s}-border`, `${s}-text`, ...(s === "neutral" ? [] : [`on-${s}`])],
     })),
-    { title: "Brand", tokens: ["brand", "brand-2"] },
+    { title: "Brand (logo)", tokens: ["brand-blue", "brand-cyan", "brand-teal", "brand-violet", "brand-purple"] },
+    { title: "Island orb", tokens: ["orb", "orb-2"] },
   ];
   const fontSizes = ["xs", "sm", "md", "lg", "xl", "2xl"];
   const weights = ["regular", "medium", "semibold", "bold"];
@@ -142,6 +143,7 @@
           <h3>Brand gradient</h3>
           <div class="swatches">
             <div class="swatch"><span class="chip" style:background="var(--brand-gradient)"></span><code>--brand-gradient</code></div>
+            <div class="swatch"><span class="chip" style:background="var(--orb-gradient)"></span><code>--orb-gradient</code></div>
             <div class="swatch"><BrandMark size={28} label="Next Agent" /><code>&lt;BrandMark&gt;</code></div>
           </div>
         </div>

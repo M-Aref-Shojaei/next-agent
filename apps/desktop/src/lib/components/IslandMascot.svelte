@@ -30,7 +30,7 @@
   /* Gradient orb in place of Coucou's character. Colour follows what the
      agent is doing (Coucou's BotEngine glow colours); it turns while
      working and breathes while an approval waits. At rest it is the brand
-     mark itself (--brand-gradient); the other tones are the sheen over a
+     orb (--orb-gradient); the other tones are the sheen over a
      conic gradient of semantic tokens. */
   .mascot {
     position: absolute;
@@ -46,9 +46,9 @@
   }
   .tone-working { --tone: var(--color-info); --tone-2: var(--color-accent); animation: turn 2.4s linear infinite; }
   .tone-approval { --tone: var(--color-warn); --tone-2: var(--color-danger); animation: breathe 1.6s ease-in-out infinite; }
-  .tone-error { --tone: var(--color-danger); --tone-2: var(--color-brand-2); }
-  /* At rest beside the notch: the little red gradient orb, the brand mark. */
-  .tone-rest { --tone: var(--color-brand); --glow: 4; background: var(--brand-gradient); }
+  .tone-error { --tone: var(--color-danger); --tone-2: var(--color-orb-2); }
+  /* At rest beside the notch: the little red gradient orb. */
+  .tone-rest { --tone: var(--color-orb); --glow: 4; background: var(--orb-gradient); }
   .tone-finished { --tone: var(--color-ok); --tone-2: var(--color-info); }
   @keyframes turn { to { transform: rotate(360deg); } }
   @keyframes breathe { 50% { --glow: 14; transform: scale(1.06); } }
