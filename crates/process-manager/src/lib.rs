@@ -95,6 +95,8 @@ impl HealthReport {
         self
     }
 
+    /// Placeholder before the first probe. Its `Down` status is only a default:
+    /// callers must treat `checks == 0` as unknown, not down.
     fn pending() -> Self {
         Self::new(HealthStatus::Down, "not checked yet")
     }

@@ -76,6 +76,7 @@ pub fn cursor_points() -> Option<(f64, f64)> {
 /// Backing scale of the display under a global point (2.0 on a Retina
 /// screen), 1.0 when none is found. Any thread.
 #[allow(unsafe_code)] // (3)
+#[allow(clippy::cast_precision_loss)]
 #[must_use]
 pub fn display_scale_at(x: f64, y: f64) -> f64 {
     let mut ids = [0u32; 1];
@@ -100,15 +101,16 @@ pub fn display_scale_at(x: f64, y: f64) -> f64 {
     if points == 0 || pixels == 0 {
         return 1.0;
     }
-    #[allow(clippy::cast_precision_loss)]
-    let scale = pixels as f64 / points as f64;
-    scale
+    pixels as f64 / points as f64
 }
+
+/// Bit of `pressedMouseButtons` set while the left button is held.
+const LEFT_MOUSE_BUTTON_BIT: usize = 1;
 
 /// True while the left mouse button is held.
 #[must_use]
 pub fn left_button_down() -> bool {
-    NSEvent::pressedMouseButtons() & 1 != 0
+    NSEvent::pressedMouseButtons() & LEFT_MOUSE_BUTTON_BIT != 0
 }
 
 /// Whether the key with this virtual key code is held now (the combined

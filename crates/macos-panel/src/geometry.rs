@@ -7,6 +7,7 @@
 pub const FALLBACK_NOTCH_WIDTH: f64 = 184.0;
 /// The resting bar on a screen without a notch (points).
 pub const NO_NOTCH_WIDTH: f64 = 80.0;
+/// The resting bar's height on a screen without a notch (points).
 pub const NO_NOTCH_HEIGHT: f64 = 24.0;
 
 /// Resting island size on one screen, in points.

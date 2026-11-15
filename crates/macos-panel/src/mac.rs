@@ -39,7 +39,7 @@ use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString};
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 /// Three above `NSMainMenuWindowLevel` (24): over the menu bar and the notch
 /// (`CGWindowLevelForKey(.mainMenuWindow) + 3` in Coucou).
@@ -100,10 +100,15 @@ thread_local! {
 /// down from the top of the menu-bar screen), readable from the poll thread.
 static ORIGIN: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 
-fn set_origin_cache(origin: Option<(f64, f64)>) {
-    *ORIGIN
+/// Locks the origin cache, recovering from a poisoned lock.
+fn origin_guard() -> MutexGuard<'static, Option<(f64, f64)>> {
+    ORIGIN
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = origin;
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn set_origin_cache(origin: Option<(f64, f64)>) {
+    *origin_guard() = origin;
 }
 
 fn with_panel<R>(f: impl FnOnce(&IslandPanel) -> R) -> Option<R> {
@@ -213,9 +218,7 @@ pub fn set_ignores_mouse(ignore: bool) -> bool {
 /// `NSEvent.mouseLocation` on its main-run-loop timer). Any thread.
 #[must_use]
 pub fn cursor_in_panel() -> Option<(f64, f64)> {
-    let (ox, oy) = (*ORIGIN
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner))?;
+    let (ox, oy) = (*origin_guard())?;
     let event = objc2_core_graphics::CGEvent::new(None)?;
     let p = objc2_core_graphics::CGEvent::location(Some(&event));
     Some((p.x - ox, p.y - oy))
@@ -323,6 +326,21 @@ fn target_screen(choice: &DisplayChoice, mtm: MainThreadMarker) -> Option<Retain
     NSScreen::mainScreen(mtm).or_else(|| list.first().cloned())
 }
 
+/// Height of the menu-bar screen (the first screen), the origin of the
+/// top-left coordinate space. Main thread only.
+fn primary_screen_height(mtm: MainThreadMarker) -> f64 {
+    NSScreen::screens(mtm)
+        .iter()
+        .next()
+        .map_or(0.0, |s| s.frame().size.height)
+}
+
+/// Set the panel's level and frame (`AppKit` coordinates, y up). Main thread only.
+fn apply_frame(panel: &IslandPanel, x: f64, y: f64, w: f64, h: f64) {
+    panel.setLevel(PANEL_LEVEL);
+    panel.setFrame_display(NSRect::new(NSPoint::new(x, y), NSSize::new(w, h)), true);
+}
+
 /// `relocate(to:)`: recompute the resting geometry for the target screen and
 /// move the panel to its top centre, or to the corner the island lives in.
 /// Always re-applied, even on the same screen: its menu bar or resolution may
@@ -346,18 +364,9 @@ pub fn place(choice: &DisplayChoice, placement: Placement, panel: (f64, f64)) ->
     let screen_rect = rect(screen.frame());
     let (x, y) = placement.panel_origin(screen_rect, rect(screen.visibleFrame()), panel);
     let frame = Rect::new(x, y, panel.0, panel.1);
-    with_panel(|p| {
-        p.setLevel(PANEL_LEVEL);
-        p.setFrame_display(
-            NSRect::new(NSPoint::new(x, y), NSSize::new(panel.0, panel.1)),
-            true,
-        );
-    })?;
+    with_panel(|p| apply_frame(p, x, y, panel.0, panel.1))?;
     // AppKit's y axis points up from the bottom of the menu-bar screen.
-    let top = NSScreen::screens(mtm)
-        .iter()
-        .next()
-        .map_or(0.0, |s| s.frame().size.height);
+    let top = primary_screen_height(mtm);
     set_origin_cache(Some((x, top - (y + panel.1))));
     Some(Placed {
         geometry,
@@ -377,16 +386,9 @@ pub fn place_frame(x: f64, y_top: f64, w: f64, h: f64) -> bool {
         return false;
     };
     // AppKit's y axis points up from the bottom of the menu-bar screen.
-    let top = NSScreen::screens(mtm)
-        .iter()
-        .next()
-        .map_or(0.0, |s| s.frame().size.height);
+    let top = primary_screen_height(mtm);
     let y = top - (y_top + h);
-    let placed = with_panel(|p| {
-        p.setLevel(PANEL_LEVEL);
-        p.setFrame_display(NSRect::new(NSPoint::new(x, y), NSSize::new(w, h)), true);
-    })
-    .is_some();
+    let placed = with_panel(|p| apply_frame(p, x, y, w, h)).is_some();
     if placed {
         set_origin_cache(Some((x, y_top)));
     }
