@@ -171,7 +171,6 @@ export interface Api {
   gatewayCacheCount(): Promise<number>;
   gatewayCacheClear(): Promise<number>;
   /** Settings → Overlay: open Coucou's own settings window (on `page`). */
-  overlayOpen(page?: string): Promise<void>;
   // Settings → Upstreams: report-only watch of upstream GitHub repositories.
   upstreamWatchStatus(): Promise<WatchView>;
   /** "Check now": asks GitHub unless its rate limit still applies. */
@@ -371,7 +370,6 @@ const tauriApi: Api = {
   gatewayCatalogRefresh: () => invoke("gateway_catalog_refresh"),
   gatewayCacheCount: () => invoke("gateway_cache_count"),
   gatewayCacheClear: () => invoke("gateway_cache_clear"),
-  overlayOpen: (page) => invoke("overlay_open", { page: page ?? null }),
   upstreamWatchStatus: () => invoke("upstream_watch_status"),
   upstreamWatchCheck: () => invoke("upstream_watch_check"),
   upstreamWatchMarkSeen: () => invoke("upstream_watch_mark_seen"),

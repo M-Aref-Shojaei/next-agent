@@ -30,11 +30,6 @@
       "path": "apps/desktop/src/lib/design-preview-data.ts",
       "max": 2,
       "reason": "Offline mock's generated-page CSS for Design Studio previews: a previewed page brings its own palette, so these are content data, not UI chrome"
-    },
-    {
-      "path": "apps/desktop/src/routes/(app)/settings/+page.svelte",
-      "max": 1,
-      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
     }
   ]
 }

@@ -1,9 +1,9 @@
 <script lang="ts">
   // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/settings.html @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
   //
-  // Mount point for Coucou's own window (Flow, the Notetaker and every
-  // setting of the island), loading apps/desktop/coucou/src/settings/main.ts
-  // as it is.
+  // Mount point for Coucou's own window (Flow's dictation history, the
+  // Notetaker, statistics, dictionary, snippets and mail). Next Agent: it loads
+  // coucou/src/hub/main.ts; the settings moved into Next Agent's Settings.
   import { onMount } from "svelte";
 
   onMount(() => {
@@ -12,7 +12,7 @@
     document.body.className = "settings-window hub-window";
     document.body.style.background = "#000";
     document.body.style.color = "#f5f6f8";
-    void import("$coucou/settings/main.ts");
+    void import("$coucou/hub/main.ts");
   });
 </script>
 

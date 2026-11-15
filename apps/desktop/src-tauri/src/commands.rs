@@ -116,13 +116,6 @@ pub(crate) fn announce_task(app: &tauri::AppHandle, id: &str, title: &str, mode:
     );
 }
 
-/// Settings → Overlay: opens Coucou's own settings window on `page`
-/// (`general` when none).
-#[tauri::command]
-pub fn overlay_open(app: tauri::AppHandle, page: Option<String>) {
-    coucou_lib::open_window(&app, Some(page.as_deref().unwrap_or("general")));
-}
-
 #[tauri::command]
 pub fn task_cancel(service: Svc, task_id: String) {
     service.task_cancel(&task_id);

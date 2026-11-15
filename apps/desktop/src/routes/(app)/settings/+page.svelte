@@ -3,6 +3,11 @@
   import { api, type AuditStatus, type Rule } from "$lib/api.ts";
   import { app } from "$lib/app.svelte.ts";
   import { upstreams } from "$lib/upstreams.svelte.ts";
+  import {
+    Badge, Banner, Button, EmptyState, List, ListRow, SettingsLayout, SettingsRow, SettingsSection, StatusDot, TextField,
+    type SettingsNavItem,
+  } from "$lib/ds/index.ts";
+  import { OVERLAY_ROOT, OVERLAY_SECTIONS } from "$lib/overlay-settings.ts";
 
   let routerUrl = $state("");
   let vaultPath = $state("");
@@ -10,18 +15,22 @@
   let audit = $state<AuditStatus | null>(null);
   let message = $state("");
 
+  const nav: SettingsNavItem[] = $derived([
+    { id: "router", label: "Models and providers", href: "#router" },
+    { id: "channels", label: "Channels", href: "#channels" },
+    { id: "overlay", label: "Overlay", href: "#overlay" },
+    { id: "upstreams", label: "Upstreams", href: "#upstreams", badge: upstreams.unseen > 0 ? "new" : undefined },
+    { id: "design", label: "Design system", href: "#design" },
+    { id: "vault", label: "Vault", href: "#vault" },
+    { id: "rules", label: "Permission rules", href: "#rules" },
+    { id: "audit", label: "Audit log", href: "#audit" },
+  ]);
+
   async function load() {
     routerUrl = (await api.settingGet("router.url")) ?? "";
     vaultPath = (await api.vaultGet()) ?? "";
     rules = app.activeWorkspaceId ? await api.rulesList(app.activeWorkspaceId) : [];
     audit = await api.auditVerify();
-  }
-  async function openOverlay(page: string) {
-    try {
-      await api.overlayOpen(page);
-    } catch (e) {
-      message = String(e);
-    }
   }
   onMount(() => void load().catch((e) => (message = String(e))));
 
@@ -44,111 +53,117 @@
     }
   }
   async function revoke(id: string) {
-    await api.ruleDelete(id);
-    rules = rules.filter((r) => r.id !== id);
+    try {
+      await api.ruleDelete(id);
+      rules = rules.filter((r) => r.id !== id);
+    } catch (e) {
+      message = String(e);
+    }
   }
 </script>
 
-<div class="settings">
-  <h1>Settings</h1>
-  <p><a href="/">← Back to chat</a></p>
-  {#if message}<p role="status">{message}</p>{/if}
+<SettingsLayout title="Settings" {nav}>
+  {#snippet top()}<a href="/">← Back to chat</a>{/snippet}
+  {#if message}<Banner tone="info" ondismiss={() => (message = "")}>{message}</Banner>{/if}
 
-  <section aria-labelledby="h-router">
-    <h2 id="h-router">Models and providers</h2>
-    <p>Providers, API keys, the default model, combos, token savers and model roles are on the
-      <a href="/settings/providers">Providers</a> page. See token and cost reports on <a href="/usage">Usage</a>.</p>
-    <h3>External router (optional)</h3>
+  <SettingsSection
+    id="router"
+    title="Models and providers"
+    description="Providers, API keys, the default model, combos, token savers and model roles are on the Providers page. See token and cost reports on Usage."
+  >
+    {#snippet actions()}
+      <a class="go" href="/settings/providers">Providers →</a>
+      <a class="go" href="/usage">Usage →</a>
+    {/snippet}
     <form onsubmit={saveRouter}>
-      <label for="router">Base URL</label>
-      <input id="router" bind:value={routerUrl} />
-      <button type="submit">Save</button>
+      <SettingsRow
+        label="External router (optional)"
+        description="Only needed for an external OpenAI-compatible router such as 9Router; the built-in gateway works without it."
+      >
+        {#snippet children(ctl)}
+          <TextField id={ctl.id} aria-describedby={ctl.describedby} mono placeholder="Base URL" bind:value={routerUrl} />
+          <Button type="submit">Save</Button>
+        {/snippet}
+      </SettingsRow>
     </form>
-    <p class="muted">Only needed for an external OpenAI-compatible router such as 9Router; the built-in gateway works without it.</p>
-  </section>
+  </SettingsSection>
 
-  <section aria-labelledby="h-channels">
-    <h2 id="h-channels">Channels</h2>
-    <p>Message the agent from Telegram. Bots, pairings, allow-lists and health are on the
-      <a href="/settings/channels">Channels</a> page.</p>
-  </section>
+  <SettingsSection id="channels" title="Channels" description="Message the agent from Telegram. Bots, pairings, allow-lists and health are on the Channels page.">
+    {#snippet actions()}<a class="go" href="/settings/channels">Channels →</a>{/snippet}
+  </SettingsSection>
 
-  <section aria-labelledby="h-overlay">
-    <h2 id="h-overlay">Overlay</h2>
-    <p class="muted">
-      The island at the top of the screen (around the notch on a MacBook) is built in (vendored MIT code, credited in NOTICE.md; ADR-0011).
-      It shows Next Agent's tasks and their approvals, which you can answer there; Next Agent's permission
-      engine still decides. Its settings live in its own window.
-    </p>
-    <div class="row">
-      <button type="button" onclick={() => openOverlay("general")}>Open overlay settings…</button>
-      <button type="button" onclick={() => openOverlay("agents")}>Claude Code and other agents…</button>
-      <button type="button" onclick={() => openOverlay("dictation")}>Dictation and Notetaker…</button>
-    </div>
-    <p class="muted">
-      Claude Code sessions reach the island only once you install the overlay's hooks under <em>Agents → Claude Code</em>: it
-      shows the exact change to <code>~/.claude/settings.json</code>, saves a dated backup, and writes nothing until you
-      confirm. Off until then.
-    </p>
-  </section>
+  <SettingsSection
+    id="overlay"
+    title="Overlay"
+    description="The island at the top of the screen (around the notch on a MacBook) is built in (vendored MIT code, credited in NOTICE.md; ADR-0011). It shows Next Agent's tasks and their approvals, which you can answer there; Next Agent's permission engine still decides."
+  >
+    <List label="Overlay settings" bordered={false}>
+      {#each OVERLAY_SECTIONS as section (section.id)}
+        <ListRow title={section.label} href="{OVERLAY_ROOT}/{section.id}" />
+      {/each}
+    </List>
+    {#snippet footer()}
+      Claude Code sessions reach the island only once you install the overlay's hooks under <a href="{OVERLAY_ROOT}/agents">Agents</a>:
+      it shows the exact change to <code>~/.claude/settings.json</code>, saves a dated backup, and writes nothing until you confirm. Off until then.
+    {/snippet}
+  </SettingsSection>
 
-  <section aria-labelledby="h-upstreams">
-    <h2 id="h-upstreams">Upstreams{#if upstreams.unseen > 0}<span class="badge">new</span>{/if}</h2>
-    <p>See what the projects we vendor or port from published since their pinned commit, on the
-      <a href="/settings/upstreams">Upstreams</a> page. Nothing is applied automatically.</p>
-  </section>
+  <SettingsSection
+    id="upstreams"
+    title="Upstreams"
+    description="See what the projects we vendor or port from published since their pinned commit. Nothing is applied automatically."
+  >
+    {#snippet actions()}
+      {#if upstreams.unseen > 0}<Badge tone="accent">new</Badge>{/if}
+      <a class="go" href="/settings/upstreams">Upstreams →</a>
+    {/snippet}
+  </SettingsSection>
 
-  <section aria-labelledby="h-design">
-    <h2 id="h-design">Design system</h2>
-    <p>Every token and component the app's screens are built from, in light and dark, on the
-      <a href="/settings/design-system">Design system</a> page.</p>
-  </section>
+  <SettingsSection id="design" title="Design system" description="Every token and component the app's screens are built from, in light and dark.">
+    {#snippet actions()}<a class="go" href="/settings/design-system">Design system →</a>{/snippet}
+  </SettingsSection>
 
-  <section aria-labelledby="h-vault">
-    <h2 id="h-vault">Vault</h2>
+  <SettingsSection id="vault" title="Vault">
     <form onsubmit={saveVault}>
-      <label for="vault">Vault folder</label>
-      <input id="vault" bind:value={vaultPath} placeholder="/path/to/vault" />
-      <button type="submit">Save</button>
+      <SettingsRow label="Vault folder">
+        {#snippet children(ctl)}
+          <TextField id={ctl.id} mono placeholder="/path/to/vault" bind:value={vaultPath} />
+          <Button type="submit">Save</Button>
+        {/snippet}
+      </SettingsRow>
     </form>
-  </section>
+  </SettingsSection>
 
-  <section aria-labelledby="h-rules">
-    <h2 id="h-rules">Permission rules</h2>
+  <SettingsSection id="rules" title="Permission rules">
     {#if rules.length === 0}
-      <p class="muted">No rules. "Always for this workspace" approvals appear here.</p>
+      <EmptyState compact title="No rules" description={'"Always for this workspace" approvals appear here.'} />
     {:else}
-      <table>
-        <thead><tr><th>Scope</th><th>Effect</th><th>Tool</th><th>Pattern</th><th></th></tr></thead>
-        <tbody>
-          {#each rules as rule (rule.id)}
-            <tr>
-              <td>{rule.scope}</td><td>{rule.effect}</td><td>{rule.kind}</td><td><code>{rule.pattern}</code></td>
-              <td><button aria-label="Revoke rule {rule.id}" onclick={() => revoke(rule.id)}>Revoke</button></td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+      <List label="Permission rules" bordered={false}>
+        {#each rules as rule (rule.id)}
+          <ListRow title="{rule.effect} · {rule.kind}" description={rule.pattern} meta={rule.scope}>
+            {#snippet actions()}
+              <Button size="sm" variant="danger" aria-label="Revoke rule {rule.id}" onclick={() => revoke(rule.id)}>Revoke</Button>
+            {/snippet}
+          </ListRow>
+        {/each}
+      </List>
     {/if}
-  </section>
+  </SettingsSection>
 
-  <section aria-labelledby="h-audit">
-    <h2 id="h-audit">Audit log (read-only)</h2>
+  <SettingsSection id="audit" title="Audit log (read-only)">
     {#if audit}
-      <p role="status">
-        Hash chain {audit.ok ? "verified" : `BROKEN at #${audit.broken_at}`} · {audit.checked} entries checked.
-      </p>
+      <SettingsRow label="Hash chain" description="{audit.checked} entries checked.">
+        {#snippet children()}
+          <StatusDot tone={audit!.ok ? "ok" : "danger"} text={audit!.ok ? "Verified" : `Broken at #${audit!.broken_at}`} />
+        {/snippet}
+      </SettingsRow>
     {/if}
-    <p class="muted">Entry listing is stubbed: core exposes verification but no audit query yet.</p>
-  </section>
-</div>
+    {#snippet footer()}Entry listing is stubbed: core exposes verification but no audit query yet.{/snippet}
+  </SettingsSection>
+</SettingsLayout>
 
 <style>
-  .settings { padding: 20px 28px; overflow: auto; max-width: 760px; display: grid; gap: 14px; align-content: start; }
-  section { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--panel); }
-  form { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; margin-top: 8px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
-  .badge { margin-left: 8px; padding: 0 6px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; vertical-align: middle; }
-  .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  code { font-family: var(--font-mono); font-size: var(--font-size-xs); }
+  .go { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); color: var(--color-accent-text); text-decoration: none; white-space: nowrap; }
+  .go:hover { text-decoration: underline; }
 </style>

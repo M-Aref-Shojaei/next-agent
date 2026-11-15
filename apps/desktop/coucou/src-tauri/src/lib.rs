@@ -759,6 +759,33 @@ fn settings_page_url(app: &AppHandle) -> WebviewUrl {
 /// island), labelled "settings" since it grew out of the settings window.
 pub const HUB_LABEL: &str = "coucou-settings";
 
+/// Next Agent: the island's settings live in Next Agent's own Settings (owner
+/// request, one design system): the main window is the one that may change
+/// what only the settings window could (phone link, Antigravity approvals).
+pub const SETTINGS_LABEL: &str = "main";
+
+/// Next Agent: the Coucou window's pages that moved into Next Agent's Settings
+/// (owner request). `show_hub` sends them to the main window instead; the Flow
+/// pages that are not settings (dictation history, Notetaker, statistics,
+/// dictionary, snippets, mail) stay in the Coucou window.
+pub const MOVED_PAGES: [&str; 13] = [
+    "general", "pills", "agents", "chat", "voice", "integrations", "phone", "shortcuts",
+    "settings", "flowsettings", "styles", "updates", "about",
+];
+
+/// Next Agent: the main window, on the Settings page for `page` (one of
+/// `MOVED_PAGES`). The page itself picks the route (`overlay-settings-open`).
+fn show_next_agent_settings(app: &AppHandle, page: &str) {
+    let Some(win) = app.get_webview_window(SETTINGS_LABEL) else {
+        log::line("Next Agent's main window is missing");
+        return;
+    };
+    let _ = win.emit_to(SETTINGS_LABEL, "overlay-settings-open", page.to_string());
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+}
+
 /// The Coucou window is created hidden at launch and only ever shown and
 /// hidden afterwards. A WebView2 window created later — on the main thread or
 /// not — silently comes up blank in this app, so the window that works is the
@@ -828,6 +855,11 @@ pub fn show_settings_window(app: &AppHandle) {
 /// Shows the Coucou window, on `page` when given ("dictation", "notes",
 /// "settings", "general", "shortcuts"…).
 pub fn show_hub(app: &AppHandle, page: Option<&str>) {
+    // Next Agent: settings pages open in Next Agent's Settings (owner request).
+    if let Some(page) = page.filter(|p| MOVED_PAGES.contains(p)) {
+        show_next_agent_settings(app, page);
+        return;
+    }
     let Some(win) = app.get_webview_window(HUB_LABEL) else {
         // Creating it at startup can fail on some machines (WebView2
         // 0x80070578, #775): try again now, on the main thread, where
@@ -1218,8 +1250,8 @@ pub fn setup(app: &mut tauri::App, boot: Boot) -> Result<(), Box<dyn std::error:
         let _ = handle.autolaunch().enable();
     }
     // Next Agent: Coucou's window does not open at launch: Next Agent's own
-    // window is the app's, and Settings → Overlay opens Coucou's window
-    // (`open_settings_window`). Upstream:
+    // window is the app's, and the island's settings are in its Settings →
+    // Overlay. Upstream:
     //   if open_at_launch && !launched_at_login() { show_hub(&handle, None) }
     Ok(())
 }
@@ -1228,11 +1260,6 @@ pub fn setup(app: &mut tauri::App, boot: Boot) -> Result<(), Box<dyn std::error:
 /// (pipe.rs `connect_in_process`).
 pub fn hook_input(app: &AppHandle) -> tokio::io::DuplexStream {
     pipe::connect_in_process(app)
-}
-
-/// Next Agent: opens Coucou's window on `page` (Settings → Overlay).
-pub fn open_window(app: &AppHandle, page: Option<&str>) {
-    show_hub(app, page);
 }
 
 /// What Coucou's `.run(…)` did on each run event.

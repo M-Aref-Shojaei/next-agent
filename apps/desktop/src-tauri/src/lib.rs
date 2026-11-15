@@ -129,7 +129,6 @@ pub fn run() {
             gateway::gateway_catalog_refresh,
             gateway::gateway_cache_count,
             gateway::gateway_cache_clear,
-            commands::overlay_open,
             upstreams::upstream_watch_status,
             upstreams::upstream_watch_check,
             upstreams::upstream_watch_mark_seen,

@@ -125,3 +125,23 @@ Task ledger for [[M1 Vertical Slice]]. Update this note (and the step boxes ther
   - The Design Studio preview inside the Tauri webview.
   - The Windows and Linux code was not compiled.
 - **Open:** deliver cron results to a channel. (Channel tasks cannot write memory or skills: the channel profile denies every tool not on its list.)
+
+### 2026-11-15 — One design system; clean-code pass
+- **Design system** ([[ADR-0012 One Design System]], [[Design System]]):
+  - `apps/desktop/src/lib/ds/`: tokens for light and dark, about 30 components, and a style guide at Settings → Design system.
+  - `scripts/check-design-tokens.mjs` is part of `make check`. 39 raw values are left, all content data: Coucou identity colours and Design Studio preview CSS.
+- **Restyled on it:**
+  - Every page: the shell (with a drawer below 640px), tasks, Notes, Boards, Design, Usage and all Settings pages.
+  - Coucou's island, pill and hub, mapped to tokens with the same shapes and timings; the hub accent is now blue-indigo.
+- **Coucou settings and About live in Settings → Overlay:** 12 pages built on the design system.
+  - The tray, island and pill open them in the main window.
+  - The main window gets exactly the 70 overlay commands those pages call; the Coucou window lost its settings writers.
+  - Coucou's old settings code stays in the tree, unused.
+- **Clean-code pass:** 7 Haiku reviewers found 95 tasks. 64 small Rust fixes were made by Haiku and 13 frontend fixes were folded into the restyles. Two Design Studio panics on non-ASCII CSS are fixed. Bugs that need judgement and the open owner decisions are in [[Clean Code Review 2026-11-15]].
+- **Tests:** 1473 Rust and 843 node pass; clippy `-D warnings`, `make check`, svelte-check and the build are clean.
+- **Not verified:**
+  - In the real Tauri window: the tray and island opening Settings, the hooks, keychain and phone writes, and the Coucou window look.
+  - The Windows and Linux builds.
+- **Open:**
+  - Design-system gaps the agents hit: Table, StatTile, a compact Banner, a disabled confirm on Dialog, a nullable bind on Select/TextField, and IconButton xs.
+  - `coucou/src/settings/settings.css` still gives the remaining Coucou window its base styles.
