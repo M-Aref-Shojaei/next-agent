@@ -152,6 +152,14 @@ These are Swift-only code paths with no Tauri counterpart to copy. Each would be
   - Upstream's style lints are allowed by name, and its formatting is kept (`rustfmt.toml`).
   - The structure heuristic skips the folder.
 
+## Upstream watch
+
+- Settings → Upstreams lists what Coucou published since the pin: commits (title, date, scope, link), releases, and the areas the range changed.
+- `crates/core/src/upstream/` reads the `watch` entry of `upstream.lock.json` (embedded at build time). It asks GitHub's public API once a day while the app runs, or on "Check now". It makes three unauthenticated requests: repository, compare from the pin, and releases.
+- It sends no token and no user data. A rate limit (403/429 with GitHub's headers) is remembered, and no check runs until it ends. The last result is kept in `upstream-watch.json` in the app data folder.
+- It never applies anything. Bringing a change in is a manual re-sync from the pin, then a re-pin of both `pin` and `watch.commit`.
+- It is generic: another upstream joins by getting a `watch` entry.
+
 ## Not verified
 - The Windows and Linux builds of the vendored crate: they cannot be compiled on a Mac.
 - Multi-display placement and mixed-DPI cursors on a Mac.

@@ -1,5 +1,8 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { app } from "$lib/app.svelte.ts";
+  import { upstreams } from "$lib/upstreams.svelte.ts";
+  onMount(() => void upstreams.init());
   let path = $state("");
   async function open(event: SubmitEvent) {
     event.preventDefault();
@@ -42,7 +45,7 @@
   <a class="settings" href="/boards">Boards</a>
   <a class="nav" href="/settings/providers">Providers</a>
   <a class="nav" href="/usage">Usage</a>
-  <a class="nav" href="/settings">Settings</a>
+  <a class="nav" href="/settings">Settings{#if upstreams.unseen > 0}<span class="badge" title="New upstream changes">{upstreams.unseen}</span><span class="sr-only"> (new upstream changes)</span>{/if}</a>
 </nav>
 
 <style>
@@ -56,5 +59,6 @@
   .s.running { background: var(--info); } .s.completed { background: var(--ok); } .s.failed { background: var(--danger); }
   .settings { margin-top: auto; color: var(--accent); }
   .nav { color: var(--accent); }
+  .badge { display: inline-block; min-width: 16px; margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
   nav > a { color: var(--accent); }
 </style>

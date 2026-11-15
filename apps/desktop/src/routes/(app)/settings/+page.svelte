@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, type AuditStatus, type Rule } from "$lib/api.ts";
   import { app } from "$lib/app.svelte.ts";
+  import { upstreams } from "$lib/upstreams.svelte.ts";
 
   let routerUrl = $state("");
   let vaultPath = $state("");
@@ -85,6 +86,12 @@
     </p>
   </section>
 
+  <section aria-labelledby="h-upstreams">
+    <h2 id="h-upstreams">Upstreams{#if upstreams.unseen > 0}<span class="badge">new</span>{/if}</h2>
+    <p>See what the projects we vendor or port from published since their pinned commit, on the
+      <a href="/settings/upstreams">Upstreams</a> page. Nothing is applied automatically.</p>
+  </section>
+
   <section aria-labelledby="h-vault">
     <h2 id="h-vault">Vault</h2>
     <form onsubmit={saveVault}>
@@ -130,5 +137,6 @@
   form { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; margin-top: 8px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
   th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  .badge { margin-left: 8px; padding: 0 6px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; vertical-align: middle; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 </style>

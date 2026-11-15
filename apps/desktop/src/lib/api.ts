@@ -16,6 +16,7 @@ import type {
   UsageSummary,
   CatalogStatus,
 } from "./gateway.ts";
+import type { WatchView } from "./upstreams.ts";
 
 export interface Workspace {
   id: string;
@@ -127,6 +128,14 @@ export interface Api {
   gatewayCacheClear(): Promise<number>;
   /** Settings → Overlay: open Coucou's own settings window (on `page`). */
   overlayOpen(page?: string): Promise<void>;
+  // Settings → Upstreams: report-only watch of upstream GitHub repositories.
+  upstreamWatchStatus(): Promise<WatchView>;
+  /** "Check now": asks GitHub unless its rate limit still applies. */
+  upstreamWatchCheck(): Promise<WatchView>;
+  upstreamWatchMarkSeen(): Promise<WatchView>;
+  /** Opens a watched upstream's GitHub page in the browser (others are refused). */
+  upstreamOpen(url: string): Promise<void>;
+  onUpstreamWatch(callback: (view: WatchView) => void): Promise<() => void>;
   // Design boards: vault `boards/*.excalidraw`. Save errors starting with "conflict:" mean the file changed on disk.
   boardList(): Promise<BoardMeta[]>;
   boardCreate(name: string, scene?: string): Promise<BoardDoc>;
@@ -193,6 +202,11 @@ const tauriApi: Api = {
   gatewayCacheCount: () => invoke("gateway_cache_count"),
   gatewayCacheClear: () => invoke("gateway_cache_clear"),
   overlayOpen: (page) => invoke("overlay_open", { page: page ?? null }),
+  upstreamWatchStatus: () => invoke("upstream_watch_status"),
+  upstreamWatchCheck: () => invoke("upstream_watch_check"),
+  upstreamWatchMarkSeen: () => invoke("upstream_watch_mark_seen"),
+  upstreamOpen: (url) => invoke("upstream_open", { url }),
+  onUpstreamWatch: (callback) => listen<WatchView>("upstream-watch", (event) => callback(event.payload)),
 };
 
 export function inTauri(): boolean {

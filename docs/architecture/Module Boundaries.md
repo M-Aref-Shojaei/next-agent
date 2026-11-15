@@ -28,7 +28,7 @@ when you add a dependency that someone else ships, add a row here.
 
 ## Rules
 - **Depend inward on contracts.** Callers import a trait, not an implementation type.
-- **One transport per adapter.** `rusqlite` only in `store.rs` (app state) and `crates/graph/src/index.rs` (the notes index, a separate rebuildable cache); HTTP (`reqwest`, `eventsource-stream`) and the OS keychain (`keyring`) only in `crates/core/src/router/` — the `http_fetch` tool reaches HTTP through the `HttpFetch` seam implemented there;
+- **One transport per adapter.** `rusqlite` only in `store.rs` (app state) and `crates/graph/src/index.rs` (the notes index, a separate rebuildable cache); HTTP (`reqwest`, `eventsource-stream`) and the OS keychain (`keyring`) only in `crates/core/src/router/` — the `http_fetch` tool reaches HTTP through the `HttpFetch` seam implemented there — plus the upstream watch's GitHub adapter, `crates/core/src/upstream/github.rs` (public, unauthenticated, read-only; Settings → Upstreams);
   `std::fs` never in `crates/permission-engine`.
 - **Conformance first.** Every new implementation of a seam runs the same suite as the
   existing ones before it is wired in.
@@ -38,6 +38,7 @@ when you add a dependency that someone else ships, add a row here.
 ## Upstream pin file
 `upstream.lock.json` at the repo root lists each external component, the revision we build
 against, and the adapter responsible. It is the checklist for "what breaks if this updates".
+An entry with `watch: {repo, commit}` is also checked once a day by the upstream watch (Settings → Upstreams), which lists the commits and releases published since `commit` and never applies any of them. `make check` keeps `watch.commit` equal to the commit in `pin`.
 
 ```json
 {
