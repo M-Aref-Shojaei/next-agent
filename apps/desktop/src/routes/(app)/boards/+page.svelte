@@ -190,12 +190,16 @@
 
   async function addSticky(color: string) {
     if (!boardApi) return;
-    const e = await loadEngine();
-    stickyCount += 1;
-    const c = e.viewportCentre(boardApi);
-    const jitter = ((stickyCount - 1) % 5) * 24;
-    await e.insertSkeletons(boardApi, [sticky(color, "Idea", c.x - 90 + jitter, c.y - 90 + jitter)]);
-    scheduleSave();
+    try {
+      const e = await loadEngine();
+      stickyCount += 1;
+      const c = e.viewportCentre(boardApi);
+      const jitter = ((stickyCount - 1) % 5) * 24;
+      await e.insertSkeletons(boardApi, [sticky(color, "Idea", c.x - 90 + jitter, c.y - 90 + jitter)]);
+      scheduleSave();
+    } catch (e) {
+      fail(e);
+    }
   }
 
   async function addFrame() {
