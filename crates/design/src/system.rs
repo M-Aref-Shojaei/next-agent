@@ -16,6 +16,21 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+/// Colours kept, by frequency, when ranking a project's palette.
+const MAX_RANKED_COLORS: usize = 24;
+/// Values (font sizes, spacing, radii, ...) kept, by frequency, per category.
+const MAX_RANKED_VALUES: usize = 12;
+/// Palette colours promoted to `--color-N` tokens when the project has none.
+const MAX_DERIVED_COLORS: usize = 8;
+/// Literal values promoted to `--text-N`, `--space-N`, ... tokens per category.
+const MAX_DERIVED_VALUES: usize = 6;
+/// Font families listed in `DESIGN.md`'s typeface section.
+const MAX_FONTS_LISTED: usize = 3;
+/// Source files named in the `DESIGN.md` provenance comment.
+const MAX_SOURCES_LISTED: usize = 12;
+/// Raw values listed in `DESIGN.md` when a category has no tokens.
+const MAX_FALLBACK_LISTED: usize = 8;
+
 /// What a token is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -348,7 +363,7 @@ impl Tally {
         let mut all: Vec<(String, usize)> =
             self.colors.iter().map(|(k, v)| (k.clone(), *v)).collect();
         all.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        all.truncate(24);
+        all.truncate(MAX_RANKED_COLORS);
         all
     }
 }
@@ -373,7 +388,10 @@ fn with_first(mut list: Vec<String>, first: Option<String>) -> Vec<String> {
 fn ranked(map: &BTreeMap<String, usize>) -> Vec<String> {
     let mut all: Vec<(&String, &usize)> = map.iter().collect();
     all.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-    all.into_iter().take(12).map(|(k, _)| k.clone()).collect()
+    all.into_iter()
+        .take(MAX_RANKED_VALUES)
+        .map(|(k, _)| k.clone())
+        .collect()
 }
 
 /// Fill categories the project has no tokens for from its literal values,
@@ -382,7 +400,7 @@ fn derive_missing(system: &mut DesignSystem) {
     let has = |kind: TokenKind, s: &DesignSystem| s.tokens.iter().any(|t| t.kind == kind);
     let mut extra = Vec::new();
     if !has(TokenKind::Color, system) {
-        for (i, (color, _)) in system.palette.iter().take(8).enumerate() {
+        for (i, (color, _)) in system.palette.iter().take(MAX_DERIVED_COLORS).enumerate() {
             extra.push(derived(
                 &format!("--color-{}", i + 1),
                 color,
@@ -399,7 +417,7 @@ fn derive_missing(system: &mut DesignSystem) {
         if has(kind, system) {
             return;
         }
-        let mut sorted: Vec<&String> = values.iter().take(6).collect();
+        let mut sorted: Vec<&String> = values.iter().take(MAX_DERIVED_VALUES).collect();
         sorted.sort_by(|a, b| px(a).total_cmp(&px(b)));
         for (i, v) in sorted.into_iter().enumerate() {
             extra.push(derived(&format!("--{prefix}-{}", i + 1), v, kind));
@@ -545,7 +563,7 @@ pub fn render_design_md(system: &DesignSystem) -> String {
             system
                 .fonts
                 .iter()
-                .take(3)
+                .take(MAX_FONTS_LISTED)
                 .filter(|f| !font_tokens.iter().any(|t| &t.value == *f))
                 .cloned(),
         )
@@ -597,7 +615,7 @@ pub fn render_design_md(system: &DesignSystem) -> String {
             system
                 .sources
                 .iter()
-                .take(12)
+                .take(MAX_SOURCES_LISTED)
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -610,7 +628,7 @@ fn list_or(tokens: &[&Token], fallback: &[String]) -> String {
     if tokens.is_empty() {
         fallback
             .iter()
-            .take(8)
+            .take(MAX_FALLBACK_LISTED)
             .map(|v| format!("`{v}`"))
             .collect::<Vec<_>>()
             .join(", ")
