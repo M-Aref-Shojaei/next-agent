@@ -12,7 +12,7 @@
   let hits = $state.raw<SearchHit[]>([]);
   let selected = $state(0);
   let problem = $state("");
-  let box = $state<HTMLElement | null>(null);
+  let input = $state<HTMLInputElement | null>(null);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let seq = 0;
 
@@ -32,7 +32,7 @@
   });
 
   $effect(() => {
-    void tick().then(() => box?.querySelector("input")?.focus());
+    input?.focus();
   });
 
   function oninput() {
@@ -82,10 +82,11 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="scrim" onmousedown={(e) => { if (e.target === e.currentTarget) onclose(); }}>
-  <div class="palette" role="dialog" aria-modal="true" aria-label="Search notes" bind:this={box}>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="Search notes">
     <div class="field">
       <TextField
         bind:value={query}
+        bind:ref={input}
         {oninput}
         {onkeydown}
         size="lg"

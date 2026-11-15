@@ -5,7 +5,8 @@
   import type { FieldControl, Size } from "./types.ts";
 
   type Props = Omit<HTMLInputAttributes, "size" | "value" | "prefix"> & {
-    value?: string | number | null;
+    /** Bindable. `null` and `undefined` show an empty box, so optional settings bind directly. */
+    value?: string | number | null | undefined;
     /** Visible label (wraps the input in <Field>). Without it, pass aria-label. */
     label?: string;
     hint?: string;
@@ -16,12 +17,14 @@
     prefix?: Snippet;
     /** Content inside the box after the text (unit, IconButton). */
     suffix?: Snippet;
+    /** The <input> element, bindable: focus it, select it, measure it. */
+    ref?: HTMLInputElement | null;
     /** Monospace text (paths, keys, URLs). */
     mono?: boolean;
   };
 
   let {
-    value = $bindable(""),
+    value = $bindable(),
     label,
     hint,
     error,
@@ -30,6 +33,7 @@
     prefix,
     suffix,
     mono = false,
+    ref = $bindable(),
     id,
     required,
     class: className = "",
@@ -42,6 +46,7 @@
     {#if prefix}<span class="affix">{@render prefix()}</span>{/if}
     <input
       {...rest}
+      bind:this={ref}
       id={ctl?.id ?? id}
       class:mono
       {required}

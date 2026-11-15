@@ -29,7 +29,7 @@
   {#if app.workspaces.length}
     <List bordered={false} label="Workspaces">
       {#each app.workspaces as ws (ws.id)}
-        <ListRow title={ws.name} selected={ws.id === app.activeWorkspaceId} onclick={() => app.selectWorkspace(ws.id)} />
+        <ListRow title={ws.name} tooltip={ws.path} selectedAs="current" selected={ws.id === app.activeWorkspaceId} onclick={() => app.selectWorkspace(ws.id)} />
       {/each}
     </List>
   {:else}
@@ -44,7 +44,7 @@
   {#if app.tasks.length}
     <List bordered={false} label="Tasks">
       {#each app.tasks as task (task.id)}
-        <ListRow title={task.title} selected={task.id === app.activeTaskId} onclick={() => app.selectTask(task.id)}>
+        <ListRow title={task.title} selectedAs="current" selected={task.id === app.activeTaskId} onclick={() => app.selectTask(task.id)}>
           {#snippet leading()}<StatusDot tone={TASK_TONE[task.status] ?? "neutral"} label={task.status} />{/snippet}
           {#if task.origin}<Badge size="sm">{task.origin}</Badge>{/if}
         </ListRow>

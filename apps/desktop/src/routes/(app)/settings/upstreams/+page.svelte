@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Badge, Banner, Button, SettingsLayout, SettingsRow, SettingsSection, type SettingsNavItem } from "$lib/ds/index.ts";
+  import { Badge, Banner, Button, SettingsLayout, SettingsRow, SettingsSection, Table, type SettingsNavItem, type TableColumn } from "$lib/ds/index.ts";
   import { upstreams } from "$lib/upstreams.svelte.ts";
+  import type { UpstreamCommit } from "$lib/upstreams.ts";
   import { formatIso, formatUnix, rateLimitNote, reportFor, summary } from "$lib/upstreams.ts";
 
   // The clock moves on its own, so a rate limit's note goes when it ends.
@@ -11,6 +12,13 @@
     const tick = setInterval(() => (now = Math.floor(Date.now() / 1000)), 15_000);
     return () => clearInterval(tick);
   });
+
+  const commitColumns: TableColumn<UpstreamCommit>[] = [
+    { key: "commit", label: "Commit", value: (c) => c.short },
+    { key: "title", label: "Title", value: (c) => c.title },
+    { key: "date", label: "Date", nowrap: true, value: (c) => formatIso(c.date), sortValue: (c) => c.date },
+    { key: "areas", label: "Areas", value: (c) => c.areas.join(", ") },
+  ];
 
   const view = $derived(upstreams.view);
   const limited = $derived(rateLimitNote(view, now));
@@ -82,21 +90,13 @@
           {#if report.commits.length < report.aheadBy}
             <p class="muted">Showing the newest {report.commits.length} of {report.aheadBy}.</p>
           {/if}
-          <div class="scroll">
-            <table>
-              <thead><tr><th>Commit</th><th>Title</th><th>Date</th><th>Areas</th></tr></thead>
-              <tbody>
-                {#each report.commits as commit (commit.sha)}
-                  <tr>
-                    <td><Button variant="ghost" size="sm" onclick={() => upstreams.open(commit.url)}><code>{commit.short}</code></Button></td>
-                    <td>{commit.title}</td>
-                    <td class="nowrap">{formatIso(commit.date)}</td>
-                    <td>{commit.areas.join(", ")}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
+          <Table label="Commits" columns={commitColumns} rows={report.commits} rowKey={(c) => c.sha}>
+            {#snippet cell(commit, col)}
+              {#if col.key === "commit"}<Button variant="ghost" size="sm" onclick={() => upstreams.open(commit.url)}><code>{commit.short}</code></Button>
+              {:else if col.key === "date"}{formatIso(commit.date)}
+              {:else}{col.value?.(commit)}{/if}
+            {/snippet}
+          </Table>
         </div>
       {/if}
 
@@ -125,9 +125,4 @@
   .muted { color: var(--color-text-tertiary); }
   .bad { color: var(--color-danger-text); }
   code { font-family: var(--font-mono); font-size: var(--font-size-xs); }
-  .scroll { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
-  th, td { text-align: left; padding: var(--space-1) var(--space-2); border-bottom: var(--border-width) solid var(--color-border-subtle); vertical-align: top; }
-  th { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); }
-  .nowrap { white-space: nowrap; }
 </style>

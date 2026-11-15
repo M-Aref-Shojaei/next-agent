@@ -6,6 +6,7 @@
     ICON_NAMES, IconButton, Kbd, List, ListRow, ProgressBar, RadioGroup, SegmentedControl, Select,
     SettingsLayout, SettingsRow, SettingsSection, ShortcutField, Slider, Spinner, StatusDot, Switch, Tabs,
     TextArea, TextField, Tooltip,
+    FormActions, StatTile, Table, type TableColumn,
     type SettingsNavItem, type Tone,
   } from "$lib/ds/index.ts";
 
@@ -76,6 +77,26 @@
   let dangerOpen = $state(false);
   let largeOpen = $state(false);
   let progress = $state(42);
+  let bold = $state(true);
+  let grow = $state("A note that grows as you type.\nPress Enter to add a line.");
+  let focusField = $state<HTMLInputElement | null>(null);
+  let nameOpen = $state(false);
+  let typedName = $state("");
+  let nullableText = $state<string | undefined>(undefined);
+  let nullableChoice = $state<string | null>(null);
+  const tableRows = [
+    { model: "claude-sonnet", requests: 128, cost: 4.21, seen: "2026-07-02" },
+    { model: "gpt-mini", requests: 1042, cost: 1.07, seen: "2026-07-03" },
+    { model: "local/qwen", requests: 56, cost: 0, seen: "2026-06-28" },
+    { model: "claude-haiku", requests: 310, cost: 0.62, seen: "2026-07-01" },
+  ];
+  const tableColumns: TableColumn<(typeof tableRows)[number]>[] = [
+    { key: "model", label: "Model", sortable: true, value: (r) => r.model },
+    { key: "requests", label: "Requests", align: "end", sortable: true, value: (r) => r.requests },
+    { key: "cost", label: "Cost", align: "end", sortable: true, value: (r) => `$${r.cost.toFixed(2)}`, sortValue: (r) => r.cost },
+    { key: "seen", label: "Last used", nowrap: true, value: (r) => r.seen },
+    { key: "note", label: "A long column that forces the table to scroll sideways on a narrow screen", value: () => "Scrolls inside its box" },
+  ];
 
   function fakeLoad() {
     loading = true;
@@ -216,7 +237,18 @@
           <IconButton label="Delete" variant="danger"><Icon name="trash" /></IconButton>
           <IconButton label="Pin" pressed><Icon name="check" /></IconButton>
           <IconButton label="Settings" size="sm"><Icon name="settings" size={14} /></IconButton>
+          <IconButton label="Expand" size="xs"><Icon name="chevron-right" size={12} /></IconButton>
           <IconButton label="Disabled" disabled><Icon name="more" /></IconButton>
+        </div>
+        <Card title="Form actions" description="Right-aligned; stacks below 420px with the primary action on top.">
+          <FormActions label="Demo form actions">
+            <Button>Cancel</Button>
+            <Button variant="primary">Save</Button>
+          </FormActions>
+        </Card>
+        <div class="demo">
+          <Button pressed={bold} onclick={() => (bold = !bold)}>Select elements</Button>
+          <Button size="sm" variant="ghost" pressed={!bold} onclick={() => (bold = !bold)}>Ghost toggle</Button>
         </div>
         <div class="demo icons">
           {#each ICON_NAMES as n (n)}<span class="icon-cell" title={n}><Icon name={n} /><code>{n}</code></span>{/each}
@@ -239,11 +271,20 @@
         <TextField label="Disabled" value="Read only value" disabled />
         <TextField label="Small" size="sm" placeholder="Compact field" />
         <Select label="Model" bind:value={model} options={[{ value: "fast", label: "Fast" }, { value: "smart", label: "Smart" }, { value: "max", label: "Max" }]} />
+        <Select label="Template (options have tooltips)" options={[{ value: "blank", label: "Blank", description: "An empty canvas." }, { value: "flow", label: "User flow", description: "Start, steps and a decision." }]} value="blank" />
         <Select label="Select with error" placeholder="Choose a provider" options={[{ value: "a", label: "Anthropic" }]} error="Pick one." />
         <div class="span2"><TextArea label="System prompt" bind:value={notes} hint="Markdown is allowed." placeholder="You are a careful coding agent…" /></div>
         <Field label="Custom control in a Field" hint="Field wraps anything: it hands the control its id.">
           {#snippet children(ctl)}<Slider id={ctl.id} aria-describedby={ctl.describedby} bind:value={volume} format={(v) => `${v}%`} />{/snippet}
         </Field>
+        <TextArea label="Autogrow" autogrow rows={1} bind:value={grow} hint="Grows with its content; rows is the minimum." />
+        <TextArea label="Autogrow, compact" autogrow compact rows={1} value="Compact edits text in place, like an outline block." />
+        <div class="demo">
+          <TextField label="Focus me from code" bind:ref={focusField} />
+          <Button onclick={() => focusField?.focus()}>Focus the field</Button>
+        </div>
+        <TextField label="Optional (string | undefined)" bind:value={nullableText} hint="Binds straight to an optional setting: {nullableText === undefined ? 'unset' : `“${nullableText}”`}." />
+        <Select label="Optional choice (string | null)" bind:value={nullableChoice} placeholder="Not set" options={[{ value: "auto", label: "Auto" }, { value: "manual", label: "Manual" }]} hint={nullableChoice === null ? "null" : nullableChoice} />
       </div>
     {/snippet}
   </SettingsSection>
@@ -348,8 +389,19 @@
           <Button size="sm" onclick={() => (banner = true)}>Show the dismissed banner</Button>
         {/if}
         <Banner tone="ok">Vault path saved.</Banner>
+        <div class="stack-tight">
+          <Banner compact tone="info" role="status">Undid edit_file (call_12): src/app.ts</Banner>
+          <Banner compact tone="ok" role="status">Completed: 3 files changed</Banner>
+          <Banner compact tone="danger" role="status">The tool call failed: permission denied</Banner>
+        </div>
         <Banner tone="warn" title="Hooks not installed">Claude Code sessions won't reach the island.</Banner>
         <Banner tone="danger" title="Audit chain broken">Entry #41 doesn't match its hash.</Banner>
+        <div class="tiles-grid">
+          <StatTile label="Requests" value="1,536" delta="3 failed" tone="danger" />
+          <StatTile label="Input tokens" value="4.2M" hint="1.1M cached" />
+          <StatTile label="Cost (estimate)" value="$12.40" delta="+8% vs last week" tone="warn" />
+          <StatTile label="Cache hit rate" value="62%" delta="+4 points" tone="ok" hint="of input tokens" />
+        </div>
         <div class="demo">
           {#each tones as t (t)}<Badge tone={t}>{t}</Badge>{/each}
         </div>
@@ -404,10 +456,17 @@
             {/snippet}
           </ListRow>
           <ListRow title="Selected row" description="onclick makes the row a button" selected onclick={() => {}} meta="2m ago" />
+          <ListRow title="my-project" tooltip="/Users/you/code/my-project" selected selectedAs="current" onclick={() => {}} />
           <ListRow title="Disabled row" disabled description="Unavailable">
             {#snippet children()}<Badge size="sm" tone="warn">paused</Badge>{/snippet}
           </ListRow>
         </List>
+        <Card padding="none">
+          <Table label="Models by usage" columns={tableColumns} rows={tableRows} rowKey={(r) => r.model} sortKey="requests" sortDir="desc" />
+        </Card>
+        <Card padding="none">
+          <Table label="Empty example" columns={tableColumns} rows={[]} empty="No requests yet." emptyDescription="Rows appear here after the first request." />
+        </Card>
         <Card padding="none">
           <EmptyState title="No permission rules" description="&quot;Always for this workspace&quot; approvals appear here.">
             {#snippet icon()}<Icon name="info" size={20} />{/snippet}
@@ -424,6 +483,7 @@
         <Button onclick={() => (confirmOpen = true)}>Open confirm dialog</Button>
         <Button variant="danger" onclick={() => (dangerOpen = true)}>Open danger dialog</Button>
         <Button onclick={() => (largeOpen = true)}>Open large dialog</Button>
+        <Button variant="danger" onclick={() => { typedName = ""; nameOpen = true; }}>Open type-to-confirm dialog</Button>
         <Tooltip text="Tooltips explain icons; never hide required information in them.">
           {#snippet children(t)}<IconButton label="Help" aria-describedby={t.describedby}><Icon name="info" /></IconButton>{/snippet}
         </Tooltip>
@@ -450,6 +510,16 @@
   confirmLabel="Delete board"
 />
 <Dialog
+  bind:open={nameOpen}
+  tone="danger"
+  title="Delete the workspace?"
+  description="Type the workspace name, next-agent, to enable the button."
+  confirmLabel="Delete workspace"
+  confirmDisabled={typedName.trim() !== "next-agent"}
+>
+  <TextField label="Workspace name" hideLabel bind:value={typedName} autocomplete="off" />
+</Dialog>
+<Dialog
   bind:open={largeOpen}
   size="lg"
   title="Review the change"
@@ -461,6 +531,8 @@
   .stack { display: grid; gap: var(--space-3); }
   .demo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-4); align-items: start; }
+  .tiles-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-4); }
+  .stack-tight { display: grid; gap: var(--space-1); }
   .span2 { grid-column: 1 / -1; }
   .small { margin: 0; font-size: var(--font-size-sm); }
   code { font-size: var(--font-size-xs); color: var(--color-text-secondary); }

@@ -65,6 +65,7 @@ In CSS, use tokens only:
 
 - Light is the default; dark follows `prefers-color-scheme`.
 - `<html data-theme="light">` or `data-theme="dark"` forces a theme.
+- Code that cannot read CSS variables (Mermaid, canvas) asks `currentTheme()` from `lib/ds/theme.ts`: a forced `data-theme` wins over `prefers-color-scheme`. `watchTheme(cb)` fires when either changes. Mermaid diagrams re-render on a change.
 - `tokens.css` writes the dark values twice: once inside the media query and once for `[data-theme="dark"]`. The checker fails if the two blocks differ.
 
 ## Tokens
@@ -104,7 +105,7 @@ Legacy aliases (do not use in new code): `--bg --panel --sidebar --border --text
 | `--radius-xs / sm / md / lg / xl / full` | 3 / 4 / 6 / 10 / 14 / 999 px |
 | `--border-width`, `--border-width-strong` | 1px, 2px |
 | `--shadow-sm / md / lg / xl` | resting card / raised control / popover / dialog |
-| `--control-height-sm / md / lg` | 24 / 30 / 36 px, for buttons, fields and segmented controls |
+| `--control-height-xs / sm / md / lg` | 20 / 24 / 30 / 36 px; xs is for dense in-row controls (an outline twisty), the rest for buttons, fields and segmented controls |
 | `--content-max-width`, `--settings-nav-width` | 880px, 200px |
 
 ### Motion and layers
@@ -121,17 +122,18 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 ### Actions
 | Component | Props | Use when |
 |---|---|---|
-| **Button** | `variant` primary\|secondary\|ghost\|danger, `size` sm\|md\|lg, `loading`, `block`, `disabled`, snippets `icon`, `iconEnd` | Any text action. Use one primary per view. Danger is only for destructive actions. Ghost is for toolbars and low emphasis. `loading` keeps the width, sets `aria-busy` and blocks clicks. |
-| **IconButton** | `label` (required), `variant` ghost\|secondary\|danger, `size`, `pressed` | Icon-only actions. `label` is the accessible name and tooltip. `pressed` makes it a toggle. |
+| **Button** | `variant` primary\|secondary\|ghost\|danger, `size` sm\|md\|lg, `loading`, `pressed`, `block`, `disabled`, snippets `icon`, `iconEnd` | Any text action. Use one primary per view. Danger is only for destructive actions. Ghost is for toolbars and low emphasis. `loading` keeps the width, sets `aria-busy` and blocks clicks. `pressed` makes it a toggle: `aria-pressed` plus a tinted accent, so don't switch variants by hand. |
+| **FormActions** | `label`, `inset`, snippet `children` | The Save / Cancel bar at the end of a form. Right-aligned, secondary actions first and the primary last. Below 420px it stacks full-width with the primary on top. `inset` adds padding when it sits inside a bordered box. |
+| **IconButton** | `label` (required), `variant` ghost\|secondary\|danger, `size` xs (20px)\|sm\|md\|lg, `pressed` | Icon-only actions. `size="xs"` is for dense rows. `label` is the accessible name and tooltip. `pressed` makes it a toggle. |
 | **Icon** | `name` (see `ICON_NAMES`), `size`, `label` | The built-in stroke icons. They are decorative unless `label` is set. |
 
 ### Inputs
 | Component | Props | Use when |
 |---|---|---|
 | **Field** | `label`, `hint`, `error`, `required`, `hideLabel`, `id`, snippet `children({id, describedby, invalid, labelId})` | Labelling any custom control. It wires the label and `aria-describedby` for you. |
-| **TextField** | bindable `value`, `label`, `hint`, `error`, `hideLabel`, `size`, `mono`, snippets `prefix` and `suffix` | Single-line text. With `label` it wraps itself in a Field; without one, pass `aria-label`. |
-| **TextArea** | bindable `value`, `label`, `hint`, `error`, `rows`, `mono`, `resize` | Multi-line text. |
-| **Select** | bindable `value`, `options: {value,label,disabled?}[]`, `label`, `placeholder`, `size`, `error` | Choosing one of more than about 5 options. Use a native select. |
+| **TextField** | bindable `value` (`string`, `number`, `null` or `undefined`), `label`, `hint`, `error`, `hideLabel`, `size`, `mono`, bindable `ref` (the `<input>`), snippets `prefix` and `suffix` | Single-line text. With `label` it wraps itself in a Field; without one, pass `aria-label`. |
+| **TextArea** | bindable `value` (also `null` or `undefined`), `label`, `hint`, `error`, `rows`, `mono`, `resize`, `autogrow`, `compact`, bindable `ref` (the `<textarea>`), exported `fit()` | Multi-line text. `autogrow` grows with the content (`rows` is the minimum); call `fit()` after setting the element's value from code. `compact` is tight padding for editing text in place. |
+| **Select** | bindable `value` (also `null` or `undefined`: nothing chosen, the placeholder shows), `options: {value,label,description?,disabled?}[]` (`description` is the option's tooltip), `label`, `placeholder`, `size`, `error` | Choosing one of more than about 5 options. Use a native select. |
 | **ShortcutField** | bindable `value` ("Ctrl+Shift+K"), `label` or `id`, `requireModifier`, `clearable`, `platform`, `record`, `onrecording` | Recording a global shortcut. Click, then press keys. Esc cancels; Backspace clears. Pass Coucou's recorder as `record` to keep its AltGr rules. `onrecording` pauses global shortcuts while recording. |
 | **Kbd** | `keys`, `platform`, `size` | Showing a shortcut as keycaps (⌘⇧K on a Mac, Ctrl+Shift+K elsewhere). |
 
@@ -141,21 +143,22 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 | **Switch** | bindable `checked`, `label`, `size` sm\|md, `onchange` | An on/off setting that applies at once. In a SettingsRow, leave out `label` and pass `id`. |
 | **Checkbox** | bindable `checked` and `indeterminate`, `label`, `description` | Choices confirmed later (a form), multi-select, select-all. |
 | **RadioGroup** | bindable `value`, `options` (with `description`), `label` (legend), `orientation`, `hint` | Choosing one of 2–5 options that need explanation. |
-| **SegmentedControl** | bindable `value`, `options`, `label` or `labelledby`, `size`, `block` | Choosing one of 2–4 short options that switch a mode or view (Coucou's "pills"). Arrow keys move the choice. |
+| **SegmentedControl** | bindable `value`, `options` (`description` is each segment's tooltip), `label` or `labelledby`, `size`, `block` | Choosing one of 2–4 short options that switch a mode or view (Coucou's "pills"). Arrow keys move the choice. |
 | **Slider** | bindable `value`, `min`, `max`, `step`, `showValue`, `format` | Choosing from a continuous range (volume, opacity). `format` also sets `aria-valuetext`. |
 | **ColorSwatchGroup** | bindable `value`, `swatches: {value,label,color}[]`, `label` or `labelledby` | Picking a colour from a palette. The colours are the caller's data; the control itself uses tokens. |
 
 ### Settings
 | Component | Props | Use when |
 |---|---|---|
-| **SettingsLayout** | `title`, `description`, `nav: {id,label,href,badge?}[]`, `current`, snippets `top`, `actions`, `children` | Every settings page: section nav on the left and content on the right. Below a 640px container width, the nav moves to a strip on top. |
+| **SettingsLayout** | `title`, `description`, `nav: {id,label,href,badge?}[]`, `current`, snippets `top`, `actions`, `children` | Every settings page: section nav on the left and content on the right. Below a 640px container width, the nav moves to a strip on top. The header's `actions` wrap under the title when there is no room, so a control never overlaps the description. |
 | **SettingsSection** | `title`, `description`, `id`, snippets `actions`, `footer`, `children` | A group of rows in one bordered box, with a heading and optional header actions. |
 | **SettingsRow** | `label`, `description`, `error`, `stacked`, `disabled`, `id`, snippet `children({id, describedby, invalid, labelId})` | **The main building block.** Label and description on the left, the control on the right. Put `id` on single controls; put `labelledby={labelId}` on groups. Use `stacked` for wide controls. It stacks by itself when narrow. |
 
 ### Feedback
 | Component | Props | Use when |
 |---|---|---|
-| **Banner** | `tone` info\|ok\|warn\|danger, `title`, `ondismiss`, snippets `actions`, `children` | A page-level message. Danger is `role="alert"`; the other tones are `role="status"`. |
+| **Banner** | `tone` info\|ok\|warn\|danger, `title`, `ondismiss`, `compact`, `role`, snippets `actions`, `children` | A page-level message. Danger is `role="alert"`; the other tones are `role="status"`. `compact` is one small line with less padding, for notices inside a log or timeline. Inside a region that already announces (`role="log"`), pass `role="status"` so an error is not announced twice. |
+| **StatTile** | `label`, `value`, `delta`, `hint`, `tone` neutral\|accent\|info\|ok\|warn\|danger, snippet `children` | One headline number with its label (usage totals). `delta` ("+8%", "3 failed") takes the tone colour and always says it in words. Lay tiles out in a CSS grid: `repeat(auto-fit, minmax(150px, 1fr))`. |
 | **Badge** | `tone` neutral\|accent\|info\|ok\|warn\|danger, `variant` subtle\|solid\|outline, `size` | A short label or count. Not clickable. |
 | **StatusDot** | `tone`, `text` or `label`, `pulse` | Connection or run state in rows ("Installed", "Online"). Always give text or a label. |
 | **Spinner** | `size`, `label` | Short, unknown waits. Use `label=""` when a parent already announces the wait. |
@@ -166,16 +169,19 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 | Component | Props | Use when |
 |---|---|---|
 | **Card** | `title`, `description`, `variant` default\|hero\|subtle, `padding`, `level`, snippets `media`, `actions`, `children` | Grouping content. `hero` is for about and intro cards, with `<BrandMark>` as `media`. |
-| **List / ListRow** | List: `label`, `bordered`. ListRow: `title`, `description`, `meta`, `selected`, `disabled`, `onclick` or `href`, snippets `leading`, `actions`, `children` | Lists of things with per-item actions (bots, rules, providers). The row body can be one button or link; actions stay separate buttons. |
+| **List / ListRow** | List: `label`, `bordered`. ListRow: `title`, `description`, `meta`, `tooltip`, `selected`, `selectedAs` pressed\|current, `disabled`, `onclick` or `href`, snippets `leading`, `actions`, `children` | Lists of things with per-item actions (bots, rules, providers). The row body can be one button or link; actions stay separate buttons. `tooltip` sets the native title (the full path behind a short name). A selected button row is `aria-pressed` (a toggle); use `selectedAs="current"` in navigation lists for `aria-current`. |
+| **Table** | `columns: {key,label,align?,sortable?,value?,sortValue?,nowrap?}[]`, `rows`, `rowKey`, `label` (required), bindable `sortKey` and `sortDir`, `empty`, `emptyDescription`, `onsort`, snippet `cell(row, column)` | Data that is clearly tabular (usage by model, commits). Sortable columns get a header button and `aria-sort`; `align="end"` right-aligns numbers in tabular figures; `sortValue` sorts by a raw value behind a formatted one; empty values sort last. With no rows it shows an `EmptyState`. At narrow widths it scrolls sideways inside a focusable region. For lists of things with actions, use ListRow. |
 | **Tabs** | `tabs: {id,label,disabled?,badge?}[]`, bindable `value`, `label`, snippet `children(activeId)` | Switching views of the same object. Arrow keys, Home and End move between tabs. Use SettingsLayout's nav for page-level navigation instead. |
-| **Dialog** | bindable `open`, `title`, `description`, `confirmLabel`, `cancelLabel`, `tone` default\|danger, `size` md\|lg (lg: a diff or a table), `busy`, `hideConfirm`, `onconfirm` (may be async), `oncancel`, snippet `children` | Confirming a consequential action. It uses native `<dialog>`, which traps focus and closes on Esc. `danger` focuses Cancel first. |
+| **Dialog** | bindable `open`, `title`, `description`, `confirmLabel`, `cancelLabel`, `tone` default\|danger, `size` md\|lg (lg: a diff or a table), `busy`, `hideConfirm`, `confirmDisabled`, `onconfirm` (may be async), `oncancel`, snippet `children` | Confirming a consequential action. It uses native `<dialog>`, which traps focus and closes on Esc. `danger` focuses Cancel first and sets `role="alertdialog"`. `confirmDisabled` keeps Confirm off until the dialog's own condition holds (a typed name matches). |
 | **Tooltip** | `text`, `placement` top\|bottom, snippet `children({describedby})` | Explaining an icon. Never hide required information in a tooltip. |
 | **BrandMark** | `size`, `label` | The red orb as a static brand mark. |
 
 Pure helpers (tested in `apps/desktop/tests/ds.test.ts`):
 
 - `recordPress`, `pressedKey`, `formatKeys`, `shortcutParts` and `shortcutLabel` (`shortcut.ts`);
-- `rovingIndex` (`keyboard.ts`).
+- `rovingIndex` (`keyboard.ts`);
+- `resolveTheme` (`theme.ts`);
+- `sortRows`, `compareValues` and `nextSort` (`table.ts`).
 
 ## Do and don't
 

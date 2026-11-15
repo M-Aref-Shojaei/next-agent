@@ -6,7 +6,11 @@
     description,
     /** Small text before the actions (a date, a count). */
     meta,
+    /** A native tooltip for the row (the full path behind a short name). */
+    tooltip,
     selected = false,
+    /** How a selected button row is announced: "pressed" (a toggle, default) or "current" (aria-current, for navigation lists). */
+    selectedAs = "pressed",
     disabled = false,
     /** Makes the row's main area a button. Actions stay separate buttons. */
     onclick,
@@ -19,7 +23,9 @@
     title: string;
     description?: string;
     meta?: string;
+    tooltip?: string;
     selected?: boolean;
+    selectedAs?: "pressed" | "current";
     disabled?: boolean;
     onclick?: () => void;
     href?: string;
@@ -43,11 +49,19 @@
 
 <li class="ds-row" class:selected class:disabled>
   {#if href && !disabled}
-    <a class="main interactive" {href} aria-current={selected ? "page" : undefined}>{@render body()}</a>
+    <a class="main interactive" {href} title={tooltip} aria-current={selected ? "page" : undefined}>{@render body()}</a>
   {:else if onclick}
-    <button type="button" class="main interactive" {disabled} aria-pressed={selected} {onclick}>{@render body()}</button>
+    <button
+      type="button"
+      class="main interactive"
+      {disabled}
+      title={tooltip}
+      aria-pressed={selectedAs === "pressed" ? selected : undefined}
+      aria-current={selectedAs === "current" && selected ? "true" : undefined}
+      {onclick}
+    >{@render body()}</button>
   {:else}
-    <div class="main">{@render body()}</div>
+    <div class="main" title={tooltip}>{@render body()}</div>
   {/if}
   {#if meta || actions}
     <span class="end">

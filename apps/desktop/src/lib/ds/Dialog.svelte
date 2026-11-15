@@ -8,7 +8,7 @@
     description,
     confirmLabel = "Confirm",
     cancelLabel = "Cancel",
-    /** "danger" paints the confirm button red and focuses Cancel first. */
+    /** "danger" paints the confirm button red, focuses Cancel first and makes the dialog an alertdialog. */
     tone = "default",
     /** "lg" for a body that needs room (a diff, a table). */
     size = "md",
@@ -16,6 +16,8 @@
     busy = false,
     /** Hide the confirm button (an informational dialog with one "Close"). */
     hideConfirm = false,
+    /** Keeps the confirm button disabled until the dialog's own condition holds (a typed name matches). */
+    confirmDisabled = false,
     onconfirm,
     oncancel,
     /** Extra body content (a form, a list of what will change). */
@@ -30,6 +32,7 @@
     size?: "md" | "lg";
     busy?: boolean;
     hideConfirm?: boolean;
+    confirmDisabled?: boolean;
     /** Return a promise to keep the dialog open (busy) until it settles; throw to keep it open. */
     onconfirm?: () => void | Promise<void>;
     oncancel?: () => void;
@@ -68,6 +71,7 @@
 <dialog
   bind:this={dialog}
   class="ds-dialog {size}"
+  role={tone === "danger" ? "alertdialog" : undefined}
   aria-labelledby="{uid}-title"
   aria-describedby={description ? `${uid}-desc` : undefined}
   oncancel={(e) => { e.preventDefault(); cancel(); }}
@@ -87,6 +91,7 @@
         <Button
           variant={tone === "danger" ? "danger" : "primary"}
           loading={busy || running}
+          disabled={confirmDisabled}
           onclick={confirm}
           autofocus={tone !== "danger"}
         >{confirmLabel}</Button>

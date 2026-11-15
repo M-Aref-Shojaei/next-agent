@@ -67,7 +67,7 @@
 
 <span class="recorder">
   <Keycap {text} active={recording} />
-  <Button {id} aria-describedby={describedby} size="sm" aria-pressed={recording} onclick={() => (recording ? stop() : start())}>
+  <Button {id} aria-describedby={describedby} size="sm" pressed={recording} onclick={() => (recording ? stop() : start())}>
     {recording ? "Cancel" : "Record"}
   </Button>
 </span>

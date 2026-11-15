@@ -9,29 +9,35 @@
     title,
     /** Shows a close button; the caller removes the banner in ondismiss. */
     ondismiss,
+    /** One line of small text with less padding: notices inside a log or a timeline. */
+    compact = false,
+    /** Overrides the live-region role. Inside a region that already announces (role="log"), pass "status" so an error is not announced twice. */
+    role: roleOverride,
     actions,
     children,
   }: {
     tone?: StatusTone;
     title?: string;
     ondismiss?: () => void;
+    compact?: boolean;
+    role?: "status" | "alert";
     actions?: Snippet;
     children?: Snippet;
   } = $props();
 
   // Danger interrupts (alert); the others are polite status updates.
-  const role = $derived(tone === "danger" ? "alert" : "status");
+  const role = $derived(roleOverride ?? (tone === "danger" ? "alert" : "status"));
 </script>
 
-<div class="ds-banner {tone}" {role}>
-  <span class="icon"><Icon name={tone} size={16} /></span>
+<div class="ds-banner {tone}" class:compact {role}>
+  <span class="icon"><Icon name={tone} size={compact ? 14 : 16} /></span>
   <div class="text">
     {#if title}<p class="title">{title}</p>{/if}
     {#if children}<div class="body">{@render children()}</div>{/if}
     {#if actions}<div class="actions">{@render actions()}</div>{/if}
   </div>
   {#if ondismiss}
-    <IconButton label="Dismiss" size="sm" onclick={ondismiss}><Icon name="x" size={14} /></IconButton>
+    <IconButton label="Dismiss" size={compact ? "xs" : "sm"} onclick={ondismiss}><Icon name="x" size={14} /></IconButton>
   {/if}
 </div>
 
@@ -50,6 +56,9 @@
     color: var(--color-text);
     line-height: var(--line-height-normal);
   }
+  .compact { gap: var(--space-1-5); padding: var(--space-1) var(--space-2); font-size: var(--font-size-sm); }
+  .compact .icon { padding-top: var(--space-0-5); }
+  .compact .body { font-size: var(--font-size-sm); }
   .ok { --t-bg: var(--color-ok-subtle); --t-fg: var(--color-ok-text); --t-line: var(--color-ok-border); }
   .warn { --t-bg: var(--color-warn-subtle); --t-fg: var(--color-warn-text); --t-line: var(--color-warn-border); }
   .danger { --t-bg: var(--color-danger-subtle); --t-fg: var(--color-danger-text); --t-line: var(--color-danger-border); }

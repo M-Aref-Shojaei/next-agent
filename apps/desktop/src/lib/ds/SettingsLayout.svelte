@@ -96,11 +96,12 @@
   .content { min-width: 0; overflow: auto; padding: var(--space-6) var(--space-8) var(--space-12); }
   .top, header, .body { max-width: var(--content-max-width); }
   .top { margin-bottom: var(--space-3); font-size: var(--font-size-sm); }
-  header { display: flex; align-items: flex-end; gap: var(--space-3); margin-bottom: var(--space-6); }
-  .heading { flex: 1; min-width: 0; display: grid; gap: var(--space-1); }
+  header { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); margin-bottom: var(--space-6); }
+  /* The basis makes the actions wrap under the title instead of squeezing it. */
+  .heading { flex: 1 1 20rem; min-width: 0; display: grid; gap: var(--space-1); }
   h1 { font-size: var(--font-size-xl); }
   header p { margin: 0; color: var(--color-text-secondary); }
-  .actions { display: flex; gap: var(--space-2); }
+  .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); max-width: 100%; }
   .body { display: grid; gap: var(--space-8); }
 
   @container settings (max-width: 640px) {
@@ -108,5 +109,7 @@
     nav { padding: var(--space-2); border-right: 0; border-bottom: var(--border-width) solid var(--color-border); }
     ul { display: flex; overflow-x: auto; }
     .content { padding: var(--space-4) var(--space-4) var(--space-10); }
+    header { margin-bottom: var(--space-4); }
+    .heading { flex-basis: 100%; }
   }
 </style>

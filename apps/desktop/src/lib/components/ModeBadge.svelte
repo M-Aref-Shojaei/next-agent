@@ -23,9 +23,7 @@
     } else onselect(next);
   }
   const matches = $derived(bypassConfirmed(typed, workspaceName));
-  /** The dialog stays open (the confirm throws) until the workspace name matches. */
   function confirm() {
-    if (!matches) throw new Error("Workspace name does not match");
     onselect("bypassPermissions");
   }
 </script>
@@ -57,6 +55,7 @@
     tone="danger"
     title="Enable Bypass mode?"
     confirmLabel="Enable Bypass"
+    confirmDisabled={!matches}
     onconfirm={confirm}
   >
     <p class="warning">

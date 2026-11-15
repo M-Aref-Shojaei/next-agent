@@ -2,8 +2,8 @@
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
   import {
-    Badge, Banner, ProgressBar, SegmentedControl, Select, SettingsLayout, SettingsRow, SettingsSection,
-    type Option, type SettingsNavItem,
+    Badge, Banner, ProgressBar, SegmentedControl, Select, SettingsLayout, SettingsRow, SettingsSection, StatTile, Table,
+    type Option, type SettingsNavItem, type TableColumn,
   } from "$lib/ds/index.ts";
   import {
     dailyBars,
@@ -15,8 +15,10 @@
     budgetPercent,
     cacheHitRate,
     switchReason,
+    type UsageRecent,
     type UsageSummary,
     type UsageTotals,
+    type ModelSwitch,
   } from "$lib/gateway.ts";
 
   type Metric = "cost" | "tokens" | "requests";
@@ -78,6 +80,31 @@
       : [],
   );
   const tokens = (t: UsageTotals) => t.promptTokens + t.completionTokens;
+
+  const totalsColumns: TableColumn<UsageTotals>[] = [
+    { key: "name", label: "Name", sortable: true, value: (r) => r.key || "—" },
+    { key: "requests", label: "Requests", align: "end", sortable: true, value: (r) => r.requests },
+    { key: "tokens", label: "Tokens", align: "end", sortable: true, value: (r) => formatTokens(tokens(r)), sortValue: tokens },
+    { key: "cost", label: "Cost (est.)", align: "end", sortable: true, value: (r) => formatCost(r.cost) , sortValue: (r) => r.cost },
+  ];
+  const recentColumns: TableColumn<UsageRecent>[] = [
+    { key: "time", label: "Time", sortable: true, nowrap: true, sortValue: (r) => r.ts },
+    { key: "role", label: "Role", sortable: true, value: (r) => r.role },
+    { key: "model", label: "Provider / model", sortable: true, value: (r) => `${r.provider}/${r.model}` },
+    { key: "status", label: "Status", sortable: true, value: (r) => r.status },
+    { key: "in", label: "In", align: "end", sortable: true, value: (r) => r.promptTokens },
+    { key: "out", label: "Out", align: "end", sortable: true, value: (r) => r.completionTokens },
+    { key: "cost", label: "Cost", align: "end", sortable: true, value: (r) => (r.costKnown ? r.cost : null) },
+    { key: "latency", label: "Latency", align: "end", sortable: true, nowrap: true, value: (r) => r.latencyMs },
+  ];
+  const switchColumns: TableColumn<ModelSwitch>[] = [
+    { key: "time", label: "Time", nowrap: true, sortable: true, sortValue: (r) => r.ts },
+    { key: "combo", label: "Combo", sortable: true, value: (r) => r.combo },
+    { key: "task", label: "Task", value: (r) => r.session },
+    { key: "route", label: "From → to", value: (r) => `${r.from} → ${r.to}` },
+    { key: "why", label: "Why", value: (r) => switchReason(r.reason) },
+    { key: "quality", label: "Quality", align: "end", sortable: true, value: (r) => (r.reason === "failover" ? null : r.confidence) },
+  ];
 </script>
 
 <SettingsLayout title="Usage" {nav} description="What the gateway sent, and what it cost (estimates from the price table).">
@@ -91,19 +118,16 @@
   {#if usage}
     <SettingsSection id="totals" title="Totals">
       <div class="cards">
-        <div><span class="muted">Requests</span><strong>{usage.totals.requests}</strong>
-          {#if usage.totals.failures}<span class="muted">{usage.totals.failures} failed</span>{/if}</div>
-        <div><span class="muted">Input tokens</span><strong>{formatTokens(usage.totals.promptTokens)}</strong>
-          <span class="muted">{formatTokens(usage.totals.cachedTokens)} cached</span></div>
-        <div><span class="muted">Output tokens</span><strong>{formatTokens(usage.totals.completionTokens)}</strong></div>
-        <div><span class="muted">Cost (estimate)</span><strong>{formatCost(usage.totals.cost)}</strong></div>
-        <div><span class="muted">Prompt cache hit rate</span><strong>{cacheHitRate(usage.totals)}%</strong>
-          <span class="muted">of input tokens</span></div>
-        <div><span class="muted">Response cache</span><strong>{usage.cacheHits} hits</strong>
-          <span class="muted">saved {formatTokens(usage.cacheSavedTokens)} tokens · {formatCost(usage.cacheSavedCost)}</span></div>
-        <div><span class="muted">Tool output saved (RTK)</span>
-          <strong>{savedPercent(usage.saverBytesBefore, usage.saverBytesAfter)}%</strong>
-          <span class="muted">{formatTokens(usage.saverBytesBefore - usage.saverBytesAfter)} bytes</span></div>
+        <StatTile label="Requests" value={usage.totals.requests}
+          delta={usage.totals.failures ? `${usage.totals.failures} failed` : undefined} tone={usage.totals.failures ? "danger" : "neutral"} />
+        <StatTile label="Input tokens" value={formatTokens(usage.totals.promptTokens)} hint="{formatTokens(usage.totals.cachedTokens)} cached" />
+        <StatTile label="Output tokens" value={formatTokens(usage.totals.completionTokens)} />
+        <StatTile label="Cost (estimate)" value={formatCost(usage.totals.cost)} />
+        <StatTile label="Prompt cache hit rate" value="{cacheHitRate(usage.totals)}%" hint="of input tokens" />
+        <StatTile label="Response cache" value="{usage.cacheHits} hits"
+          hint="saved {formatTokens(usage.cacheSavedTokens)} tokens · {formatCost(usage.cacheSavedCost)}" />
+        <StatTile label="Tool output saved (RTK)" value="{savedPercent(usage.saverBytesBefore, usage.saverBytesAfter)}%"
+          hint="{formatTokens(usage.saverBytesBefore - usage.saverBytesAfter)} bytes" />
       </div>
     </SettingsSection>
 
@@ -145,93 +169,48 @@
     <div id="breakdowns" class="breakdowns">
       {#each breakdowns as group (group.title)}
         <SettingsSection title={group.title}>
-          {#if group.rows.length === 0}
-            <p class="note">No requests yet.</p>
-          {:else}
-            <div class="scroll">
-              <table>
-                <thead><tr><th>Name</th><th>Requests</th><th>Tokens</th><th>Cost (est.)</th></tr></thead>
-                <tbody>
-                  {#each group.rows as row (row.key)}
-                    <tr><td>{row.key || "—"}</td><td>{row.requests}</td><td>{formatTokens(tokens(row))}</td><td>{formatCost(row.cost)}</td></tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {/if}
+          <Table label={group.title} columns={totalsColumns} rows={group.rows} rowKey={(r) => r.key} empty="No requests yet." />
         </SettingsSection>
       {/each}
     </div>
 
     <SettingsSection id="recent" title="Recent requests">
       {#snippet footer()}Costs are estimates from the price table (edit <code>pricing.json</code> in the app data folder to override). Models without a price count as $0.{/snippet}
-      {#if usage.recent.length === 0}
-        <p class="note">No requests in this period.</p>
-      {:else}
-        <div class="scroll">
-          <table>
-            <thead><tr><th>Time</th><th>Role</th><th>Provider / model</th><th>Status</th><th>In</th><th>Out</th><th>Cost</th><th>Latency</th></tr></thead>
-            <tbody>
-              {#each usage.recent as row, i (i)}
-                <tr>
-                  <td>{formatTs(row.ts)}</td>
-                  <td>{row.role}</td>
-                  <td>{row.provider}/{row.model}{#if row.combo} <span class="muted">({row.combo})</span>{/if}</td>
-                  <td><Badge size="sm" tone={row.status >= 200 && row.status < 300 ? "ok" : "danger"}>{row.status || "error"}</Badge></td>
-                  <td>{formatTokens(row.promptTokens)}</td>
-                  <td>{formatTokens(row.completionTokens)}</td>
-                  <td title={row.costKnown ? "Estimate from the price table" : "Unknown model: no price"}>{row.costKnown ? formatCost(row.cost) : "—"}</td>
-                  <td>{(row.latencyMs / 1000).toFixed(1)} s</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
+      <Table label="Recent requests" columns={recentColumns} rows={usage.recent} empty="No requests in this period." sortKey="time" sortDir="desc">
+        {#snippet cell(row, col)}
+          {#if col.key === "time"}{formatTs(row.ts)}
+          {:else if col.key === "model"}{row.provider}/{row.model}{#if row.combo} <span class="muted">({row.combo})</span>{/if}
+          {:else if col.key === "status"}<Badge size="sm" tone={row.status >= 200 && row.status < 300 ? "ok" : "danger"}>{row.status || "error"}</Badge>
+          {:else if col.key === "in"}{formatTokens(row.promptTokens)}
+          {:else if col.key === "out"}{formatTokens(row.completionTokens)}
+          {:else if col.key === "cost"}<span title={row.costKnown ? "Estimate from the price table" : "Unknown model: no price"}>{row.costKnown ? formatCost(row.cost) : "—"}</span>
+          {:else if col.key === "latency"}{(row.latencyMs / 1000).toFixed(1)} s
+          {:else}{col.value?.(row)}{/if}
+        {/snippet}
+      </Table>
     </SettingsSection>
 
     <SettingsSection id="switches" title="Model switches (smart combos)">
-      {#if usage.switches.length === 0}
-        <p class="note">No smart combo changed models in this period.</p>
-      {:else}
-        <div class="scroll">
-          <table>
-            <thead><tr><th>Time</th><th>Combo</th><th>Task</th><th>From → to</th><th>Why</th><th>Quality</th></tr></thead>
-            <tbody>
-              {#each usage.switches as row, i (i)}
-                <tr>
-                  <td>{formatTs(row.ts)}</td>
-                  <td>{row.combo}</td>
-                  <td><code>{row.session || "—"}</code></td>
-                  <td>{row.from} → {row.to}</td>
-                  <td>{switchReason(row.reason)}</td>
-                  <td>{row.reason === "failover" ? "—" : row.confidence.toFixed(1)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
+      <Table label="Model switches" columns={switchColumns} rows={usage.switches} empty="No smart combo changed models in this period.">
+        {#snippet cell(row, col)}
+          {#if col.key === "time"}{formatTs(row.ts)}
+          {:else if col.key === "task"}<code>{row.session || "—"}</code>
+          {:else if col.key === "quality"}{row.reason === "failover" ? "—" : row.confidence.toFixed(1)}
+          {:else}{col.value?.(row)}{/if}
+        {/snippet}
+      </Table>
     </SettingsSection>
   {/if}
 </SettingsLayout>
 
 <style>
   .muted { color: var(--color-text-tertiary); }
-  .note { margin: 0; padding: var(--space-3) var(--space-4); color: var(--color-text-secondary); font-size: var(--font-size-sm); }
   code { font-family: var(--font-mono); font-size: var(--font-size-xs); }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-4); padding: var(--space-4); }
-  .cards div { display: grid; gap: var(--space-0-5); align-content: start; font-size: var(--font-size-sm); }
-  .cards strong { font-size: var(--font-size-xl); }
   .meter { width: 200px; max-width: 100%; }
   .chart-box { padding: var(--space-4); }
   .chart { width: 100%; height: 140px; }
   .chart rect { fill: var(--color-accent); }
   .axis { display: flex; justify-content: space-between; font-size: var(--font-size-xs); margin-top: var(--space-1); }
   .breakdowns { display: grid; gap: var(--space-8); }
-  .scroll { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
-  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: var(--border-width) solid var(--color-border-subtle); }
-  th { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); white-space: nowrap; }
-  tbody tr:last-child td { border-bottom: 0; }
 </style>

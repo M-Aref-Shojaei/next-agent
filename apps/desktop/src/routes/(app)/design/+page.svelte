@@ -450,7 +450,7 @@
             <div class="focus">
               <div class="row between">
                 <Button onclick={() => (openId = null)}>← All directions</Button>
-                <SegmentedControl label="Versions" size="sm" options={versions.map((v, i) => ({ value: v.id, label: `v${i + 1}` }))} value={open.id} onchange={(id) => (openId = id)} />
+                <SegmentedControl label="Versions" size="sm" options={versions.map((v, i) => ({ value: v.id, label: `v${i + 1}`, description: v.note || "Original" }))} value={open.id} onchange={(id) => (openId = id)} />
               </div>
               <h2>{open.title}</h2>
               {#if open.rationale}<p class="muted">{open.rationale}</p>{/if}
@@ -473,7 +473,7 @@
             {#if preview}
               <Button onclick={reload}>Reload</Button>
               <Button onclick={stopPreview}>Stop</Button>
-              <Button variant={selecting ? "primary" : "secondary"} aria-pressed={selecting} onclick={() => (selecting = !selecting)} title="Click elements in the preview to inspect them">Select elements</Button>
+              <Button pressed={selecting} onclick={() => (selecting = !selecting)} title="Click elements in the preview to inspect them">Select elements</Button>
               <Select id="preview-frame" label="Frame" hideLabel bind:value={previewFrame} options={FRAME_OPTIONS} />
             {/if}
           </form>
