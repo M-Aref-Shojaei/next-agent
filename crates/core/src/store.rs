@@ -1699,17 +1699,13 @@ impl Store {
             self.conn
                 .query_row("SELECT date('now', ?1)", [offset], |row| row.get(0))?
         };
-        let group = |column: &str| -> Result<Vec<UsageTotals>, StoreError> {
+        let by_cost = "SUM(cost) DESC, SUM(requests) DESC";
+        let group = |column: &str, order: &str| -> Result<Vec<UsageTotals>, StoreError> {
             let sql = format!(
                 "SELECT {column}, SUM(requests), SUM(failures), SUM(prompt_tokens),
                     SUM(completion_tokens), SUM(cached_tokens), SUM(reasoning_tokens), SUM(cost)
                  FROM llm_usage_daily WHERE day >= ?1 GROUP BY {column}
-                 ORDER BY {}",
-                if column == "day" {
-                    "day ASC"
-                } else {
-                    "SUM(cost) DESC, SUM(requests) DESC"
-                }
+                 ORDER BY {order}"
             );
             let mut statement = self.conn.prepare(&sql)?;
             let rows = statement.query_map([&since], |row| {
@@ -1726,10 +1722,10 @@ impl Store {
             })?;
             Ok(rows.collect::<Result<_, _>>()?)
         };
-        let by_provider = group("provider")?;
-        let by_model = group("model")?;
-        let by_role = group("role")?;
-        let daily = group("day")?;
+        let by_provider = group("provider", by_cost)?;
+        let by_model = group("model", by_cost)?;
+        let by_role = group("role", by_cost)?;
+        let daily = group("day", "day ASC")?;
         let mut totals = UsageTotals {
             key: "total".into(),
             ..UsageTotals::default()
