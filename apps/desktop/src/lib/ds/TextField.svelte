@@ -38,14 +38,14 @@
 </script>
 
 {#snippet input(ctl: FieldControl | undefined)}
-  <div class="ds-input {size} {className}" class:invalid={ctl?.invalid || !!error} class:disabled={rest.disabled}>
+  <div class="ds-input {size} {className}" class:invalid={!!error} class:disabled={rest.disabled}>
     {#if prefix}<span class="affix">{@render prefix()}</span>{/if}
     <input
       {...rest}
       id={ctl?.id ?? id}
       class:mono
       {required}
-      aria-invalid={ctl?.invalid || !!error || undefined}
+      aria-invalid={!!error || undefined}
       aria-describedby={ctl?.describedby ?? rest["aria-describedby"] ?? undefined}
       bind:value
     />
@@ -63,6 +63,8 @@
 
 <style>
   .ds-input {
+    width: var(--ds-control-width, auto);
+    max-width: 100%;
     display: flex;
     align-items: center;
     gap: var(--space-1-5);
@@ -77,9 +79,9 @@
   .sm { height: var(--control-height-sm); font-size: var(--font-size-sm); }
   .lg { height: var(--control-height-lg); }
   .ds-input:hover { border-color: var(--color-border-strong); }
-  .ds-input:focus-within { border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-subtle); }
+  .ds-input:focus-within { border-color: var(--color-accent); box-shadow: var(--field-focus-ring); }
   .ds-input.invalid { border-color: var(--color-danger); }
-  .ds-input.invalid:focus-within { box-shadow: 0 0 0 3px var(--color-danger-subtle); }
+  .ds-input.invalid:focus-within { box-shadow: var(--field-focus-ring-invalid); }
   .ds-input.disabled { background: var(--color-surface-sunken); opacity: 0.7; }
   input {
     flex: 1;

@@ -68,8 +68,9 @@
   .desc { color: var(--color-text-secondary); }
   .error { color: var(--color-danger-text); }
   .control { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; flex-wrap: wrap; }
-  /* Text inputs get a usable width beside the label. */
-  .control > :global(.ds-input) { width: 260px; max-width: 100%; }
+  /* Text-entry controls read --ds-control-width (TextField, Select). */
+  .control { --ds-control-width: 260px; }
+  .stacked .control { --ds-control-width: 100%; }
   .stacked .control { justify-content: stretch; }
   .stacked .control > :global(*) { flex: 1; }
   @container (max-width: 480px) {

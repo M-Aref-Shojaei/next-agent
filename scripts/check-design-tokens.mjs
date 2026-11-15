@@ -7,8 +7,7 @@
 // entry must be removed once its file is clean. Later tasks shrink it to zero.
 //
 // Usage: node scripts/check-design-tokens.mjs [--list]   (--list prints every finding)
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
 import { applyAllowlist, darkThemeParity, scanFile } from "./lib/design-tokens.mjs";
 
 const ROOT = "apps/desktop/src";
@@ -16,17 +15,13 @@ const TOKENS = `${ROOT}/lib/ds/tokens.css`;
 const ALLOWLIST = "scripts/design-tokens-allowlist.json";
 const EXT = /\.(svelte|css|[cm]?ts)$/;
 
-function walk(dir, files = []) {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, files);
-    else if (EXT.test(entry) && !entry.endsWith(".d.ts")) files.push(relative(".", full).split("\\").join("/"));
-  }
-  return files;
-}
+const files = readdirSync(ROOT, { recursive: true, withFileTypes: true })
+  .filter((e) => e.isFile() && EXT.test(e.name) && !e.name.endsWith(".d.ts"))
+  .map((e) => `${e.parentPath}/${e.name}`.split("\\").join("/"))
+  .sort();
 
 const results = new Map();
-for (const file of walk(ROOT)) {
+for (const file of files) {
   if (file === TOKENS) continue;
   results.set(file, scanFile(file, readFileSync(file, "utf8")));
 }
@@ -44,5 +39,7 @@ if (failures.length) {
   console.error(`Design token check failed (docs/design/Design System.md):\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
-const pending = allow.reduce((n, e) => n + (e.max ?? 0), 0);
-console.log(`Design token check passed (${allow.length} allowlisted entries, ${pending} raw values left to move to tokens).`);
+const listed = allow.filter((e) => !e.pending);
+const left = listed.reduce((n, e) => n + e.max, 0);
+const pending = allow.filter((e) => e.pending).map((e) => e.path).join(", ");
+console.log(`Design token check passed (${listed.length} allowlisted files, ${left} raw values left to move to tokens; pending, not scanned: ${pending || "none"}).`);

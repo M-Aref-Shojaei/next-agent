@@ -24,13 +24,15 @@
     clearTimeout(timer);
     open = false;
   }
-</script>
 
-<svelte:window onkeydown={(e) => { if (e.key === "Escape") hide(); }} />
+  // Unmount: drop a pending show.
+  $effect(() => () => clearTimeout(timer));
+</script>
 
 <span
   class="ds-tooltip"
   role="presentation"
+  onkeydown={(e) => { if (e.key === "Escape") hide(); }}
   onpointerenter={() => show()}
   onpointerleave={hide}
   onfocusin={() => show(0)}

@@ -24,7 +24,9 @@ export type Recorded =
   | { kind: "keys"; keys: string }
   /** A key with no Ctrl/Alt/Meta, when a modifier is required. */
   | { kind: "needsModifier" }
-  | { kind: "unsupported" };
+  | { kind: "unsupported" }
+  /** The chord types a character (AltGr on Windows). Our recorder never returns it; Coucou's does. */
+  | { kind: "typesCharacter"; typed: string; keys: string };
 
 export type Platform = "mac" | "other";
 
@@ -105,8 +107,11 @@ export function shortcutLabel(keys: string, platform: Platform = "other"): strin
   return splitKeys(keys).map((p) => words[p] ?? p).join("+");
 }
 
-/** Best guess at the current platform, for display only. */
+let detected: Platform | undefined;
+
+/** Best guess at the current platform, for display only (computed once). */
 export function currentPlatform(): Platform {
-  const nav = typeof navigator === "undefined" ? undefined : navigator;
-  return nav && /Mac|iPhone|iPad/.test(nav.platform || nav.userAgent) ? "mac" : "other";
+  if (detected) return detected;
+  if (typeof navigator === "undefined") return "other";
+  return (detected = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "mac" : "other");
 }

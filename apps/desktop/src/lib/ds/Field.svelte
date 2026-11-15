@@ -36,7 +36,7 @@
   </label>
   {@render children({
     id: controlId,
-    describedby: describedBy(errorId, hintId),
+    describedby: describedBy(errorId, !error && hintId),
     invalid: !!error,
     labelId: `${controlId}-label`,
   })}

@@ -62,45 +62,53 @@ export function checkDeclaration(prop, value) {
   return named ? `named colour "${named}" in ${p}` : null;
 }
 
-const lineOf = (text, index) => text.slice(0, index).split("\n").length;
-
 function stripComments(css) {
   // Keep newlines so line numbers stay right.
   return css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
 }
 
-function stripJsComments(code) {
-  return code
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, pre) => pre + " ".repeat(m.length - pre.length));
+const stripJsComments = (code) =>
+  stripComments(code).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, pre) => pre + " ".repeat(m.length - pre.length));
+
+/** Turns {index, why} findings into {line, why}, counting newlines in one pass. */
+function withLines(text, found) {
+  found.sort((a, b) => a.index - b.index);
+  let line = 1;
+  let pos = 0;
+  return found.map(({ index, why }) => {
+    for (; pos < index; pos++) if (text.charCodeAt(pos) === 10) line++;
+    return { line, why };
+  });
+}
+
+function cssFindings(css, offset = 0) {
+  const out = [];
+  const re = /(--[\w-]+|[a-zA-Z-]+)\s*:\s*([^;{}]+?)\s*(?=[;}]|$)/g;
+  for (const m of stripComments(css).matchAll(re)) {
+    const why = checkDeclaration(m[1], m[2]);
+    if (why) out.push({ index: offset + m.index, why });
+  }
+  return out;
+}
+
+function scriptFindings(code, offset = 0) {
+  const out = [];
+  // prop: "value" | prop: 'value' | prop: `value` | "prop: value;" inside a string
+  const re = /([a-zA-Z-]+|--[\w-]+)["']?\s*:\s*(["'`]?)([^"'`;,\n}]+)\2/g;
+  for (const m of stripJsComments(code).matchAll(re)) {
+    const prop = kebab(m[1]).toLowerCase();
+    if (prop !== "font-family" && !COLOUR_PROPS.test(prop) && !prop.startsWith("--")) continue;
+    const why = checkDeclaration(prop, m[3]);
+    if (why) out.push({ index: offset + m.index, why });
+  }
+  return out;
 }
 
 /** Declarations in CSS text: `prop: value` ended by ; or }. */
-export function scanCss(css, offset = 0, full = css) {
-  const out = [];
-  const text = stripComments(css);
-  const re = /(--[\w-]+|[a-zA-Z-]+)\s*:\s*([^;{}]+?)\s*(?=[;}]|$)/g;
-  for (const m of text.matchAll(re)) {
-    const why = checkDeclaration(m[1], m[2]);
-    if (why) out.push({ line: lineOf(full, offset + m.index), why });
-  }
-  return out;
-}
+export const scanCss = (css) => withLines(css, cssFindings(css));
 
 /** CSS-like declarations in JS/TS source (style strings and style objects). */
-export function scanScript(code, offset = 0, full = code) {
-  const out = [];
-  const text = stripJsComments(code);
-  // prop: "value" | prop: 'value' | prop: `value` | "prop: value;" inside a string
-  const re = /([a-zA-Z-]+|--[\w-]+)["']?\s*:\s*(["'`]?)([^"'`;,\n}]+)\2/g;
-  for (const m of text.matchAll(re)) {
-    const prop = kebab(m[1]).toLowerCase();
-    if (prop !== "font-family" && !COLOUR_PROPS.test(prop) && !prop.startsWith("--")) continue;
-    const why = checkDeclaration(m[1], m[3]);
-    if (why) out.push({ line: lineOf(full, offset + m.index), why });
-  }
-  return out;
-}
+export const scanScript = (code) => withLines(code, scriptFindings(code));
 
 /** All violations in one file's text, by extension. */
 export function scanFile(path, text) {
@@ -108,37 +116,27 @@ export function scanFile(path, text) {
   if (/\.[cm]?[jt]s$/.test(path)) return scanScript(text);
   if (!path.endsWith(".svelte")) return [];
   const out = [];
-  const blocks = [];
-  for (const m of text.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)) {
-    const start = m.index + m[0].indexOf(">") + 1;
-    blocks.push([m.index, m.index + m[0].length]);
-    out.push(...scanCss(m[1], start, text));
-  }
-  for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
-    const start = m.index + m[0].indexOf(">") + 1;
-    blocks.push([m.index, m.index + m[0].length]);
-    out.push(...scanScript(m[1], start, text));
-  }
-  // Markup only from here: blank out style and script blocks.
   let markup = text;
-  for (const [a, b] of blocks) markup = markup.slice(0, a) + markup.slice(a, b).replace(/[^\n]/g, " ") + markup.slice(b);
+  // <style> as CSS, <script> as TS; then blank them out so only markup is left.
+  for (const [re, find] of [[/<style\b[^>]*>([\s\S]*?)<\/style>/g, cssFindings], [/<script\b[^>]*>([\s\S]*?)<\/script>/g, scriptFindings]]) {
+    for (const m of text.matchAll(re)) {
+      out.push(...find(m[1], m.index + m[0].indexOf(">") + 1));
+      markup = markup.slice(0, m.index) + m[0].replace(/[^\n]/g, " ") + markup.slice(m.index + m[0].length);
+    }
+  }
+  const add = (index, prop, value) => {
+    const why = checkDeclaration(prop, value);
+    if (why) out.push({ index, why });
+  };
   for (const m of markup.matchAll(/\sstyle\s*=\s*(["'])([\s\S]*?)\1/g)) {
     for (const decl of m[2].split(";")) {
       const i = decl.indexOf(":");
-      if (i < 0) continue;
-      const why = checkDeclaration(decl.slice(0, i), decl.slice(i + 1));
-      if (why) out.push({ line: lineOf(text, m.index), why });
+      if (i >= 0) add(m.index, decl.slice(0, i), decl.slice(i + 1));
     }
   }
-  for (const m of markup.matchAll(/\sstyle:([\w-]+)\s*=\s*(["'])([^"']*)\2/g)) {
-    const why = checkDeclaration(m[1], m[3]);
-    if (why) out.push({ line: lineOf(text, m.index), why });
-  }
-  for (const m of markup.matchAll(COLOUR_ATTRS)) {
-    const why = checkDeclaration(m[1] === "bgcolor" ? "background-color" : m[1], m[3]);
-    if (why) out.push({ line: lineOf(text, m.index), why });
-  }
-  return out.sort((a, b) => a.line - b.line);
+  for (const m of markup.matchAll(/\sstyle:([\w-]+)\s*=\s*(["'])([^"']*)\2/g)) add(m.index, m[1], m[3]);
+  for (const m of markup.matchAll(COLOUR_ATTRS)) add(m.index, m[1] === "bgcolor" ? "background-color" : m[1], m[3]);
+  return withLines(text, out);
 }
 
 /**
@@ -148,7 +146,8 @@ export function scanFile(path, text) {
 export function applyAllowlist(results, allow) {
   const failures = [];
   const notes = [];
-  const exact = new Map(allow.filter((e) => !e.path.includes("*")).map((e) => [e.path, e]));
+  // "pending" entries name trees outside the scan (vendored upstreams): tracked, not checked.
+  const exact = new Map(allow.filter((e) => !e.pending).map((e) => [e.path, e]));
   for (const [file, problems] of results) {
     if (problems.length === 0) continue;
     const entry = exact.get(file);

@@ -320,6 +320,9 @@
 [data-theme] {
   --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-focus);
   --focus-ring-inset: inset 0 0 0 2px var(--color-focus);
+  /* Text-entry controls (TextField, TextArea, Select, ShortcutField) glow instead of ringing. */
+  --field-focus-ring: 0 0 0 3px var(--color-accent-subtle);
+  --field-focus-ring-invalid: 0 0 0 3px var(--color-danger-subtle);
 
   /* Legacy names (pre-ADR-0012). Do not use in new code; later tasks remove them. */
   --bg: var(--color-bg);

@@ -39,9 +39,9 @@
     id={ctl?.id ?? id}
     class="ds-textarea {className}"
     class:mono
-    class:invalid={ctl?.invalid || !!error}
+    class:invalid={!!error}
     style:resize
-    aria-invalid={ctl?.invalid || !!error || undefined}
+    aria-invalid={!!error || undefined}
     aria-describedby={ctl?.describedby ?? rest["aria-describedby"] ?? undefined}
     bind:value
   ></textarea>
@@ -73,7 +73,7 @@
   .ds-textarea:focus-visible, .ds-textarea:focus {
     outline: none;
     border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px var(--color-accent-subtle);
+    box-shadow: var(--field-focus-ring);
   }
   .ds-textarea.invalid { border-color: var(--color-danger); }
   .ds-textarea:disabled { background: var(--color-surface-sunken); opacity: 0.7; }

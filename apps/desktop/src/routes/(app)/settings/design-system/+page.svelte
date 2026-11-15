@@ -1,7 +1,6 @@
 <script lang="ts">
   // Living style guide: every token and every component state of lib/ds.
   // docs/design/Design System.md is the written half.
-  import { onDestroy } from "svelte";
   import {
     Badge, Banner, BrandMark, Button, Card, Checkbox, ColorSwatchGroup, Dialog, EmptyState, Field, Icon,
     ICON_NAMES, IconButton, Kbd, List, ListRow, ProgressBar, RadioGroup, SegmentedControl, Select,
@@ -49,11 +48,9 @@
   // Theme preview: forces data-theme on <html> while this page is open.
   let theme = $state<"system" | "light" | "dark">("system");
   $effect(() => {
-    if (theme === "system") delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = theme;
-  });
-  onDestroy(() => {
-    if (typeof document !== "undefined") delete document.documentElement.dataset.theme;
+    const root = document.documentElement;
+    if (theme !== "system") root.dataset.theme = theme;
+    return () => delete root.dataset.theme;
   });
 
   // Component demo state

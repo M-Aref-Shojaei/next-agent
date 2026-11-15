@@ -118,9 +118,8 @@ test("the real tokens.css keeps its two dark blocks in sync", () => {
   assert.equal(darkThemeParity(broken).length, 2);
 });
 
-test("the real tree passes with the committed allowlist", () => {
-  // Kept cheap: the checker itself runs in `make check`; this guards the allowlist's shape.
+test("the committed allowlist tracks Coucou as pending and caps every file", () => {
   const { entries } = JSON.parse(readFileSync("scripts/design-tokens-allowlist.json", "utf8"));
   assert.ok(entries.some((e: { path: string; pending?: boolean }) => e.path === "apps/desktop/coucou/**" && e.pending));
-  for (const e of entries) assert.ok(e.path.includes("*") || Number.isInteger(e.max), e.path);
+  for (const e of entries) assert.ok(e.pending || Number.isInteger(e.max), e.path);
 });

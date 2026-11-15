@@ -37,25 +37,25 @@
 
 <style>
   .ds-banner {
-    --bg: var(--color-info-subtle);
-    --fg: var(--color-info-text);
-    --line: var(--color-info-border);
+    --t-bg: var(--color-info-subtle);
+    --t-fg: var(--color-info-text);
+    --t-line: var(--color-info-border);
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    border: var(--border-width) solid var(--line);
+    border: var(--border-width) solid var(--t-line);
     border-radius: var(--radius-md);
-    background: var(--bg);
+    background: var(--t-bg);
     color: var(--color-text);
     line-height: var(--line-height-normal);
   }
-  .ok { --bg: var(--color-ok-subtle); --fg: var(--color-ok-text); --line: var(--color-ok-border); }
-  .warn { --bg: var(--color-warn-subtle); --fg: var(--color-warn-text); --line: var(--color-warn-border); }
-  .danger { --bg: var(--color-danger-subtle); --fg: var(--color-danger-text); --line: var(--color-danger-border); }
-  .icon { display: inline-flex; padding-top: 2px; color: var(--fg); }
+  .ok { --t-bg: var(--color-ok-subtle); --t-fg: var(--color-ok-text); --t-line: var(--color-ok-border); }
+  .warn { --t-bg: var(--color-warn-subtle); --t-fg: var(--color-warn-text); --t-line: var(--color-warn-border); }
+  .danger { --t-bg: var(--color-danger-subtle); --t-fg: var(--color-danger-text); --t-line: var(--color-danger-border); }
+  .icon { display: inline-flex; padding-top: 2px; color: var(--t-fg); }
   .text { flex: 1; min-width: 0; display: grid; gap: var(--space-1); }
-  .title { margin: 0; font-weight: var(--font-weight-semibold); color: var(--fg); }
+  .title { margin: 0; font-weight: var(--font-weight-semibold); color: var(--t-fg); }
   .body { font-size: var(--font-size-md); }
   .body :global(p) { margin: 0; }
   .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-1); }

@@ -2,6 +2,7 @@
   import Kbd from "./Kbd.svelte";
   import IconButton from "./IconButton.svelte";
   import Icon from "./Icon.svelte";
+  import { describedBy } from "./types.ts";
   import {
     currentPlatform,
     recordPress,
@@ -72,6 +73,10 @@
       case "cancel": setRecording(false); return;
       case "needsModifier": message = "Add Ctrl, Alt or ⌘ to the key."; return;
       case "unsupported": message = "That key can't be used in a shortcut."; return;
+      case "typesCharacter":
+        setRecording(false);
+        message = `${shortcutLabel(result.keys, platform)} types "${result.typed}" on this keyboard; pick another.`;
+        return;
     }
   }
 </script>
@@ -84,7 +89,7 @@
     class:recording
     {disabled}
     aria-label={label ? `${label}: ${value ? shortcutLabel(value, platform) : placeholder}` : undefined}
-    aria-describedby={[describedby, recording ? `${uid}-msg` : ""].filter(Boolean).join(" ") || undefined}
+    aria-describedby={describedBy(describedby, recording && `${uid}-msg`)}
     aria-pressed={recording}
     onclick={() => setRecording(!recording)}
     {onkeydown}
@@ -103,11 +108,13 @@
       <Icon name="x" size={14} />
     </IconButton>
   {/if}
-  <span class="sr-only" id="{uid}-msg" aria-live="polite">{message}</span>
+  <span class="msg" id="{uid}-msg" aria-live="polite">{message}</span>
 </div>
 
 <style>
-  .ds-shortcut { display: inline-flex; align-items: center; gap: var(--space-1); }
+  .ds-shortcut { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+  .msg { flex-basis: 100%; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+  .msg:empty { display: none; }
   .capture {
     display: inline-flex;
     align-items: center;
@@ -123,11 +130,11 @@
     transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
   }
   .capture:hover:not(:disabled) { border-color: var(--color-border-strong); }
-  .capture:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .capture:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: var(--field-focus-ring); }
   .capture.recording {
     border-color: var(--color-accent);
     background: var(--color-accent-subtle);
-    box-shadow: 0 0 0 3px var(--color-accent-subtle);
+    box-shadow: var(--field-focus-ring);
   }
   .capture:disabled { opacity: 0.5; cursor: not-allowed; }
   .rec { color: var(--color-accent-text); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }

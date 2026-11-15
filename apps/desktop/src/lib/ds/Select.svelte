@@ -34,12 +34,12 @@
 </script>
 
 {#snippet control(ctl: FieldControl | undefined)}
-  <div class="ds-select {size} {className}" class:invalid={ctl?.invalid || !!error}>
+  <div class="ds-select {size} {className}" class:invalid={!!error}>
     <select
       {...rest}
       {required}
       id={ctl?.id ?? id}
-      aria-invalid={ctl?.invalid || !!error || undefined}
+      aria-invalid={!!error || undefined}
       aria-describedby={ctl?.describedby ?? rest["aria-describedby"] ?? undefined}
       bind:value
     >
@@ -61,7 +61,7 @@
 {/if}
 
 <style>
-  .ds-select { position: relative; display: flex; min-width: 0; }
+  .ds-select { position: relative; display: flex; width: var(--ds-control-width, auto); max-width: 100%; min-width: 0; }
   select {
     appearance: none;
     width: 100%;
@@ -78,7 +78,7 @@
   .sm select { height: var(--control-height-sm); font-size: var(--font-size-sm); }
   .lg select { height: var(--control-height-lg); }
   select:hover { border-color: var(--color-border-strong); }
-  select:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-subtle); }
+  select:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: var(--field-focus-ring); }
   .invalid select { border-color: var(--color-danger); }
   select:disabled { background: var(--color-surface-sunken); opacity: 0.7; cursor: not-allowed; }
   .chev {
