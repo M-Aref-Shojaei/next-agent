@@ -35,6 +35,9 @@ use std::path::Path;
 /// Directory (under the workspace root) holding profile files.
 pub const PROFILE_DIR: &str = ".next-agent/agents";
 
+/// Largest profile file read; bigger files are rejected unparsed.
+const MAX_PROFILE_BYTES: u64 = 256 * 1024;
+
 /// Where a profile may be selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProfileMode {
@@ -394,8 +397,11 @@ pub fn load_profiles(workspace_root: &Path) -> (Vec<AgentProfile>, Vec<ProfileEr
         let parsed = std::fs::metadata(&path)
             .map_err(|error| error.to_string())
             .and_then(|meta| {
-                if meta.len() > 256 * 1024 {
-                    Err("file is larger than 256 KiB".into())
+                if meta.len() > MAX_PROFILE_BYTES {
+                    Err(format!(
+                        "file is larger than {} KiB",
+                        MAX_PROFILE_BYTES / 1024
+                    ))
                 } else {
                     std::fs::read_to_string(&path).map_err(|error| error.to_string())
                 }
