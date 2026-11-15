@@ -39,7 +39,7 @@ use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString};
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 /// Three above `NSMainMenuWindowLevel` (24): over the menu bar and the notch
 /// (`CGWindowLevelForKey(.mainMenuWindow) + 3` in Coucou).
@@ -100,10 +100,15 @@ thread_local! {
 /// down from the top of the menu-bar screen), readable from the poll thread.
 static ORIGIN: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 
-fn set_origin_cache(origin: Option<(f64, f64)>) {
-    *ORIGIN
+/// Locks the origin cache, recovering from a poisoned lock.
+fn origin_guard() -> MutexGuard<'static, Option<(f64, f64)>> {
+    ORIGIN
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = origin;
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn set_origin_cache(origin: Option<(f64, f64)>) {
+    *origin_guard() = origin;
 }
 
 fn with_panel<R>(f: impl FnOnce(&IslandPanel) -> R) -> Option<R> {
@@ -213,9 +218,7 @@ pub fn set_ignores_mouse(ignore: bool) -> bool {
 /// `NSEvent.mouseLocation` on its main-run-loop timer). Any thread.
 #[must_use]
 pub fn cursor_in_panel() -> Option<(f64, f64)> {
-    let (ox, oy) = (*ORIGIN
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner))?;
+    let (ox, oy) = (*origin_guard())?;
     let event = objc2_core_graphics::CGEvent::new(None)?;
     let p = objc2_core_graphics::CGEvent::location(Some(&event));
     Some((p.x - ox, p.y - oy))
