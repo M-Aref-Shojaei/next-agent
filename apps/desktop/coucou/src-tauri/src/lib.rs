@@ -1159,6 +1159,9 @@ fn create_island_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> 
 pub fn setup(app: &mut tauri::App, boot: Boot) -> Result<(), Box<dyn std::error::Error>> {
     let Boot { loaded, gate } = boot;
     let handle = app.handle().clone();
+    // Next Agent: renamed from Coucou (owner request): the old Keychain entries
+    // move first, before the phone link or anything else reads one.
+    secrets::migrate_legacy();
     secrets::warm_up();
     app.manage(phone_link::PhoneLink::new(handle.clone()));
     tray::build(&handle)?;

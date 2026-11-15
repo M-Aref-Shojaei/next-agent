@@ -7,7 +7,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error: a plain ES module without types
-import { NEXT_AGENT, OVERLAY_COMMANDS, WINDOWS, capabilities, windowCommands } from "../gen-capabilities.mjs";
+import { NEXT_AGENT, OVERLAY_COMMANDS, WINDOWS, capabilities, commandList, windowCommands } from "../gen-capabilities.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const dir = join(root, "apps/desktop/src-tauri/capabilities");
@@ -20,6 +20,11 @@ test("the committed capabilities are the generated ones", () => {
   const generated = capabilities() as Record<string, string>;
   assert.deepEqual(readdirSync(dir).sort(), Object.keys(generated).sort());
   for (const [file, text] of Object.entries(generated)) assert.equal(readFileSync(join(dir, file), "utf8"), text, file);
+});
+
+test("command lists are read past attributes and nested brackets", () => {
+  const source = `x generate_handler![\n  a::one,\n  #[cfg(target_os = "macos")]\n  b::two, // note\n  three,\n] y`;
+  assert.deepEqual(commandList(source, "generate_handler!"), ["one", "two", "three"]);
 });
 
 test("each window has exactly one capability", () => {

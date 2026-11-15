@@ -7,15 +7,42 @@
 use std::path::Path;
 
 /// Command names inside `macro![ … ]`: the last path segment of each entry.
+/// Brackets are matched, so an attribute such as `#[cfg(…)]` on an entry
+/// neither ends the list nor hides the entries after it (the name is kept:
+/// a permission for a command a platform leaves out is harmless).
+/// `scripts/gen-capabilities.mjs` reads the lists the same way.
 fn command_list(source: &str, macro_name: &str) -> Vec<String> {
     let open = format!("{macro_name}[");
     let start = source
         .find(&open)
         .unwrap_or_else(|| panic!("no {open} … ] found"))
         + open.len();
-    let end = start + source[start..].find(']').expect("unclosed command list");
-    source[start..end]
-        .lines()
+    let mut depth = 0usize;
+    let mut body = String::new();
+    let mut attribute = 0usize;
+    let mut chars = source[start..].chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '#' if chars.peek() == Some(&'[') => {
+                chars.next();
+                attribute = 1;
+                continue;
+            }
+            '[' if attribute > 0 => attribute += 1,
+            ']' if attribute > 0 => {
+                attribute -= 1;
+                continue;
+            }
+            '[' => depth += 1,
+            ']' if depth == 0 => break,
+            ']' => depth -= 1,
+            _ => {}
+        }
+        if attribute == 0 {
+            body.push(c);
+        }
+    }
+    body.lines()
         .map(|line| line.split("//").next().unwrap_or(""))
         .flat_map(|line| line.split(','))
         .map(str::trim)

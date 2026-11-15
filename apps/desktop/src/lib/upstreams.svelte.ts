@@ -20,6 +20,8 @@ class UpstreamStore {
       await api.onUpstreamWatch((view) => (this.view = view));
     } catch (e) {
       this.error = String(e);
+      // Try again on the next visit.
+      this.#started = false;
     }
   }
 

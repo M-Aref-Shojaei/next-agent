@@ -64,12 +64,13 @@ pub fn releases_page(source: &str) -> Option<String> {
 /// A release found at `source` keeps only what lives in that repository: its
 /// page, and assets under its own download path.
 fn scoped(release: Release, source: &str) -> Option<Release> {
-    let base = format!("https://github.com/{source}/");
-    if !release.page_url.starts_with(&base) {
+    // GitHub answers in the repository's own casing, whatever was typed.
+    let base = format!("https://github.com/{}/", source.to_ascii_lowercase());
+    if !release.page_url.to_ascii_lowercase().starts_with(&base) {
         return None;
     }
     let downloads = format!("{base}releases/download/");
-    let assets = release.assets.into_iter().filter(|a| a.url.starts_with(&downloads)).collect();
+    let assets = release.assets.into_iter().filter(|a| a.url.to_ascii_lowercase().starts_with(&downloads)).collect();
     Some(Release { assets, ..release })
 }
 
@@ -603,6 +604,13 @@ pub async fn check(app: &AppHandle, manual: bool) {
     let result = fetch_latest(&source).await;
     let newer = {
         let mut s = state();
+        // The source changed meanwhile: this answer is the old repository's.
+        if s.prefs.source != source {
+            s.check = CheckState::None;
+            drop(s);
+            changed(app);
+            return;
+        }
         s.prefs.last_check = Some(now());
         save_prefs(&s.prefs);
         match result {
@@ -803,7 +811,10 @@ pub fn update_set_source(app: AppHandle, source: String) -> Result<Status, Strin
             s.prefs.snoozed_version = None;
             s.prefs.snoozed_at = None;
             s.latest = None;
-            s.check = CheckState::None;
+            // A check under way keeps its state; its answer is dropped (`check`).
+            if s.check != CheckState::Checking {
+                s.check = CheckState::None;
+            }
             save_prefs(&s.prefs);
         }
     }
@@ -1063,7 +1074,7 @@ mod tests {
     fn a_release_keeps_only_what_lives_in_its_repository() {
         let w = latest(&fixture(), "windows-v").unwrap();
         assert!(scoped(w.clone(), "someone/else").is_none());
-        let kept = scoped(w.clone(), "Louis-CFM/coucou").unwrap();
+        let kept = scoped(w.clone(), "louis-cfm/Coucou").unwrap();
         assert_eq!(kept.assets.len(), w.assets.len());
         let mut moved = w;
         moved.assets[0].url = "https://github.com/someone/else/releases/download/x/y.exe".into();

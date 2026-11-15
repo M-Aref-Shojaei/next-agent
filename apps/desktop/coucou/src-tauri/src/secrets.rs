@@ -10,6 +10,10 @@ use keyring::Entry;
 // Next Agent: renamed from Coucou (owner request): was "fr.louisraille.coucou" (see `migrate_legacy`).
 const SERVICE: &str = "dev.nextagent.desktop.overlay";
 
+/// Nothing to move on Windows and Linux (see the macOS version).
+#[cfg(not(target_os = "macos"))]
+pub fn migrate_legacy() {}
+
 /// Coucou's service name, which the Mac build used before the rename.
 #[cfg(target_os = "macos")]
 const LEGACY_SERVICE: &str = "fr.louisraille.coucou";
@@ -19,7 +23,7 @@ const LEGACY_SERVICE: &str = "fr.louisraille.coucou";
 /// and deletes WhatsApp's old entries. Only on a Mac: on Windows and Linux that
 /// service name is Coucou's own app's, whose entries are not ours to move.
 #[cfg(target_os = "macos")]
-fn migrate_legacy() {
+pub fn migrate_legacy() {
     let marker = crate::settings::config_dir().join(".keychain-migrated");
     if marker.exists() {
         return;
@@ -149,9 +153,6 @@ pub fn present(key: &str) -> bool {
 /// Looks every key up once, off the main thread, so the settings open on known answers.
 pub fn warm_up() {
     std::thread::spawn(|| {
-        // Next Agent: renamed from Coucou (owner request): before the first lookup.
-        #[cfg(target_os = "macos")]
-        migrate_legacy();
         for key in KNOWN_KEYS {
             let _ = get(key);
         }

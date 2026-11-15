@@ -296,11 +296,10 @@ pub fn rate_limit_until(
     let exhausted = number("x-ratelimit-remaining") == Some(0);
     match (exhausted, number("x-ratelimit-reset")) {
         (true, Some(reset)) => Some(reset.max(now + 1)),
-        // A 429, or a 403 secondary limit without headers: back off a minute
-        // at least, as GitHub's docs ask.
-        (true, None) => Some(now + 60),
-        (false, _) if status == 429 => Some(now + 60),
-        _ => None,
+        // A 429, or a 403 (a secondary limit may keep `remaining` above 0)
+        // without retry-after or reset: back off a minute at least, as GitHub's
+        // docs ask. A 403 for another reason costs a minute, nothing more.
+        (true, None) | (false, _) => Some(now + 60),
     }
 }
 

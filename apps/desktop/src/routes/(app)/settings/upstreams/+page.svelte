@@ -3,10 +3,16 @@
   import { upstreams } from "$lib/upstreams.svelte.ts";
   import { formatIso, formatUnix, rateLimitNote, reportFor, summary } from "$lib/upstreams.ts";
 
-  onMount(() => void upstreams.init());
+  // The clock moves on its own, so a rate limit's note goes when it ends.
+  let now = $state(Math.floor(Date.now() / 1000));
+  onMount(() => {
+    void upstreams.init();
+    const tick = setInterval(() => (now = Math.floor(Date.now() / 1000)), 15_000);
+    return () => clearInterval(tick);
+  });
 
   const view = $derived(upstreams.view);
-  const limited = $derived(rateLimitNote(view, Math.floor(Date.now() / 1000)));
+  const limited = $derived(rateLimitNote(view, now));
 </script>
 
 <div class="settings">

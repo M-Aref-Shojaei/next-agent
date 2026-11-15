@@ -24,11 +24,33 @@ const APP = join(ROOT, "apps/desktop/src-tauri");
 const OVERLAY = join(ROOT, "apps/desktop/coucou/src");
 const CAPS = join(APP, "capabilities");
 
-/** Command names inside a `macro![ ... ]` call: the last path segment of each entry. */
+/**
+ * Command names inside a `macro![ ... ]` call: the last path segment of each
+ * entry. Brackets are matched and `#[...]` attributes skipped, as build.rs does.
+ */
 export function commandList(source, macro) {
   const start = source.indexOf(`${macro}[`);
   if (start < 0) throw new Error(`no ${macro}[ … ] in the source`);
-  const body = source.slice(start + macro.length + 1, source.indexOf("]", start));
+  let body = "";
+  let depth = 0;
+  let attribute = 0;
+  for (let i = start + macro.length + 1; i < source.length; i++) {
+    const c = source[i];
+    if (c === "#" && source[i + 1] === "[") {
+      attribute = 1;
+      i++;
+      continue;
+    }
+    if (attribute > 0) {
+      if (c === "[") attribute++;
+      else if (c === "]") attribute--;
+      continue;
+    }
+    if (c === "[") depth++;
+    else if (c === "]" && depth === 0) break;
+    else if (c === "]") depth--;
+    body += c;
+  }
   return body
     .split("\n")
     .map((line) => line.replace(/\/\/.*$/, "").trim())

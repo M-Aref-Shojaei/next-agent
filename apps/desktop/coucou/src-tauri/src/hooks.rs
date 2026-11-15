@@ -44,8 +44,9 @@ const MARKER: &str = "next-agent-hook";
 
 /// Next Agent: renamed from Coucou (owner request): the relay's path before the rename (the Mac build kept it in
 /// Next Agent's own support folder, so this never matches Coucou's own app).
-/// Such entries still count as ours, so installing replaces them and removing
-/// takes them out.
+/// Such entries still count as ours when editing, so installing replaces them
+/// and removing takes them out, but they no longer reach the app: `status`
+/// does not count them as installed, and Settings offers to install again.
 pub(crate) const LEGACY_MARKER: &str = "dev.nextagent.desktop/coucou/coucou-hook";
 
 /// Whether a hook command line is one of ours, old name or new.
@@ -108,6 +109,16 @@ fn hook_command(event: &str) -> String {
 }
 
 fn entry_is_ours(entry: &Value) -> bool {
+    entry_runs(entry, is_relay_command)
+}
+
+/// Next Agent: renamed from Coucou (owner request): an entry that runs the
+/// relay under its current name, the only kind that reaches the app.
+fn entry_is_current(entry: &Value) -> bool {
+    entry_runs(entry, |c| c.contains(MARKER))
+}
+
+fn entry_runs(entry: &Value, ours: impl Fn(&str) -> bool) -> bool {
     entry
         .get("hooks")
         .and_then(Value::as_array)
@@ -115,7 +126,7 @@ fn entry_is_ours(entry: &Value) -> bool {
             hooks.iter().any(|h| {
                 h.get("command")
                     .and_then(Value::as_str)
-                    .map(is_relay_command)
+                    .map(&ours)
                     .unwrap_or(false)
             })
         })
@@ -216,7 +227,7 @@ pub fn status() -> HookStatus {
                 .values()
                 .filter_map(Value::as_array)
                 .flatten()
-                .any(entry_is_ours)
+                .any(entry_is_current)
         })
         .unwrap_or(false);
     let hook_path = settings::hook_exe_path();
@@ -288,7 +299,12 @@ fn migrate_status_line_previous(legacy: &Path, new: &Path) {
 
 /// True when the `statusLine` in settings.json is Coucou's relay.
 pub fn plan_relay_installed(settings: &Value) -> bool {
-    settings.get("statusLine").is_some_and(status_line_is_ours)
+    // Next Agent: renamed from Coucou (owner request): the current relay only.
+    settings
+        .get("statusLine")
+        .and_then(|v| v.get("command"))
+        .and_then(Value::as_str)
+        .is_some_and(|c| c.contains(MARKER))
 }
 
 /// `statusLine` as it reads after installing or removing the relay. `None`: the
@@ -646,5 +662,20 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"{ broken");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Next Agent: renamed from Coucou (owner request): hooks written with the
+    /// old relay path are ours to replace or remove, but no longer "installed".
+    #[test]
+    fn hooks_with_the_old_relay_path_are_replaced_not_counted() {
+        let old = "'/Users/me/Library/Application Support/dev.nextagent.desktop/coucou/coucou-hook' Stop";
+        let new = "'/Users/me/Library/Application Support/dev.nextagent.desktop/overlay/next-agent-hook' Stop";
+        let entry = |c: &str| json!({ "hooks": [{ "type": "command", "command": c }] });
+        assert!(entry_is_ours(&entry(old)) && !entry_is_current(&entry(old)));
+        assert!(entry_is_ours(&entry(new)) && entry_is_current(&entry(new)));
+        // Coucou's own app's relay is never taken for ours.
+        assert!(!is_relay_command("'/home/me/.local/share/coucou/bin/coucou-hook' Stop"));
+        assert!(!plan_relay_installed(&json!({ "statusLine": { "command": old } })));
+        assert!(plan_relay_installed(&json!({ "statusLine": { "command": new } })));
     }
 }

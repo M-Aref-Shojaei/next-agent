@@ -77,7 +77,8 @@ export function reportFor(view: WatchView | null, id: string): UpstreamReport | 
 
 /** "3 new commits, 1 new release since the pin." */
 export function summary(report: UpstreamReport | undefined): string {
-  if (!report) return "Not checked yet.";
+  // A report that never got through (only an error, no branch) knows nothing yet.
+  if (!report || (report.error && !report.branch)) return "Not checked yet.";
   const commits = report.aheadBy;
   const releases = report.releases.length;
   if (commits === 0 && releases === 0) return "Up to date with the pin.";

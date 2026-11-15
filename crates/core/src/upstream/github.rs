@@ -123,18 +123,34 @@ impl GithubClient {
                 "unexpected branch name for {repo}"
             )));
         }
-        let compare = parse_compare(
-            &self
-                .get(
-                    &format!(
-                        "/repos/{repo}/compare/{}...{branch}?per_page={MAX_ITEMS}",
-                        watched.commit
-                    ),
-                    now,
-                )
-                .await?,
-        )
-        .map_err(CheckError::Other)?;
+        let page = |n: usize| {
+            format!(
+                "/repos/{repo}/compare/{}...{branch}?per_page={MAX_ITEMS}&page={n}",
+                watched.commit
+            )
+        };
+        let mut compare =
+            parse_compare(&self.get(&page(1), now).await?).map_err(CheckError::Other)?;
+        // GitHub pages a compare oldest first: past one page, the newest
+        // commits are on the last page (and the one before it, when the last
+        // is short).
+        if compare.ahead_by > MAX_ITEMS {
+            let last = compare.ahead_by.div_ceil(MAX_ITEMS);
+            let mut newest = Vec::new();
+            for n in (2..=last).rev().take(2) {
+                let older =
+                    parse_compare(&self.get(&page(n), now).await?).map_err(CheckError::Other)?;
+                newest.extend(older.commits);
+                if newest.len() >= MAX_ITEMS {
+                    break;
+                }
+            }
+            if newest.len() < MAX_ITEMS {
+                newest.extend(std::mem::take(&mut compare.commits));
+            }
+            newest.truncate(MAX_ITEMS);
+            compare.commits = newest;
+        }
         let releases = parse_releases(
             &self
                 .get(&format!("/repos/{repo}/releases?per_page=30"), now)

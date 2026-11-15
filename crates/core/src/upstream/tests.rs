@@ -174,11 +174,13 @@ fn rate_limits_are_read_from_github_headers() {
         Some(1030)
     );
     assert_eq!(rate_limit_until(429, headers(&[]), now), Some(1060));
-    // A 403 that is not a rate limit (a blocked repository) is an ordinary error.
+    // A 403 with requests left may still be a secondary limit: a minute.
     assert_eq!(
         rate_limit_until(403, headers(&[("x-ratelimit-remaining", "42")]), now),
-        None
+        Some(1060)
     );
+    // Not a refusal at all: no limit.
+    assert_eq!(rate_limit_until(404, headers(&[]), now), None);
     // A reset already in the past still waits a moment.
     assert_eq!(
         rate_limit_until(
@@ -327,5 +329,61 @@ fn other_failures_become_the_upstreams_error() {
         assert_eq!(reports.len(), 1);
         assert!(reports[0].error.as_deref().unwrap().contains("404"));
         assert_eq!(reports[0].checked_at, 5);
+    });
+}
+
+/// A compare page of `n` commits titled `{prefix}{i}`, oldest first, as GitHub sends it.
+fn compare_page(ahead_by: usize, prefix: &str, n: usize) -> String {
+    let commits: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                r#"{{"sha": "{i:0>40}", "html_url": "https://github.com/x", "commit": {{"message": "{prefix}{i}", "committer": {{"date": "2026-11-15T00:00:00Z"}}}}}}"#
+            )
+        })
+        .collect();
+    format!(
+        r#"{{"ahead_by": {ahead_by}, "commits": [{}], "files": []}}"#,
+        commits.join(",")
+    )
+}
+
+#[test]
+fn past_one_page_the_newest_commits_come_from_the_last_pages() {
+    runtime().block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/Louis-CFM/coucou"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"default_branch":"main"}"#),
+            )
+            .mount(&server)
+            .await;
+        // 250 commits ahead: pages 1 and 2 are full, page 3 holds the newest 50.
+        for (page, prefix, n) in [("1", "p1-", 100), ("2", "p2-", 100), ("3", "p3-", 50)] {
+            Mock::given(method("GET"))
+                .and(path(format!(
+                    "/repos/Louis-CFM/coucou/compare/{PIN}...main"
+                )))
+                .and(query_param("page", page))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_string(compare_page(250, prefix, n)),
+                )
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/repos/Louis-CFM/coucou/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+            .mount(&server)
+            .await;
+        let client = GithubClient::new(&server.uri()).unwrap();
+        let report = client.check(&coucou(), 1).await.unwrap();
+        assert_eq!(report.ahead_by, 250);
+        assert_eq!(report.commits.len(), 100);
+        // Newest first: the last page reversed, then the newest half of page 2.
+        assert_eq!(report.commits[0].title, "p3-49");
+        assert_eq!(report.commits[49].title, "p3-0");
+        assert_eq!(report.commits[50].title, "p2-99");
+        assert_eq!(report.commits[99].title, "p2-50");
     });
 }
