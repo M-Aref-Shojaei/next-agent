@@ -813,6 +813,21 @@ impl Inserter<'_, '_> {
     }
 }
 
+/// The preamble as readable `key:: value` lines followed by its text lines,
+/// joined with newlines. `raw_keys` picks the key as written (stored text) or
+/// the normalised key (analysed text).
+fn preamble_lines(page_props: &[inline::Property], text_lines: &[&str], raw_keys: bool) -> String {
+    page_props
+        .iter()
+        .map(|p| {
+            let key = if raw_keys { &p.raw_key } else { &p.key };
+            format!("{key}:: {}", p.value)
+        })
+        .chain(text_lines.iter().map(|l| (*l).to_string()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn index_file_tx(tx: &rusqlite::Transaction<'_>, graph: &Graph, rel: &str) -> Result<FileResult> {
     remove_file_tx(tx, rel)?;
     let Some(kind) = graph.classify(rel) else {
@@ -877,18 +892,9 @@ fn index_file_tx(tx: &rusqlite::Transaction<'_>, graph: &Graph, rel: &str) -> Re
             .lines()
             .filter(|l| !l.trim().is_empty() && inline::property_line(l).is_none())
             .collect();
-        let shown: Vec<String> = page_props
-            .iter()
-            .map(|p| format!("{}:: {}", p.raw_key, p.value))
-            .chain(text_lines.iter().map(|l| (*l).to_string()))
-            .collect();
-        let content = shown.join("\n");
-        let normalised: Vec<String> = page_props
-            .iter()
-            .map(|p| format!("{}:: {}", p.key, p.value))
-            .chain(text_lines.iter().map(|l| (*l).to_string()))
-            .collect();
-        let mut info = inline::analyze(&normalised.join("\n"));
+        let content = preamble_lines(&page_props, &text_lines, true);
+        let normalised = preamble_lines(&page_props, &text_lines, false);
+        let mut info = inline::analyze(&normalised);
         info.properties.clone_from(&page_props);
         info.text.clone_from(&content);
         ins.insert(&content, &info, None, 0, -1)?;
