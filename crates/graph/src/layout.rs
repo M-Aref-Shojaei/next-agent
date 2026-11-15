@@ -256,6 +256,9 @@ fn take_name<'a>(s: &'a str, names: &[&str], short: bool) -> Option<(u32, &'a st
     None
 }
 
+/// Year that a two-digit year (`YY`) is counted from.
+const TWO_DIGIT_YEAR_BASE: i32 = 2000;
+
 /// Parse text written with [`format_date`]'s patterns.
 #[must_use]
 pub fn parse_date(format: &str, text: &str) -> Option<Date> {
@@ -270,7 +273,7 @@ pub fn parse_date(format: &str, text: &str) -> Option<Date> {
             }
             Token::Year2 => {
                 let (v, r) = take_digits(rest, 2, 2)?;
-                year = Some(2000 + i32::try_from(v).ok()?);
+                year = Some(TWO_DIGIT_YEAR_BASE + i32::try_from(v).ok()?);
                 r
             }
             Token::MonthName | Token::MonthShort => {
