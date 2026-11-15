@@ -473,7 +473,7 @@
             {#if preview}
               <Button onclick={reload}>Reload</Button>
               <Button onclick={stopPreview}>Stop</Button>
-              <Button variant={selecting ? "primary" : "secondary"} aria-pressed={selecting} onclick={() => (selecting = !selecting)} title="Click elements in the preview to inspect them">Select elements</Button>
+              <Button pressed={selecting} onclick={() => (selecting = !selecting)} title="Click elements in the preview to inspect them">Select elements</Button>
               <Select id="preview-frame" label="Frame" hideLabel bind:value={previewFrame} options={FRAME_OPTIONS} />
             {/if}
           </form>

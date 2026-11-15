@@ -77,6 +77,7 @@
   let dangerOpen = $state(false);
   let largeOpen = $state(false);
   let progress = $state(42);
+  let bold = $state(true);
   let grow = $state("A note that grows as you type.\nPress Enter to add a line.");
   let focusField = $state<HTMLInputElement | null>(null);
   let nameOpen = $state(false);
@@ -245,6 +246,10 @@
             <Button variant="primary">Save</Button>
           </FormActions>
         </Card>
+        <div class="demo">
+          <Button pressed={bold} onclick={() => (bold = !bold)}>Select elements</Button>
+          <Button size="sm" variant="ghost" pressed={!bold} onclick={() => (bold = !bold)}>Ghost toggle</Button>
+        </div>
         <div class="demo icons">
           {#each ICON_NAMES as n (n)}<span class="icon-cell" title={n}><Icon name={n} /><code>{n}</code></span>{/each}
         </div>

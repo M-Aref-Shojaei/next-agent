@@ -9,6 +9,8 @@
     size?: Size;
     /** Shows a spinner, sets aria-busy and blocks clicks; the label stays for layout. */
     loading?: boolean;
+    /** Toggle button: sets aria-pressed and shows the on state (a tinted accent). */
+    pressed?: boolean;
     /** Stretches to the container's width. */
     block?: boolean;
     /** Leading icon (e.g. <Icon name="plus" />). */
@@ -23,6 +25,7 @@
     size = "md",
     loading = false,
     block = false,
+    pressed,
     disabled = false,
     type = "button",
     icon,
@@ -43,6 +46,7 @@
   disabled={disabled || undefined}
   aria-disabled={loading || undefined}
   aria-busy={loading || undefined}
+  aria-pressed={pressed}
   onclick={(e) => {
     if (loading) { e.preventDefault(); return; }
     onclick?.(e);
@@ -98,6 +102,11 @@
   .danger { background: var(--color-danger); border-color: var(--color-danger); color: var(--color-on-danger); }
   .danger:hover:not(:disabled) { filter: brightness(1.06); border-color: var(--color-danger); }
 
+  .ds-btn[aria-pressed="true"]:not(.primary):not(.danger) {
+    background: var(--color-accent-subtle);
+    border-color: var(--color-accent);
+    color: var(--color-accent-text);
+  }
   .ds-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
   .loading { cursor: progress; }
   .loading .label, .loading .ico { visibility: hidden; }

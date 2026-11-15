@@ -26,9 +26,9 @@
   <table>
     <thead>
       <tr>
-        <th><Button variant={sort === "name" ? "secondary" : "ghost"} size="sm" aria-pressed={sort === "name"} onclick={() => (sort = "name")}>Page</Button></th>
-        <th class="n"><Button variant={sort === "backlinks" ? "secondary" : "ghost"} size="sm" aria-pressed={sort === "backlinks"} onclick={() => (sort = "backlinks")}>Backlinks</Button></th>
-        <th class="n"><Button variant={sort === "blocks" ? "secondary" : "ghost"} size="sm" aria-pressed={sort === "blocks"} onclick={() => (sort = "blocks")}>Blocks</Button></th>
+        <th><Button variant="ghost" size="sm" pressed={sort === "name"} onclick={() => (sort = "name")}>Page</Button></th>
+        <th class="n"><Button variant="ghost" size="sm" pressed={sort === "backlinks"} onclick={() => (sort = "backlinks")}>Backlinks</Button></th>
+        <th class="n"><Button variant="ghost" size="sm" pressed={sort === "blocks"} onclick={() => (sort = "blocks")}>Blocks</Button></th>
       </tr>
     </thead>
     <tbody>
