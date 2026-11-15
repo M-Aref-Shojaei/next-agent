@@ -77,6 +77,8 @@
   let dangerOpen = $state(false);
   let largeOpen = $state(false);
   let progress = $state(42);
+  let nameOpen = $state(false);
+  let typedName = $state("");
   let nullableText = $state<string | undefined>(undefined);
   let nullableChoice = $state<string | null>(null);
   const tableRows = [
@@ -460,6 +462,7 @@
         <Button onclick={() => (confirmOpen = true)}>Open confirm dialog</Button>
         <Button variant="danger" onclick={() => (dangerOpen = true)}>Open danger dialog</Button>
         <Button onclick={() => (largeOpen = true)}>Open large dialog</Button>
+        <Button variant="danger" onclick={() => { typedName = ""; nameOpen = true; }}>Open type-to-confirm dialog</Button>
         <Tooltip text="Tooltips explain icons; never hide required information in them.">
           {#snippet children(t)}<IconButton label="Help" aria-describedby={t.describedby}><Icon name="info" /></IconButton>{/snippet}
         </Tooltip>
@@ -485,6 +488,16 @@
   description="The board and its 12 stickies are removed. This can't be undone."
   confirmLabel="Delete board"
 />
+<Dialog
+  bind:open={nameOpen}
+  tone="danger"
+  title="Delete the workspace?"
+  description="Type the workspace name, next-agent, to enable the button."
+  confirmLabel="Delete workspace"
+  confirmDisabled={typedName.trim() !== "next-agent"}
+>
+  <TextField label="Workspace name" hideLabel bind:value={typedName} autocomplete="off" />
+</Dialog>
 <Dialog
   bind:open={largeOpen}
   size="lg"
