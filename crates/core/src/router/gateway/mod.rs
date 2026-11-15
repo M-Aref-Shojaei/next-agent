@@ -63,6 +63,8 @@ pub const SETTINGS_KEY: &str = "gateway.settings";
 /// Cooldowns up to this long are waited out before moving on (5xx).
 const SHORT_COOLDOWN: Duration = Duration::from_secs(5);
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+/// Output ceiling assumed when the price table has no `max_output` for a model.
+const FALLBACK_OUTPUT_TOKENS: u32 = 16_384;
 
 /// User-editable gateway settings.
 #[allow(clippy::struct_excessive_bools)] // Independent on/off switches.
@@ -1053,7 +1055,7 @@ impl Gateway {
                         self.config
                             .pricing
                             .max_output(&provider, &t.model)
-                            .unwrap_or(16_384),
+                            .unwrap_or(FALLBACK_OUTPUT_TOKENS),
                     )
                 });
                 let usage = Usage {
@@ -1360,7 +1362,11 @@ impl Gateway {
         match account.kind {
             ProviderKind::OpenAi => {
                 base["stream_options"] = json!({"include_usage": true});
-                reasoning::apply_openai(&mut base, &account.provider, max_output.unwrap_or(16_384));
+                reasoning::apply_openai(
+                    &mut base,
+                    &account.provider,
+                    max_output.unwrap_or(FALLBACK_OUTPUT_TOKENS),
+                );
                 (base, Format::OpenAi, gemini::NameMap::new())
             }
             ProviderKind::Anthropic => {
