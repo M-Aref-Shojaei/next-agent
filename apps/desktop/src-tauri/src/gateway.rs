@@ -20,6 +20,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
 
+/// Priority for a new connection when the input leaves it out.
+const DEFAULT_PRIORITY: i64 = 100;
+
 /// Where connection keys live: the OS keychain (an in-memory store in tests).
 #[must_use]
 pub fn keys() -> Arc<dyn KeySource> {
@@ -526,7 +529,7 @@ impl AppService {
             provider: provider.to_string(),
             auth_type: "api_key".into(),
             name,
-            priority: input.priority.unwrap_or(100),
+            priority: input.priority.unwrap_or(DEFAULT_PRIORITY),
             is_active: input.is_active.unwrap_or(true),
             data: serde_json::to_string(&data).map_err(|e| e.to_string())?,
         };
