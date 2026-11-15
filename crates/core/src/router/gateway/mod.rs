@@ -31,7 +31,7 @@
 
 use super::budget::{Budget, BudgetAction, BudgetStatus, Level, Period};
 use super::cache::{self, Entry, ResponseCacheSettings};
-use super::client::{classify_status, describe};
+use super::client::{classify_status, describe, parse_models};
 use super::combo::{
     reorder_by_caps, required_caps, rotate, sort_known, weighted_order, Combo, GatewayState,
     Reservation, Strategy,
@@ -1722,14 +1722,7 @@ impl Gateway {
                 .filter_map(|m| m.get("name").and_then(Value::as_str))
                 .map(|n| n.trim_start_matches("models/").to_string())
                 .collect(),
-            _ => body
-                .get("data")
-                .and_then(Value::as_array)
-                .ok_or_else(|| LlmError::Protocol("models response has no `data` array".into()))?
-                .iter()
-                .filter_map(|m| m.get("id").and_then(Value::as_str))
-                .map(str::to_string)
-                .collect(),
+            _ => parse_models(&body)?,
         };
         Ok(ids)
     }

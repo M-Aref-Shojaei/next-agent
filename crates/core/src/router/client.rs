@@ -323,7 +323,7 @@ pub(crate) fn classify_status(status: u16, body: &str, model: &str) -> LlmError 
     }
 }
 
-fn parse_models(body: &serde_json::Value) -> Result<Vec<String>, LlmError> {
+pub(crate) fn parse_models(body: &serde_json::Value) -> Result<Vec<String>, LlmError> {
     let data = body
         .get("data")
         .and_then(serde_json::Value::as_array)
