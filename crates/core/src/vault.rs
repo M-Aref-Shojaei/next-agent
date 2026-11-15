@@ -286,36 +286,34 @@ fn describe(request: Option<&ToolRequest>, tool: &str, root: Option<&Path>) -> S
     }
 }
 
-/// Derive outcome, files, commands and decisions from the events.
-///
-/// # Errors
-/// [`VaultError::NotFinished`] when no terminal event is present.
-pub fn analyze(doc: &TaskDoc) -> Result<TaskFacts, VaultError> {
-    let root = doc.meta.workspace_root.as_deref();
-    let request_for = |id: &str| doc.calls.iter().find(|(c, _)| c == id).map(|(_, r)| r);
+/// Per-call state in order of first appearance.
+struct Call {
+    id: String,
+    tool: String,
+    decision: Option<String>,
+    approval: Option<String>,
+    ok: Option<bool>,
+}
 
-    let mut status = None;
-    let mut agent_note = None;
-    let mut tool_calls = 0;
-    let (mut allowed, mut denied, mut asked) = (0, 0, 0);
-    let mut files: Vec<FileStat> = Vec::new();
-    let mut commands: Vec<CommandRun> = Vec::new();
-    let mut decisions: Vec<DecisionLine> = Vec::new();
+/// Permission outcome totals across all tool calls.
+#[derive(Default)]
+struct Counts {
+    allowed: usize,
+    denied: usize,
+    asked: usize,
+}
 
-    // Per-call state in order of first appearance.
-    struct Call {
-        id: String,
-        tool: String,
-        decision: Option<String>,
-        approval: Option<String>,
-        ok: Option<bool>,
-    }
-    let mut calls: Vec<Call> = Vec::new();
-
+/// Walk the events once, recording each call's decision, approval and result
+/// in `calls`, and the terminal `status` and `agent_note`.
+fn fold_events(
+    doc: &TaskDoc,
+    calls: &mut Vec<Call>,
+    status: &mut Option<TaskStatus>,
+    agent_note: &mut Option<String>,
+) {
     for event in &doc.events {
         match &event.kind {
             EventKind::ToolRequested { call_id, tool, .. } => {
-                tool_calls += 1;
                 calls.push(Call {
                     id: call_id.clone(),
                     tool: tool.clone(),
@@ -360,19 +358,33 @@ pub fn analyze(doc: &TaskDoc) -> Result<TaskFacts, VaultError> {
                 }
             }
             EventKind::TaskCompleted { summary } => {
-                status = Some(TaskStatus::Completed);
-                agent_note = Some(summary.clone());
+                *status = Some(TaskStatus::Completed);
+                *agent_note = Some(summary.clone());
             }
             EventKind::TaskFailed { error } => {
-                status = Some(TaskStatus::Failed);
-                agent_note = Some(error.clone());
+                *status = Some(TaskStatus::Failed);
+                *agent_note = Some(error.clone());
             }
-            EventKind::TaskCancelled => status = Some(TaskStatus::Cancelled),
+            EventKind::TaskCancelled => *status = Some(TaskStatus::Cancelled),
             _ => {}
         }
     }
+}
 
-    for call in &calls {
+/// Turn each call into a decision line, a command or file entry, and its
+/// contribution to the permission `counts`.
+fn summarize_calls(
+    doc: &TaskDoc,
+    calls: &[Call],
+    decisions: &mut Vec<DecisionLine>,
+    commands: &mut Vec<CommandRun>,
+    files: &mut Vec<FileStat>,
+    counts: &mut Counts,
+) {
+    let root = doc.meta.workspace_root.as_deref();
+    let request_for = |id: &str| doc.calls.iter().find(|(c, _)| c == id).map(|(_, r)| r);
+
+    for call in calls {
         let request = request_for(&call.id);
         let what = describe(request, &call.tool, root);
         let user_denied = call
@@ -383,12 +395,12 @@ pub fn analyze(doc: &TaskDoc) -> Result<TaskFacts, VaultError> {
         let decision = call.decision.as_deref().unwrap_or("allow");
         let blocked = decision == "deny" || user_denied;
         if was_asked {
-            asked += 1;
+            counts.asked += 1;
         }
         if blocked {
-            denied += 1;
+            counts.denied += 1;
         } else if decision == "allow" || (was_asked && call.approval.is_some()) {
-            allowed += 1;
+            counts.allowed += 1;
         }
 
         let line = match (decision, call.approval.as_deref()) {
@@ -441,6 +453,30 @@ pub fn analyze(doc: &TaskDoc) -> Result<TaskFacts, VaultError> {
             _ => {}
         }
     }
+}
+
+/// Derive outcome, files, commands and decisions from the events.
+///
+/// # Errors
+/// [`VaultError::NotFinished`] when no terminal event is present.
+pub fn analyze(doc: &TaskDoc) -> Result<TaskFacts, VaultError> {
+    let mut status = None;
+    let mut agent_note = None;
+    let mut calls: Vec<Call> = Vec::new();
+    fold_events(doc, &mut calls, &mut status, &mut agent_note);
+
+    let mut decisions: Vec<DecisionLine> = Vec::new();
+    let mut commands: Vec<CommandRun> = Vec::new();
+    let mut files: Vec<FileStat> = Vec::new();
+    let mut counts = Counts::default();
+    summarize_calls(
+        doc,
+        &calls,
+        &mut decisions,
+        &mut commands,
+        &mut files,
+        &mut counts,
+    );
 
     if !doc.diff_stats.is_empty() {
         files.clone_from(&doc.diff_stats);
@@ -451,10 +487,10 @@ pub fn analyze(doc: &TaskDoc) -> Result<TaskFacts, VaultError> {
         files,
         commands,
         decisions,
-        tool_calls,
-        allowed,
-        denied,
-        asked,
+        tool_calls: calls.len(),
+        allowed: counts.allowed,
+        denied: counts.denied,
+        asked: counts.asked,
         agent_note,
     })
 }
