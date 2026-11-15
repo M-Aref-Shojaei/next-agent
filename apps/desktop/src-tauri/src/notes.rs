@@ -18,6 +18,10 @@ pub type ChangeListener = Arc<dyn Fn(Vec<String>) + Send + Sync>;
 
 const DEFAULT_SEARCH_LIMIT: usize = 50;
 const DEFAULT_JOURNALS: usize = 30;
+/// Upper bound on search results per request.
+const MAX_SEARCH_LIMIT: usize = 500;
+/// Upper bound on journal entries per request.
+const MAX_JOURNALS_LIMIT: usize = 1000;
 const UNLINKED_LIMIT: usize = 100;
 const QUERY_LIMIT: usize = 300;
 const GRAPH_EDGES: usize = 20_000;
@@ -157,7 +161,10 @@ impl NotesService {
     pub fn search(&self, query: &str, limit: Option<usize>) -> Result<Vec<SearchHit>, String> {
         self.with(|_, index| {
             index
-                .search(query, limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(500))
+                .search(
+                    query,
+                    limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_SEARCH_LIMIT),
+                )
                 .map_err(|e| e.to_string())
         })
     }
@@ -221,7 +228,7 @@ impl NotesService {
     pub fn journals(&self, limit: Option<usize>) -> Result<Vec<JournalEntry>, String> {
         self.with(|_, index| {
             index
-                .journals(limit.unwrap_or(DEFAULT_JOURNALS).min(1000))
+                .journals(limit.unwrap_or(DEFAULT_JOURNALS).min(MAX_JOURNALS_LIMIT))
                 .map_err(|e| e.to_string())
         })
     }

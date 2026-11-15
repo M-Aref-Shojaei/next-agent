@@ -14,8 +14,8 @@ use next_agent_core::router::ReqwestFetcher;
 use next_agent_core::vault::{FileStat, TaskDoc, TaskMeta, VaultWriter};
 use next_agent_core::{
     context_for, spawn_task_with, AgentEvent, AgentExecutor, AgentStep, Approval, BuiltinExecutor,
-    EventKind, GitCli, GitSnapshots, LocalTools, MergeOptions, MockExecutor, RunContext, Store,
-    TaskId, TaskLaunch, TaskOptions, TaskSpec, TaskWorktree, ToolExecutor, ToolRequest, ToolResult,
+    EventKind, GitCli, GitSnapshots, LocalTools, MergeOptions, MockExecutor, RunContext, TaskId,
+    TaskLaunch, TaskOptions, TaskSpec, TaskWorktree, ToolExecutor, ToolRequest, ToolResult,
     WorktreeProvider,
 };
 use next_agent_permission_engine::Mode;
@@ -23,6 +23,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// Characters of a prompt kept as a task title.
+pub(crate) const TITLE_CHARS: usize = 60;
 
 /// Smallest known context window across the chat role's targets (0 = unknown,
 /// so compaction runs only on a provider overflow).
@@ -483,7 +486,7 @@ impl AppService {
             .map_or_else(|| workspace_root.clone(), |wt| wt.root.clone());
 
         let name = mode_name(mode);
-        let title: String = request.prompt.chars().take(60).collect();
+        let title: String = request.prompt.chars().take(TITLE_CHARS).collect();
         self.store()?
             .create_task(id.as_str(), &workspace.id, &title, &request.prompt, name)
             .map_err(|e| e.to_string())?;
@@ -628,7 +631,7 @@ impl AppService {
         if self.running()?.contains_key(task_id) {
             return Err("stop or wait for the task before undoing its steps".into());
         }
-        let store = Store::open(self.db_path()).map_err(|e| e.to_string())?;
+        let store = self.open_store()?;
         let outcome =
             next_agent_core::undo_last_step(&store, task_id).map_err(|e| e.to_string())?;
         Ok(UndoDto {
@@ -645,7 +648,7 @@ impl AppService {
     /// # Errors
     /// Database errors.
     pub fn task_undoable(&self, task_id: &str) -> Result<usize, String> {
-        let store = Store::open(self.db_path()).map_err(|e| e.to_string())?;
+        let store = self.open_store()?;
         next_agent_core::undoable_steps(&store, task_id)
             .map(|steps| steps.len())
             .map_err(|e| e.to_string())
@@ -668,39 +671,10 @@ impl AppService {
             });
         };
 
-        let mut diff_stats = Vec::new();
-        let mut worktree = plan.worktree.clone();
-        if let Some(wt) = &plan.worktree {
-            let checkpoint = GitCli.checkpoint(wt, &format!("next-agent: checkpoint {task_id}"));
-            match checkpoint.and_then(|_| GitCli.diff(wt)) {
-                Ok(diff) if diff.is_empty() => {
-                    // Nothing to review: drop the worktree so it doesn't linger.
-                    let _ = GitCli.discard(wt);
-                    worktree = None;
-                    notice(
-                        "info",
-                        "No file changes; the task worktree was removed.".into(),
-                    );
-                }
-                Ok(diff) => {
-                    diff_stats = diff
-                        .files
-                        .iter()
-                        .map(|f| FileStat {
-                            path: f.path.clone(),
-                            added: f.additions,
-                            removed: f.deletions,
-                        })
-                        .collect();
-                    sink(StreamMessage::Review {
-                        task_id: task_id.clone(),
-                        branch: wt.branch.clone(),
-                        files: diff_dto(&diff),
-                    });
-                }
-                Err(e) => notice("error", format!("Could not read the task's changes: {e}")),
-            }
-        }
+        let (worktree, diff_stats) = match &plan.worktree {
+            Some(wt) => Self::review_worktree(&task_id, wt, sink),
+            None => (None, Vec::new()),
+        };
 
         let started = events.first().map_or_else(String::new, |e| e.ts.clone());
         let finished_at = events.last().map_or_else(String::new, |e| e.ts.clone());
@@ -750,6 +724,56 @@ impl AppService {
         }
     }
 
+    /// Checkpoint and diff a task's worktree for review. Returns the worktree
+    /// to keep (`None` when it had no changes and was removed) and the diff
+    /// stats for the record.
+    fn review_worktree(
+        task_id: &str,
+        wt: &TaskWorktree,
+        sink: &Sink,
+    ) -> (Option<TaskWorktree>, Vec<FileStat>) {
+        let notice = |tone: &'static str, text: String| {
+            sink(StreamMessage::Notice {
+                task_id: task_id.to_string(),
+                tone,
+                text,
+            });
+        };
+        let checkpoint = GitCli.checkpoint(wt, &format!("next-agent: checkpoint {task_id}"));
+        match checkpoint.and_then(|_| GitCli.diff(wt)) {
+            Ok(diff) if diff.is_empty() => {
+                // Nothing to review: drop the worktree so it doesn't linger.
+                let _ = GitCli.discard(wt);
+                notice(
+                    "info",
+                    "No file changes; the task worktree was removed.".into(),
+                );
+                (None, Vec::new())
+            }
+            Ok(diff) => {
+                let diff_stats = diff
+                    .files
+                    .iter()
+                    .map(|f| FileStat {
+                        path: f.path.clone(),
+                        added: f.additions,
+                        removed: f.deletions,
+                    })
+                    .collect();
+                sink(StreamMessage::Review {
+                    task_id: task_id.to_string(),
+                    branch: wt.branch.clone(),
+                    files: diff_dto(&diff),
+                });
+                (Some(wt.clone()), diff_stats)
+            }
+            Err(e) => {
+                notice("error", format!("Could not read the task's changes: {e}"));
+                (Some(wt.clone()), Vec::new())
+            }
+        }
+    }
+
     /// Write (or rewrite) the task record. `Ok(None)` when no vault is set.
     fn document(&self, task: &FinishedTask) -> Result<Option<String>, String> {
         let Some(vault) = self.vault_get()? else {
@@ -761,7 +785,7 @@ impl AppService {
             calls: task.calls.clone(),
             diff_stats: task.diff_stats.clone(),
         };
-        let store = Store::open(self.db_path()).map_err(|e| e.to_string())?;
+        let store = self.open_store()?;
         let outcome = VaultWriter::new(vault)
             .document_task(&store, &doc, None)
             .map_err(|e| e.to_string())?;

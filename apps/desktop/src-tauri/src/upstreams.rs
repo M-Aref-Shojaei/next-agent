@@ -222,7 +222,6 @@ pub fn upstream_watch_status(watch: Watch) -> WatchView {
 
 #[tauri::command]
 pub async fn upstream_watch_check(app: AppHandle, watch: Watch<'_>) -> Result<WatchView, String> {
-    let watch = Arc::clone(&watch);
     let view = watch.check(true).await;
     let _ = app.emit(EVENT, &view);
     Ok(view)

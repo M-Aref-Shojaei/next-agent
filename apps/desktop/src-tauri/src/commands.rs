@@ -6,7 +6,7 @@ use crate::review::ReviewOutcome;
 use crate::service::{
     AppService, AuditStatus, HealthDto, RuleDto, Sink, TaskRequest, WorkspaceDto,
 };
-use crate::wire::StreamMessage;
+use crate::wire::{StreamMessage, EVENT_TASK_STARTED};
 use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::Emitter;
@@ -73,10 +73,8 @@ pub fn task_start(
 ) -> Result<String, String> {
     // The same events reach Coucou's island as hook events (coucou.rs).
     let cwd = service
-        .workspace_list()
-        .ok()
-        .and_then(|list| list.into_iter().find(|w| w.id == workspace_id))
-        .map_or_else(String::new, |w| w.path);
+        .workspace(&workspace_id)
+        .map_or_else(|_| String::new(), |w| w.path);
     let sink = task_sink(
         &adapter,
         on_event,
@@ -85,7 +83,7 @@ pub fn task_start(
             cwd,
         },
     );
-    let title: String = prompt.chars().take(60).collect();
+    let title: String = prompt.chars().take(crate::tasks::TITLE_CHARS).collect();
     let request = TaskRequest {
         workspace_id,
         prompt,
@@ -113,7 +111,7 @@ pub(crate) fn task_sink(
 /// Tell every window a task started (sidebar, overlay).
 pub(crate) fn announce_task(app: &tauri::AppHandle, id: &str, title: &str, mode: &str) {
     let _ = app.emit(
-        "task-started",
+        EVENT_TASK_STARTED,
         serde_json::json!({ "taskId": id, "title": title, "mode": mode }),
     );
 }

@@ -14,7 +14,7 @@
 
 use crate::service::{AppService, Sink, TaskRequest};
 use crate::tasks::{context_window, local_tools, Plan, TaskExtras};
-use crate::wire::StreamMessage;
+use crate::wire::{StreamMessage, EVENT_TASK_STARTED, EVENT_TASK_STREAM};
 use next_agent_core::learning::cron::{self, DueRun, JobSpec};
 use next_agent_core::learning::memory::{self, MemoryStore, Target};
 use next_agent_core::learning::review::{self, BudgetClient, ReviewApprover};
@@ -23,8 +23,8 @@ use next_agent_core::learning::skills::{self, Scope, SkillRoot, Skills, Transiti
 use next_agent_core::learning::{LearnChange, Learning, LearningTools, ToolSet};
 use next_agent_core::store::{CronJobRow, SessionRow};
 use next_agent_core::{
-    context_for, spawn_task_with, AgentEvent, BuiltinExecutor, Store, TaskId, TaskLaunch,
-    TaskOptions, TaskSpec,
+    context_for, spawn_task_with, AgentEvent, BuiltinExecutor, TaskId, TaskLaunch, TaskOptions,
+    TaskSpec,
 };
 use next_agent_permission_engine::Mode;
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,12 @@ const REVIEW_KEY: &str = "learning.background_review";
 const CURATOR_KEY: &str = "learning.curator_last_run";
 /// Seconds between scheduler ticks.
 const TICK: Duration = Duration::from_secs(20);
+/// Rough characters per token, used to size the review transcript.
+const CHARS_PER_TOKEN: usize = 4;
+/// The review transcript gets this fraction (1/n) of the token budget.
+const TRANSCRIPT_BUDGET_DIVISOR: u64 = 2;
+/// Hard cap on the review transcript, in characters.
+const MAX_TRANSCRIPT_CHARS: usize = 200_000;
 
 /// Settings → Memory and skills.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -393,27 +399,23 @@ impl AppService {
             .role_target("summary")
             .unwrap_or_else(|| self.chat_target());
         let budget = review::token_budget(context_window(&gateway));
-        let messages = Store::open(self.db_path())
-            .and_then(|s| s.session_messages(&job.task_id, true))
-            .map_err(|e| e.to_string())?;
+        let messages = self.open_store().and_then(|s| {
+            s.session_messages(&job.task_id, true)
+                .map_err(|e| e.to_string())
+        })?;
         if messages.is_empty() {
             return Ok(Vec::new());
         }
-        let max_chars = usize::try_from(budget / 2)
+        let max_chars = usize::try_from(budget / TRANSCRIPT_BUDGET_DIVISOR)
             .unwrap_or(usize::MAX)
-            .saturating_mul(4)
-            .min(200_000);
+            .saturating_mul(CHARS_PER_TOKEN)
+            .min(MAX_TRANSCRIPT_CHARS);
         let prompt =
             review::task_prompt(&review::render_transcript(&messages, max_chars), &job.title);
         let id = TaskId::from_seed(&format!("review:{}:{}", job.task_id, sessions::now()));
+        let title = format!("Background review: {}", job.title);
         self.store()?
-            .create_task(
-                id.as_str(),
-                &job.workspace_id,
-                &format!("Background review: {}", job.title),
-                &prompt,
-                "manual",
-            )
+            .create_task(id.as_str(), &job.workspace_id, &title, &prompt, "manual")
             .map_err(|e| e.to_string())?;
         let session = SessionRow {
             id: id.as_str().to_string(),
@@ -421,7 +423,7 @@ impl AppService {
             task_id: Some(id.as_str().to_string()),
             parent_session_id: Some(job.task_id.clone()),
             source: "review".into(),
-            title: Some(format!("Background review: {}", job.title)),
+            title: Some(title),
             started_at: sessions::now(),
             ..SessionRow::default()
         };
@@ -834,12 +836,12 @@ fn cron_sink(app: &AppHandle, job: &CronJobRow) -> Sink {
         if !announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
             if let Some(task_id) = task_of(&message) {
                 let _ = announce.emit(
-                    "task-started",
+                    EVENT_TASK_STARTED,
                     serde_json::json!({"taskId": task_id, "title": title, "mode": mode, "source": "cron"}),
                 );
             }
         }
-        let _ = handle.emit("task-stream", &message);
+        let _ = handle.emit(EVENT_TASK_STREAM, &message);
     })
 }
 

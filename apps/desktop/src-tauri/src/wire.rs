@@ -5,6 +5,11 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Tauri event: a task was started (payload: the task's announcement).
+pub const EVENT_TASK_STARTED: &str = "task-started";
+/// Tauri event: a `StreamMessage` for a running task.
+pub const EVENT_TASK_STREAM: &str = "task-stream";
+
 /// Message pushed over the task `Channel`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -64,17 +69,27 @@ pub fn now_rfc3339() -> String {
     format_unix(secs)
 }
 
+const SECS_PER_MINUTE: u64 = 60;
+const SECS_PER_HOUR: u64 = 3_600;
+const SECS_PER_DAY: u64 = 86_400;
+/// Days from 0000-03-01 (the start of Hinnant's eras) to 1970-01-01.
+const DAYS_TO_UNIX_EPOCH: i64 = 719_468;
+/// Days in one 400-year Gregorian era.
+const DAYS_PER_ERA: i64 = 146_097;
+/// Years per era.
+const YEARS_PER_ERA: i64 = 400;
+
 #[must_use]
 #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 pub fn format_unix(secs: u64) -> String {
-    let days = (secs / 86_400) as i64;
-    let rem = secs % 86_400;
+    let days = (secs / SECS_PER_DAY) as i64;
+    let rem = secs % SECS_PER_DAY;
     // Howard Hinnant's civil-from-days.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
+    let z = days + DAYS_TO_UNIX_EPOCH;
+    let era = z.div_euclid(DAYS_PER_ERA);
+    let doe = z.rem_euclid(DAYS_PER_ERA);
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe + era * 400;
+    let year = yoe + era * YEARS_PER_ERA;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     let day = doy - (153 * mp + 2) / 5 + 1;
@@ -82,9 +97,9 @@ pub fn format_unix(secs: u64) -> String {
     let year = if month <= 2 { year + 1 } else { year };
     format!(
         "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        rem / 3600,
-        (rem % 3600) / 60,
-        rem % 60
+        rem / SECS_PER_HOUR,
+        (rem % SECS_PER_HOUR) / SECS_PER_MINUTE,
+        rem % SECS_PER_MINUTE
     )
 }
 

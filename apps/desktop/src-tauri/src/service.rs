@@ -118,6 +118,10 @@ impl AppService {
     pub(crate) fn store(&self) -> Result<MutexGuard<'_, Store>, String> {
         lock(&self.store, "store")
     }
+    /// Open a fresh connection to the database at `db_path`.
+    pub(crate) fn open_store(&self) -> Result<Store, String> {
+        Store::open(self.db_path()).map_err(|e| e.to_string())
+    }
     pub(crate) fn db_path(&self) -> &Path {
         &self.db_path
     }
