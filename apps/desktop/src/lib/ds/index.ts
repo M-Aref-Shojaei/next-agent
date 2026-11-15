@@ -12,6 +12,7 @@ export { default as ColorSwatchGroup } from "./ColorSwatchGroup.svelte";
 export { default as Dialog } from "./Dialog.svelte";
 export { default as EmptyState } from "./EmptyState.svelte";
 export { default as Field } from "./Field.svelte";
+export { default as FormActions } from "./FormActions.svelte";
 export { default as Icon, ICON_NAMES, type IconName } from "./Icon.svelte";
 export { default as IconButton } from "./IconButton.svelte";
 export { default as Kbd } from "./Kbd.svelte";

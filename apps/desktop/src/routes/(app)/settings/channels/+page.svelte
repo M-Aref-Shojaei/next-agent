@@ -3,7 +3,7 @@
   import { api } from "$lib/api.ts";
   import { app } from "$lib/app.svelte.ts";
   import {
-    Banner, Button, Checkbox, EmptyState, List, ListRow, Select, SettingsLayout, SettingsRow,
+    Banner, Button, Checkbox, EmptyState, FormActions, List, ListRow, Select, SettingsLayout, SettingsRow,
     SettingsSection, StatusDot, Switch, TextField, type SettingsNavItem, type Tone,
   } from "$lib/ds/index.ts";
   import {
@@ -283,13 +283,13 @@
               <ul>{#each errors as e (e)}<li>{e}</li>{/each}</ul>
             </Banner>
           {/if}
-          <div class="actions">
-            <Button type="submit" variant="primary" loading={busy} disabled={errors.length > 0}>Save</Button>
+          <FormActions label="Channel actions">
             {#if selected}
-              <Button onclick={restart}>Restart</Button>
               <Button variant="danger" onclick={remove}>Delete</Button>
+              <Button onclick={restart}>Restart</Button>
             {/if}
-          </div>
+            <Button type="submit" variant="primary" loading={busy} disabled={errors.length > 0}>Save</Button>
+          </FormActions>
         {/snippet}
 
         <SettingsRow label="Name">
@@ -449,5 +449,4 @@
   .steps { margin: 0 0 var(--space-3); padding-left: var(--space-5); display: grid; gap: var(--space-1); }
   ul { margin: 0; padding-left: var(--space-5); }
   .tools { display: grid; gap: var(--space-2); }
-  .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
 </style>

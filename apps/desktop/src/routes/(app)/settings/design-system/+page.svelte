@@ -6,7 +6,7 @@
     ICON_NAMES, IconButton, Kbd, List, ListRow, ProgressBar, RadioGroup, SegmentedControl, Select,
     SettingsLayout, SettingsRow, SettingsSection, ShortcutField, Slider, Spinner, StatusDot, Switch, Tabs,
     TextArea, TextField, Tooltip,
-    StatTile, Table, type TableColumn,
+    FormActions, StatTile, Table, type TableColumn,
     type SettingsNavItem, type Tone,
   } from "$lib/ds/index.ts";
 
@@ -239,6 +239,12 @@
           <IconButton label="Expand" size="xs"><Icon name="chevron-right" size={12} /></IconButton>
           <IconButton label="Disabled" disabled><Icon name="more" /></IconButton>
         </div>
+        <Card title="Form actions" description="Right-aligned; stacks below 420px with the primary action on top.">
+          <FormActions label="Demo form actions">
+            <Button>Cancel</Button>
+            <Button variant="primary">Save</Button>
+          </FormActions>
+        </Card>
         <div class="demo icons">
           {#each ICON_NAMES as n (n)}<span class="icon-cell" title={n}><Icon name={n} /><code>{n}</code></span>{/each}
         </div>

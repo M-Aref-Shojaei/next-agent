@@ -18,7 +18,7 @@
   } from "$lib/learning.ts";
   import { parseList } from "$lib/gateway.ts";
   import {
-    Badge, Banner, Button, Dialog, EmptyState, List, ListRow, Select, SettingsLayout, SettingsRow,
+    Badge, Banner, Button, Dialog, EmptyState, FormActions, List, ListRow, Select, SettingsLayout, SettingsRow,
     SettingsSection, Switch, TextArea, TextField, type SettingsNavItem,
   } from "$lib/ds/index.ts";
 
@@ -298,12 +298,10 @@
           <SettingsRow label="Time zone">
             {#snippet children(ctl)}<TextField id={ctl.id} bind:value={form!.timezone} placeholder="(system) e.g. Europe/Paris" />{/snippet}
           </SettingsRow>
-          <SettingsRow label="Save this job">
-            {#snippet children()}
-              <Button type="button" onclick={() => (form = null)}>Cancel</Button>
-              <Button type="submit" variant="primary">Save job</Button>
-            {/snippet}
-          </SettingsRow>
+          <FormActions inset label="Job actions">
+            <Button type="button" onclick={() => (form = null)}>Cancel</Button>
+            <Button type="submit" variant="primary">Save job</Button>
+          </FormActions>
         </form>
       {/if}
     </SettingsSection>

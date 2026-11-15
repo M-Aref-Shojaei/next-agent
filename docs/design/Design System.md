@@ -122,6 +122,7 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 | Component | Props | Use when |
 |---|---|---|
 | **Button** | `variant` primary\|secondary\|ghost\|danger, `size` sm\|md\|lg, `loading`, `block`, `disabled`, snippets `icon`, `iconEnd` | Any text action. Use one primary per view. Danger is only for destructive actions. Ghost is for toolbars and low emphasis. `loading` keeps the width, sets `aria-busy` and blocks clicks. |
+| **FormActions** | `label`, `inset`, snippet `children` | The Save / Cancel bar at the end of a form. Right-aligned, secondary actions first and the primary last. Below 420px it stacks full-width with the primary on top. `inset` adds padding when it sits inside a bordered box. |
 | **IconButton** | `label` (required), `variant` ghost\|secondary\|danger, `size` xs (20px)\|sm\|md\|lg, `pressed` | Icon-only actions. `size="xs"` is for dense rows. `label` is the accessible name and tooltip. `pressed` makes it a toggle. |
 | **Icon** | `name` (see `ICON_NAMES`), `size`, `label` | The built-in stroke icons. They are decorative unless `label` is set. |
 
