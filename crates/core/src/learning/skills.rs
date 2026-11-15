@@ -39,6 +39,8 @@ pub const MAX_DESCRIPTION_LENGTH: usize = 1_024;
 pub const DESCRIPTION_BUDGET: usize = 60;
 pub const MAX_SKILL_CONTENT_CHARS: usize = 100_000;
 pub const MAX_SKILL_FILE_BYTES: usize = 1_048_576;
+/// Characters of a file shown in an edit-failure preview.
+const PREVIEW_CHARS: usize = 500;
 /// Characters of SKILL.md read during discovery.
 pub const DISCOVERY_READ_CHARS: usize = 4_000;
 pub const CACHE_TTL: Duration = Duration::from_secs(30);
@@ -1219,14 +1221,14 @@ impl Skills {
                 let source = read_text(&path, MAX_SKILL_FILE_BYTES)?;
                 let (bom, body) = edit_match::split_bom(&source);
                 let edited = edit_match::apply_edit(body, old_string, new_string, *replace_all).map_err(|error| {
-                    let preview: String = source.chars().take(500).collect();
+                    let preview: String = source.chars().take(PREVIEW_CHARS).collect();
                     let message = match error {
                         edit_match::EditError::Multiple { count } => format!("Found {count} matches for old_string. Provide more context to make it unique, or use replace_all=true."),
                         edit_match::EditError::Identical => "No edit was applied because old_string and new_string are identical. Provide the existing text to replace in old_string and the changed replacement text in new_string.".into(),
                         edit_match::EditError::NotFound { .. } => "Could not find a match for old_string in the file".into(),
                         other => other.to_string(),
                     };
-                    format!("{message}\nFile preview:\n{preview}{}", if source.chars().count() > 500 { "..." } else { "" })
+                    format!("{message}\nFile preview:\n{preview}{}", if source.chars().count() > PREVIEW_CHARS { "..." } else { "" })
                 })?;
                 let text = edit_match::join_bom(bom, &edited.text);
                 check_size(&text, &label)?;
@@ -1263,8 +1265,9 @@ impl Skills {
                 let (dir, root) = self.existing_dir(name, dirs, snapshots)?;
                 if file_content.len() > MAX_SKILL_FILE_BYTES {
                     return Err(format!(
-                        "File content is {} bytes (limit: 1,048,576 bytes / 1 MiB). Consider splitting into smaller files.",
-                        file_content.len()
+                        "File content is {} bytes (limit: {} bytes / 1 MiB). Consider splitting into smaller files.",
+                        file_content.len(),
+                        thousands(MAX_SKILL_FILE_BYTES)
                     ));
                 }
                 check_size(file_content, &rel.display().to_string())?;
@@ -1379,10 +1382,24 @@ fn check_size(content: &str, label: &str) -> Result<(), String> {
     let chars = content.chars().count();
     if chars > MAX_SKILL_CONTENT_CHARS {
         return Err(format!(
-            "{label} content is {chars} characters (limit: 100,000). Consider splitting into a smaller SKILL.md with supporting files in references/ or templates/."
+            "{label} content is {chars} characters (limit: {}). Consider splitting into a smaller SKILL.md with supporting files in references/ or templates/.",
+            thousands(MAX_SKILL_CONTENT_CHARS)
         ));
     }
     Ok(())
+}
+
+/// A count with `,` thousands separators, for error messages (`1,048,576`).
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Whether `path` (or, if it does not exist yet, its nearest existing
