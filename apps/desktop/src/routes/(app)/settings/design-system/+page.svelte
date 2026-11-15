@@ -436,6 +436,7 @@
             {/snippet}
           </ListRow>
           <ListRow title="Selected row" description="onclick makes the row a button" selected onclick={() => {}} meta="2m ago" />
+          <ListRow title="my-project" tooltip="/Users/you/code/my-project" selected selectedAs="current" onclick={() => {}} />
           <ListRow title="Disabled row" disabled description="Unavailable">
             {#snippet children()}<Badge size="sm" tone="warn">paused</Badge>{/snippet}
           </ListRow>
