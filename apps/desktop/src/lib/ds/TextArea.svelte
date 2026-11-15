@@ -12,6 +12,8 @@
     error?: string;
     hideLabel?: boolean;
     mono?: boolean;
+    /** The <textarea> element, bindable. */
+    ref?: HTMLTextAreaElement | null;
     /** Allow the user to resize vertically (default) or not at all. */
     resize?: "vertical" | "none";
   };
@@ -24,6 +26,7 @@
     hideLabel = false,
     mono = false,
     resize = "vertical",
+    ref = $bindable(),
     rows = 4,
     id,
     required,
@@ -35,6 +38,7 @@
 {#snippet area(ctl: FieldControl | undefined)}
   <textarea
     {...rest}
+    bind:this={ref}
     {rows}
     {required}
     id={ctl?.id ?? id}

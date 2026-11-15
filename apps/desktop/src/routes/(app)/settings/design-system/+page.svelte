@@ -77,6 +77,7 @@
   let dangerOpen = $state(false);
   let largeOpen = $state(false);
   let progress = $state(42);
+  let focusField = $state<HTMLInputElement | null>(null);
   let nameOpen = $state(false);
   let typedName = $state("");
   let nullableText = $state<string | undefined>(undefined);
@@ -263,6 +264,10 @@
         <Field label="Custom control in a Field" hint="Field wraps anything: it hands the control its id.">
           {#snippet children(ctl)}<Slider id={ctl.id} aria-describedby={ctl.describedby} bind:value={volume} format={(v) => `${v}%`} />{/snippet}
         </Field>
+        <div class="demo">
+          <TextField label="Focus me from code" bind:ref={focusField} />
+          <Button onclick={() => focusField?.focus()}>Focus the field</Button>
+        </div>
         <TextField label="Optional (string | undefined)" bind:value={nullableText} hint="Binds straight to an optional setting: {nullableText === undefined ? 'unset' : `“${nullableText}”`}." />
         <Select label="Optional choice (string | null)" bind:value={nullableChoice} placeholder="Not set" options={[{ value: "auto", label: "Auto" }, { value: "manual", label: "Manual" }]} hint={nullableChoice === null ? "null" : nullableChoice} />
       </div>

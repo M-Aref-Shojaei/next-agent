@@ -17,6 +17,8 @@
     prefix?: Snippet;
     /** Content inside the box after the text (unit, IconButton). */
     suffix?: Snippet;
+    /** The <input> element, bindable: focus it, select it, measure it. */
+    ref?: HTMLInputElement | null;
     /** Monospace text (paths, keys, URLs). */
     mono?: boolean;
   };
@@ -31,6 +33,7 @@
     prefix,
     suffix,
     mono = false,
+    ref = $bindable(),
     id,
     required,
     class: className = "",
@@ -43,6 +46,7 @@
     {#if prefix}<span class="affix">{@render prefix()}</span>{/if}
     <input
       {...rest}
+      bind:this={ref}
       id={ctl?.id ?? id}
       class:mono
       {required}
