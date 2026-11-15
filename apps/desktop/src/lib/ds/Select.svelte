@@ -46,7 +46,7 @@
     >
       {#if placeholder}<option value="" disabled selected={value == null || value === ""}>{placeholder}</option>{/if}
       {#each options as opt (opt.value)}
-        <option value={opt.value} disabled={opt.disabled}>{opt.label}</option>
+        <option value={opt.value} disabled={opt.disabled} title={opt.description}>{opt.label}</option>
       {/each}
     </select>
     <span class="chev"><Icon name="chevron-down" size={14} /></span>

@@ -271,6 +271,7 @@
         <TextField label="Disabled" value="Read only value" disabled />
         <TextField label="Small" size="sm" placeholder="Compact field" />
         <Select label="Model" bind:value={model} options={[{ value: "fast", label: "Fast" }, { value: "smart", label: "Smart" }, { value: "max", label: "Max" }]} />
+        <Select label="Template (options have tooltips)" options={[{ value: "blank", label: "Blank", description: "An empty canvas." }, { value: "flow", label: "User flow", description: "Start, steps and a decision." }]} value="blank" />
         <Select label="Select with error" placeholder="Choose a provider" options={[{ value: "a", label: "Anthropic" }]} error="Pick one." />
         <div class="span2"><TextArea label="System prompt" bind:value={notes} hint="Markdown is allowed." placeholder="You are a careful coding agent…" /></div>
         <Field label="Custom control in a Field" hint="Field wraps anything: it hands the control its id.">

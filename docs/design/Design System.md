@@ -132,7 +132,7 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 | **Field** | `label`, `hint`, `error`, `required`, `hideLabel`, `id`, snippet `children({id, describedby, invalid, labelId})` | Labelling any custom control. It wires the label and `aria-describedby` for you. |
 | **TextField** | bindable `value` (`string`, `number`, `null` or `undefined`), `label`, `hint`, `error`, `hideLabel`, `size`, `mono`, bindable `ref` (the `<input>`), snippets `prefix` and `suffix` | Single-line text. With `label` it wraps itself in a Field; without one, pass `aria-label`. |
 | **TextArea** | bindable `value` (also `null` or `undefined`), `label`, `hint`, `error`, `rows`, `mono`, `resize`, `autogrow`, `compact`, bindable `ref` (the `<textarea>`), exported `fit()` | Multi-line text. `autogrow` grows with the content (`rows` is the minimum); call `fit()` after setting the element's value from code. `compact` is tight padding for editing text in place. |
-| **Select** | bindable `value` (also `null` or `undefined`: nothing chosen, the placeholder shows), `options: {value,label,disabled?}[]`, `label`, `placeholder`, `size`, `error` | Choosing one of more than about 5 options. Use a native select. |
+| **Select** | bindable `value` (also `null` or `undefined`: nothing chosen, the placeholder shows), `options: {value,label,description?,disabled?}[]` (`description` is the option's tooltip), `label`, `placeholder`, `size`, `error` | Choosing one of more than about 5 options. Use a native select. |
 | **ShortcutField** | bindable `value` ("Ctrl+Shift+K"), `label` or `id`, `requireModifier`, `clearable`, `platform`, `record`, `onrecording` | Recording a global shortcut. Click, then press keys. Esc cancels; Backspace clears. Pass Coucou's recorder as `record` to keep its AltGr rules. `onrecording` pauses global shortcuts while recording. |
 | **Kbd** | `keys`, `platform`, `size` | Showing a shortcut as keycaps (⌘⇧K on a Mac, Ctrl+Shift+K elsewhere). |
 
@@ -142,7 +142,7 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 | **Switch** | bindable `checked`, `label`, `size` sm\|md, `onchange` | An on/off setting that applies at once. In a SettingsRow, leave out `label` and pass `id`. |
 | **Checkbox** | bindable `checked` and `indeterminate`, `label`, `description` | Choices confirmed later (a form), multi-select, select-all. |
 | **RadioGroup** | bindable `value`, `options` (with `description`), `label` (legend), `orientation`, `hint` | Choosing one of 2–5 options that need explanation. |
-| **SegmentedControl** | bindable `value`, `options`, `label` or `labelledby`, `size`, `block` | Choosing one of 2–4 short options that switch a mode or view (Coucou's "pills"). Arrow keys move the choice. |
+| **SegmentedControl** | bindable `value`, `options` (`description` is each segment's tooltip), `label` or `labelledby`, `size`, `block` | Choosing one of 2–4 short options that switch a mode or view (Coucou's "pills"). Arrow keys move the choice. |
 | **Slider** | bindable `value`, `min`, `max`, `step`, `showValue`, `format` | Choosing from a continuous range (volume, opacity). `format` also sets `aria-valuetext`. |
 | **ColorSwatchGroup** | bindable `value`, `swatches: {value,label,color}[]`, `label` or `labelledby` | Picking a colour from a palette. The colours are the caller's data; the control itself uses tokens. |
 

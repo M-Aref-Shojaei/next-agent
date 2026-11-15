@@ -11,7 +11,7 @@
   import { placeAt, reId, type Skeleton } from "$lib/boards/skeleton.ts";
   import type { ExcalidrawImperativeAPI } from "$lib/boards/excalidraw.ts";
 
-  const TEMPLATE_OPTIONS = TEMPLATES.map((t) => ({ value: t.id, label: t.name }));
+  const TEMPLATE_OPTIONS = TEMPLATES.map((t) => ({ value: t.id, label: t.name, description: t.description }));
 
   type Engine = typeof import("$lib/boards/excalidraw.ts");
   type Snap = { json: string; liveCount: number };

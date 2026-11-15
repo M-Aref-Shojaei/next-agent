@@ -450,7 +450,7 @@
             <div class="focus">
               <div class="row between">
                 <Button onclick={() => (openId = null)}>← All directions</Button>
-                <SegmentedControl label="Versions" size="sm" options={versions.map((v, i) => ({ value: v.id, label: `v${i + 1}` }))} value={open.id} onchange={(id) => (openId = id)} />
+                <SegmentedControl label="Versions" size="sm" options={versions.map((v, i) => ({ value: v.id, label: `v${i + 1}`, description: v.note || "Original" }))} value={open.id} onchange={(id) => (openId = id)} />
               </div>
               <h2>{open.title}</h2>
               {#if open.rationale}<p class="muted">{open.rationale}</p>{/if}
