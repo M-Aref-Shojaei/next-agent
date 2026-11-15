@@ -4,6 +4,7 @@ pub mod boards;
 pub mod channels;
 pub mod commands;
 pub mod coucou;
+pub mod design;
 pub mod gateway;
 pub mod learning;
 pub mod notes;
@@ -46,6 +47,7 @@ pub fn run() {
                 let _ = handle.emit("graph-changed", files);
             }));
             app.manage(notes);
+            app.manage(design::DesignState::default());
             app.manage(coucou::Adapter::start(
                 app.handle().clone(),
                 Arc::clone(&service),
@@ -156,10 +158,30 @@ pub fn run() {
             learning::cron_pause,
             learning::cron_delete,
             learning::cron_run_now,
+            design::design_system_get,
+            design::design_system_generate,
+            design::design_system_save,
+            design::design_generate,
+            design::design_history,
+            design::design_choose,
+            design::design_iterate,
+            design::design_preview_start,
+            design::design_preview_stop,
+            design::design_preview_log,
+            design::design_source,
+            design::design_apply_style,
+            design::design_convert,
+            design::design_implement,
         ]))
         .build(tauri::generate_context!())
         .expect("error while running Next Agent")
-        .run(|app, event| coucou_lib::on_run_event(app, &event));
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Dev servers started by the Design Studio must not outlive the app.
+                app.state::<design::DesignState>().stop_all();
+            }
+            coucou_lib::on_run_event(app, &event);
+        });
 }
 
 /// Health probe for the status-bar dot: the provider behind the `chat` role

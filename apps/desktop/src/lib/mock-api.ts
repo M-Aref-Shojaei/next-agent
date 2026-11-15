@@ -1,6 +1,7 @@
 // In-memory stand-in for the Rust commands, used outside Tauri.
 import type { Api, BoardDoc, Workspace } from "./api.ts";
 import { mockGraphApi } from "./notes/mock-graph.ts";
+import { designMockApi } from "./design-mock.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 import type { WatchView } from "./upstreams.ts";
 import { ENTRY_DELIMITER, MEMORY_LIMITS, memoryUsage, type CronJob, type LearningSettings, type SkillInfo } from "./learning.ts";
@@ -613,4 +614,5 @@ export const mockApi: Api = {
     job.lastTaskId = `t${(counter += 1)}`;
     return job.lastTaskId;
   },
+  ...designMockApi,
 };

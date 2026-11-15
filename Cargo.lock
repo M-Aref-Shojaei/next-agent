@@ -3328,6 +3328,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "next-agent-design"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "next-agent-desktop"
 version = "0.1.0"
 dependencies = [
@@ -3335,6 +3345,7 @@ dependencies = [
  "coucou",
  "next-agent-channels",
  "next-agent-core",
+ "next-agent-design",
  "next-agent-graph",
  "next-agent-permission-engine",
  "next-agent-process-manager",

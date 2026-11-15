@@ -71,21 +71,19 @@ pub fn task_start(
     on_event: Channel<StreamMessage>,
     profile: Option<String>,
 ) -> Result<String, String> {
-    let direct: Sink = Arc::new(move |message| {
-        let _ = on_event.send(message);
-    });
     // The same events reach Coucou's island as hook events (coucou.rs).
     let cwd = service
         .workspace_list()
         .ok()
         .and_then(|list| list.into_iter().find(|w| w.id == workspace_id))
         .map_or_else(String::new, |w| w.path);
-    let sink = adapter.wrap(
+    let sink = task_sink(
+        &adapter,
+        on_event,
         crate::coucou::TaskContext {
             prompt: prompt.clone(),
             cwd,
         },
-        direct,
     );
     let title: String = prompt.chars().take(60).collect();
     let request = TaskRequest {
@@ -95,11 +93,29 @@ pub fn task_start(
         profile,
     };
     let id = Arc::clone(&service).task_start(&request, sink)?;
+    announce_task(&app, &id, &title, &mode);
+    Ok(id)
+}
+
+/// A task's event sink: the caller's Channel, with the same events passed to
+/// Coucou's island as hook events (coucou.rs).
+pub(crate) fn task_sink(
+    adapter: &crate::coucou::Adapter,
+    on_event: Channel<StreamMessage>,
+    ctx: crate::coucou::TaskContext,
+) -> Sink {
+    let direct: Sink = Arc::new(move |message| {
+        let _ = on_event.send(message);
+    });
+    adapter.wrap(ctx, direct)
+}
+
+/// Tell every window a task started (sidebar, overlay).
+pub(crate) fn announce_task(app: &tauri::AppHandle, id: &str, title: &str, mode: &str) {
     let _ = app.emit(
         "task-started",
         serde_json::json!({ "taskId": id, "title": title, "mode": mode }),
     );
-    Ok(id)
 }
 
 /// Settings → Overlay: opens Coucou's own settings window on `page`

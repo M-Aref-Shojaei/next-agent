@@ -1,0 +1,10 @@
+{
+  "name": "@next-agent/design-instrument",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Dev-only Vite plugin: adds data-na-src source positions for the Design Studio's edit mode",
+  "license": "AGPL-3.0-or-later",
+  "exports": { ".": "./src/index.mjs" },
+  "scripts": { "test": "node --test tests/*.test.mjs" }
+}

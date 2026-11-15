@@ -392,6 +392,27 @@ pub const MIGRATIONS: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS channel_activity_by_channel ON channel_activity(channel_id, id DESC)",
     // --- end channels ---
+    // --- design-studio ---
+    // Design directions generated in the Design Studio. Each chat refinement
+    // is a new row whose `parent_id` is the version it changed; `body` is the
+    // direction as JSON (html, rationale, critique, lint).
+    "CREATE TABLE IF NOT EXISTS design_directions (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        batch_id TEXT NOT NULL,
+        parent_id TEXT,
+        prompt TEXT NOT NULL,
+        frame TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        reply TEXT NOT NULL DEFAULT '',
+        chosen INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    )",
+    "CREATE INDEX IF NOT EXISTS design_directions_by_workspace
+        ON design_directions (workspace_id, created_at)",
+    // --- end design-studio ---
 ];
 
 /// Handle to the metadata database.
@@ -3573,3 +3594,168 @@ mod channel_tests {
     }
 }
 // --- end channels ---------------------------------------------------------------
+
+// --- design-studio -------------------------------------------------------------
+
+/// One stored design direction (or a chat refinement of one).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesignDirectionRow {
+    pub id: String,
+    pub workspace_id: String,
+    pub batch_id: String,
+    pub parent_id: Option<String>,
+    pub prompt: String,
+    pub frame: String,
+    pub title: String,
+    /// The direction as JSON.
+    pub body: String,
+    /// The chat message that produced this version (empty for originals).
+    pub note: String,
+    /// The model's one-line reply to `note`.
+    pub reply: String,
+    pub chosen: bool,
+    pub created_at: String,
+}
+
+const DESIGN_COLUMNS: &str = "id, workspace_id, batch_id, parent_id, prompt, frame, title, body, note, reply, chosen, created_at";
+
+fn design_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DesignDirectionRow> {
+    Ok(DesignDirectionRow {
+        id: row.get(0)?,
+        workspace_id: row.get(1)?,
+        batch_id: row.get(2)?,
+        parent_id: row.get(3)?,
+        prompt: row.get(4)?,
+        frame: row.get(5)?,
+        title: row.get(6)?,
+        body: row.get(7)?,
+        note: row.get(8)?,
+        reply: row.get(9)?,
+        chosen: row.get::<_, i64>(10)? != 0,
+        created_at: row.get(11)?,
+    })
+}
+
+impl Store {
+    /// Save a direction (`created_at` and `chosen` are set by the database).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the insert fails.
+    pub fn design_direction_insert(&self, row: &DesignDirectionRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO design_directions (id, workspace_id, batch_id, parent_id, prompt, frame, title, body, note, reply)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                row.id,
+                row.workspace_id,
+                row.batch_id,
+                row.parent_id,
+                row.prompt,
+                row.frame,
+                row.title,
+                row.body,
+                row.note,
+                row.reply
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// One direction by id.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn design_direction(&self, id: &str) -> Result<Option<DesignDirectionRow>, StoreError> {
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT {DESIGN_COLUMNS} FROM design_directions WHERE id = ?1"
+        ))?;
+        let mut rows = statement.query_map(rusqlite::params![id], design_row)?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// A workspace's most recent directions, newest first.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
+    pub fn design_directions(
+        &self,
+        workspace_id: &str,
+        limit: u32,
+    ) -> Result<Vec<DesignDirectionRow>, StoreError> {
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT {DESIGN_COLUMNS} FROM design_directions WHERE workspace_id = ?1
+             ORDER BY created_at DESC, rowid DESC LIMIT ?2"
+        ))?;
+        let rows = statement.query_map(rusqlite::params![workspace_id, limit], design_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Mark `id` as the chosen direction of its batch (and no other).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the update fails.
+    pub fn design_direction_choose(&self, id: &str) -> Result<bool, StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE design_directions SET chosen = (id = ?1)
+             WHERE batch_id = (SELECT batch_id FROM design_directions WHERE id = ?1)",
+            rusqlite::params![id],
+        )?;
+        Ok(changed > 0)
+    }
+}
+
+#[cfg(test)]
+mod design_studio_tests {
+    use super::*;
+
+    fn row(id: &str, batch: &str, parent: Option<&str>) -> DesignDirectionRow {
+        DesignDirectionRow {
+            id: id.into(),
+            workspace_id: "ws".into(),
+            batch_id: batch.into(),
+            parent_id: parent.map(str::to_string),
+            prompt: "p".into(),
+            frame: "web".into(),
+            title: "T".into(),
+            body: "{}".into(),
+            note: String::new(),
+            reply: String::new(),
+            chosen: false,
+            created_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn directions_round_trip_and_choose() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .design_direction_insert(&row("a", "b1", None))
+            .expect("a");
+        store
+            .design_direction_insert(&row("b", "b1", None))
+            .expect("b");
+        store
+            .design_direction_insert(&row("c", "b1", Some("a")))
+            .expect("c");
+        store
+            .design_direction_insert(&row("z", "b2", None))
+            .expect("z");
+        let got = store.design_direction("c").expect("q").expect("row");
+        assert_eq!(got.parent_id.as_deref(), Some("a"));
+        assert!(store.design_direction("nope").expect("q").is_none());
+        assert!(store.design_direction_choose("b").expect("choose"));
+        assert!(store.design_direction_choose("a").expect("choose"));
+        let all = store.design_directions("ws", 10).expect("list");
+        assert_eq!(all.len(), 4);
+        assert_eq!(all[0].id, "z", "newest first");
+        let chosen: Vec<_> = all
+            .iter()
+            .filter(|r| r.chosen)
+            .map(|r| r.id.as_str())
+            .collect();
+        assert_eq!(chosen, vec!["a"]);
+        assert_eq!(store.design_directions("other", 10).expect("list").len(), 0);
+    }
+}
+
+// --- end design-studio ---------------------------------------------------------

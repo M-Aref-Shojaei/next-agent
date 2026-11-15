@@ -154,6 +154,17 @@ class AppStore {
   async startTask(prompt: string): Promise<void> {
     const ws = this.activeWorkspace;
     if (!ws || !prompt.trim()) return;
+    const id = await this.trackTask(prompt, (deliver) =>
+      api.taskStart(ws.id, prompt, this.mode, deliver, this.profile || undefined),
+    );
+    if (id) this.activeTaskId = id;
+  }
+
+  /**
+   * Show a task another screen started (Design Studio writes, conversions,
+   * "Implement this"): `start` gets the message callback and returns the id.
+   */
+  async trackTask(title: string, start: (deliver: (m: StreamMessage) => void) => Promise<string>): Promise<string | null> {
     const buffered: StreamMessage[] = [];
     let taskId: string | null = null;
     const deliver = (message: StreamMessage) => {
@@ -161,14 +172,15 @@ class AppStore {
       else this.apply(taskId, message);
     };
     try {
-      const id = await api.taskStart(ws.id, prompt, this.mode, deliver, this.profile || undefined);
-      this.tasks = [{ ...newTask(id, prompt.slice(0, 60)), status: "running" }, ...this.tasks];
-      this.activeTaskId = id;
+      const id = await start(deliver);
+      this.tasks = [{ ...newTask(id, title.slice(0, 60)), status: "running" }, ...this.tasks];
       taskId = id;
       for (const m of buffered) this.apply(id, m);
       this.error = null;
+      return id;
     } catch (e) {
       this.error = String(e);
+      return null;
     }
   }
 

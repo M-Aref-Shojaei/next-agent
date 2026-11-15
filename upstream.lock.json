@@ -101,27 +101,30 @@
       "role": "Design board (boards/*.excalidraw)"
     },
     "open-design": {
-      "pin": "main (pin exact commit when porting)",
+      "pin": "main @ 59e4f2ae85de7e7318a5e6bdcf3a34584c4b7582 (studied; mechanics ported, not bundled)",
+      "ported": "apps/web/src/artifacts/{parser,markdown-context,recover}.ts, prompts/{official-system,directions,discovery}.ts, apps/daemon/src/lint-artifact.ts, public-asset-fetch.ts + api/connectionTest.ts, FileViewer.tsx sandbox, design-systems/README.md layout -> crates/design/src/{artifact,prompts,critique,lint,ssrf,sandbox,system}.rs",
       "licence": "Apache-2.0",
-      "adapter": "apps/desktop",
+      "adapter": "crates/design",
       "role": "AI Design Studio",
-      "checked": "2026-11-14",
+      "checked": "2026-11-15",
       "risk": "medium"
     },
     "onlook": {
-      "pin": "main (pin exact commit when porting)",
+      "pin": "main @ 423e2e924366419e418ee049093872d535eea41a (studied; mechanics ported, not bundled)",
+      "ported": "packages/parser/src/{ids,code-edit/transform,code-edit/style}.ts, apps/web/preload/script -> crates/design/src/{source_map,codemod,bridge.js}, packages/design-instrument",
       "licence": "Apache-2.0",
-      "adapter": "apps/desktop",
+      "adapter": "crates/design",
       "role": "Design Studio: visual edit to code",
-      "checked": "2026-11-14",
+      "checked": "2026-11-15",
       "risk": "medium"
     },
     "openui": {
-      "pin": "main (pin exact commit when porting)",
+      "pin": "main @ 42d7ab4ab6650433486dfb12eb3783c393a3e475 (studied; prompt ported, not bundled)",
+      "ported": "frontend/src/api/openai.ts (convert), frontend/src/state/atoms/history.ts -> crates/design/src/{convert,prompts}.rs",
       "licence": "Apache-2.0",
-      "adapter": "apps/desktop",
+      "adapter": "crates/design",
       "role": "Design Studio: HTML to framework",
-      "checked": "2026-11-14",
+      "checked": "2026-11-15",
       "risk": "low"
     },
     "react": {

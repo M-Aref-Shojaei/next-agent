@@ -90,6 +90,10 @@ pub struct FinishedTask {
 
 type Calls = Arc<Mutex<Vec<(String, ToolRequest)>>>;
 
+/// Builds a scripted task's steps once its sandbox root (the task worktree)
+/// is known.
+pub type Script = Box<dyn FnOnce(&Path) -> Result<Vec<AgentStep>, String> + Send>;
+
 /// Remembers the requests the broker let through, so the vault record can
 /// name files and commands (events carry only tool names and JSON args).
 struct Recording {
@@ -176,7 +180,24 @@ impl AppService {
         request: &TaskRequest,
         sink: Sink,
     ) -> Result<String, String> {
-        self.task_start_inner(request, sink, TaskExtras::default(), None)
+        self.task_start_inner(request, sink, TaskExtras::default(), None, None)
+    }
+
+    /// [`Self::task_start`] with a fixed script instead of the agent
+    /// (Design Studio writes). A scripted task must run in a task worktree:
+    /// its steps still go through the broker and the permission engine, and
+    /// the result is reviewed and merged like any other task.
+    ///
+    /// # Errors
+    /// As [`Self::task_start`], plus: no worktree for a scripted task, or the
+    /// script could not be built.
+    pub fn task_start_scripted(
+        self: &Arc<Self>,
+        request: &TaskRequest,
+        sink: Sink,
+        script: Script,
+    ) -> Result<String, String> {
+        self.task_start_inner(request, sink, TaskExtras::default(), None, Some(script))
     }
 
     /// [`AppService::task_start`] for cron runs and other non-UI starts.
@@ -189,7 +210,7 @@ impl AppService {
         sink: Sink,
         extras: TaskExtras,
     ) -> Result<String, String> {
-        self.task_start_inner(request, sink, extras, None)
+        self.task_start_inner(request, sink, extras, None, None)
     }
 
     /// [`AppService::task_start`] as a channel task. A channel task runs
@@ -203,7 +224,7 @@ impl AppService {
         sink: Sink,
         channel: &ChannelLaunch,
     ) -> Result<String, String> {
-        self.task_start_inner(request, sink, TaskExtras::default(), Some(channel))
+        self.task_start_inner(request, sink, TaskExtras::default(), Some(channel), None)
     }
 
     fn task_start_inner(
@@ -212,12 +233,28 @@ impl AppService {
         sink: Sink,
         extras: TaskExtras,
         channel: Option<&ChannelLaunch>,
+        script: Option<Script>,
     ) -> Result<String, String> {
         if channel.is_some() {
             next_agent_channels::config::guard_mode(parse_mode(&request.mode)?)?;
         }
         let mut plan = self.plan(request, extras)?;
         let task_id = plan.spec.id.as_str().to_string();
+        let scripted = match script {
+            None => None,
+            Some(build) => {
+                let Some(wt) = &plan.worktree else {
+                    return Err("Design Studio changes are written in a task worktree, which needs a git repository with at least one commit. Commit the project first.".into());
+                };
+                match build(&plan.root) {
+                    Ok(steps) => Some(steps),
+                    Err(error) => {
+                        let _ = GitCli.discard(wt);
+                        return Err(error);
+                    }
+                }
+            }
+        };
 
         if let Some(wt) = &plan.worktree {
             sink(StreamMessage::Worktree {
@@ -227,9 +264,22 @@ impl AppService {
             });
         }
         let learning = self.learning_for(&plan);
-        let (executor, agent_notice, builtin) =
-            self.choose_executor(&plan, &task_id, &learning, channel.map(|c| &c.profile));
-        plan.builtin = builtin;
+        let (executor, agent_notice) = match scripted {
+            Some(steps) => (
+                Box::new(MockExecutor::new(steps)) as Box<dyn AgentExecutor + Send>,
+                None,
+            ),
+            None => {
+                let (executor, notice, builtin) = self.choose_executor(
+                    &plan,
+                    &task_id,
+                    &learning,
+                    channel.map(|c| &c.profile),
+                );
+                plan.builtin = builtin;
+                (executor, notice)
+            }
+        };
         let executor: Box<dyn AgentExecutor + Send> = match channel {
             Some(c) => Box::new(next_agent_channels::ChannelExecutor::new(
                 executor,

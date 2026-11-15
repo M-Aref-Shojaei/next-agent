@@ -39,6 +39,19 @@ import type {
   ChannelInfo,
   PairingRequest,
 } from "./channels.ts";
+import type {
+  DesignBatch,
+  DesignDirection,
+  DesignFiles,
+  DesignProgress,
+  DesignTask,
+  FrameKind,
+  Framework,
+  PreviewInfo,
+  RawLocation,
+  SourceView,
+  StyleChange,
+} from "./design.ts";
 
 export interface Workspace {
   id: string;
@@ -235,6 +248,44 @@ export interface Api {
   onChannelHealth(callback: (channelId: string, health: ChannelHealth) => void): Promise<() => void>;
   /** A pairing request or new activity on a channel (refresh the page). */
   onChannelChange(callback: (channelId: string) => void): Promise<() => void>;
+  // Design Studio (crates/design, src-tauri/src/design.rs).
+  /** DESIGN.md + tokens.css, or a draft from the project's CSS when unsaved. */
+  designSystemGet(workspaceId: string): Promise<DesignFiles>;
+  /** Read the project's CSS and write both files. Errors starting "exists:" need `overwrite`. */
+  designSystemGenerate(workspaceId: string, overwrite: boolean): Promise<DesignFiles>;
+  designSystemSave(workspaceId: string, designMd: string, tokensCss: string): Promise<DesignFiles>;
+  designGenerate(
+    workspaceId: string,
+    prompt: string,
+    frame: FrameKind,
+    count: number,
+    board: string | null,
+    critique: boolean,
+    onProgress: (p: DesignProgress) => void,
+  ): Promise<DesignBatch>;
+  designHistory(workspaceId: string): Promise<DesignDirection[]>;
+  designChoose(id: string): Promise<void>;
+  designIterate(id: string, message: string): Promise<DesignDirection>;
+  /** `url` null = start the workspace's dev server. `studioOrigin` = window.location.origin. */
+  designPreviewStart(workspaceId: string, url: string | null, studioOrigin: string): Promise<PreviewInfo>;
+  designPreviewStop(workspaceId: string): Promise<void>;
+  designPreviewLog(workspaceId: string): Promise<string[]>;
+  designSource(workspaceId: string, location: RawLocation): Promise<SourceView>;
+  /** Writes a previewed style change as a task in a worktree (review + merge in Tasks). */
+  designApplyStyle(
+    workspaceId: string,
+    location: RawLocation,
+    changes: StyleChange[],
+    onMessage: (message: StreamMessage) => void,
+  ): Promise<DesignTask>;
+  designConvert(id: string, framework: Framework | null, onMessage: (message: StreamMessage) => void): Promise<DesignTask>;
+  designImplement(id: string, onMessage: (message: StreamMessage) => void): Promise<DesignTask>;
+}
+
+function channel<T>(on: (m: T) => void): Channel<T> {
+  const c = new Channel<T>();
+  c.onmessage = on;
+  return c;
 }
 
 const tauriApi: Api = {
@@ -346,6 +397,22 @@ const tauriApi: Api = {
     ]);
     return () => offs.forEach((off) => off());
   },
+  designSystemGet: (workspaceId) => invoke("design_system_get", { workspaceId }),
+  designSystemGenerate: (workspaceId, overwrite) => invoke("design_system_generate", { workspaceId, overwrite }),
+  designSystemSave: (workspaceId, designMd, tokensCss) => invoke("design_system_save", { workspaceId, designMd, tokensCss }),
+  designGenerate: (workspaceId, prompt, frame, count, board, critique, onProgress) =>
+    invoke("design_generate", { workspaceId, prompt, frame, count, board, critique, onProgress: channel(onProgress) }),
+  designHistory: (workspaceId) => invoke("design_history", { workspaceId }),
+  designChoose: (id) => invoke("design_choose", { id }),
+  designIterate: (id, message) => invoke("design_iterate", { id, message }),
+  designPreviewStart: (workspaceId, url, studioOrigin) => invoke("design_preview_start", { workspaceId, url, studioOrigin }),
+  designPreviewStop: (workspaceId) => invoke("design_preview_stop", { workspaceId }),
+  designPreviewLog: (workspaceId) => invoke("design_preview_log", { workspaceId }),
+  designSource: (workspaceId, location) => invoke("design_source", { workspaceId, location }),
+  designApplyStyle: (workspaceId, location, changes, onMessage) =>
+    invoke("design_apply_style", { workspaceId, location, changes, onEvent: channel(onMessage) }),
+  designConvert: (id, framework, onMessage) => invoke("design_convert", { id, framework, onEvent: channel(onMessage) }),
+  designImplement: (id, onMessage) => invoke("design_implement", { id, onEvent: channel(onMessage) }),
 };
 
 export function inTauri(): boolean {
