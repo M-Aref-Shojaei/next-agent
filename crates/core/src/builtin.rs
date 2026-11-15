@@ -45,6 +45,12 @@ pub const DEFAULT_STEP_BUDGET: usize = 50;
 /// Longest tool output fed back to the model.
 pub const TOOL_RESULT_LIMIT: usize = 16 * 1024;
 
+/// Longest final text kept as a task's summary preview.
+const LAST_TEXT_PREVIEW_CHARS: usize = 500;
+
+/// Longest goal kept in a subagent's preview.
+const GOAL_PREVIEW_CHARS: usize = 500;
+
 /// Context window assumed when the caller does not set one. Conservative:
 /// a larger real window only means compacting earlier than necessary, and a
 /// smaller one is still caught by the provider's "too long" rejection.
@@ -360,6 +366,12 @@ impl BuiltinExecutor {
         self.profile_name().unwrap_or("build")
     }
 
+    /// Mark the run as errored and return the step that reports it.
+    fn fail(&mut self, error: String) -> AgentStep {
+        self.exit = Exit::Error;
+        AgentStep::Fail { error }
+    }
+
     // -- requests ----------------------------------------------------------
 
     /// Send the conversation (after the cache-invariant check), compacting
@@ -372,10 +384,9 @@ impl BuiltinExecutor {
         self.flush_transcript();
         loop {
             if let Err(error) = self.check_invariants() {
-                self.exit = Exit::Error;
-                return Err(AgentStep::Fail {
-                    error: format!("internal error: prompt-cache invariant violated: {error}"),
-                });
+                return Err(self.fail(format!(
+                    "internal error: prompt-cache invariant violated: {error}"
+                )));
             }
             let request = ChatRequest {
                 model: self.model.clone(),
@@ -399,17 +410,11 @@ impl BuiltinExecutor {
                 Err(error) if compaction::is_context_overflow(&error) && !retried => {
                     retried = true;
                     if let Err(message) = self.compact(Reason::Overflow) {
-                        self.exit = Exit::Error;
-                        return Err(AgentStep::Fail {
-                            error: format!("{error}; {message}"),
-                        });
+                        return Err(self.fail(format!("{error}; {message}")));
                     }
                 }
                 Err(error) => {
-                    self.exit = Exit::Error;
-                    return Err(AgentStep::Fail {
-                        error: error.to_string(),
-                    });
+                    return Err(self.fail(error.to_string()));
                 }
             }
         }
@@ -682,7 +687,7 @@ impl BuiltinExecutor {
         let summary = if self.last_text.is_empty() {
             "done".to_string()
         } else {
-            crate::runner::truncate(&self.last_text, 500)
+            crate::runner::truncate(&self.last_text, LAST_TEXT_PREVIEW_CHARS)
         };
         AgentStep::Done { summary }
     }
@@ -766,7 +771,7 @@ impl BuiltinExecutor {
                 subagent_id: id.clone(),
                 parent_call_id: call_id.clone(),
                 profile: profile.name.clone(),
-                goal: crate::runner::truncate(&task.goal, 500),
+                goal: crate::runner::truncate(&task.goal, GOAL_PREVIEW_CHARS),
                 depth: self.depth + 1,
             });
             run.children.push(Child {
@@ -868,11 +873,10 @@ impl BuiltinExecutor {
             .any(|child| matches!(child.state, ChildState::Waiting { .. }))
         {
             // Only reachable if the runner skipped a result; fail safe.
-            self.exit = Exit::Error;
             self.active = None;
-            return Some(AgentStep::Fail {
-                error: "internal error: a subagent is waiting for a tool result".into(),
-            });
+            return Some(
+                self.fail("internal error: a subagent is waiting for a tool result".into()),
+            );
         }
         let run = self.active.take()?;
         let reports: Vec<Report> = run
