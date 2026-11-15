@@ -27,26 +27,6 @@
       "reason": "Mock design document CSS for the browser dev build"
     },
     {
-      "path": "apps/desktop/src/lib/notes/Block.svelte",
-      "max": 1,
-      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
-    },
-    {
-      "path": "apps/desktop/src/lib/notes/BlockBody.svelte",
-      "max": 1,
-      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
-    },
-    {
-      "path": "apps/desktop/src/lib/notes/GraphView.svelte",
-      "max": 1,
-      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
-    },
-    {
-      "path": "apps/desktop/src/lib/notes/SearchPalette.svelte",
-      "max": 2,
-      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
-    },
-    {
       "path": "apps/desktop/src/routes/(app)/boards/+page.svelte",
       "max": 2,
       "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
