@@ -15,7 +15,7 @@
 //! Not ported: 9Router's `fusion`; OmniRoute's `p2c`, `least-used` and
 //! `strict-random` (load balancing across many keys).
 
-use super::breaker::Breakers;
+use super::breaker::{backoff, Breakers};
 use super::smart::{Sticky, DEFAULT_THRESHOLD};
 use crate::store::ComboRow;
 use serde::{Deserialize, Serialize};
@@ -273,8 +273,7 @@ impl CooldownPolicy {
     /// Cooldown for a backoff level (1-based).
     #[must_use]
     pub fn delay(&self, level: u32) -> Duration {
-        let factor = 2u32.saturating_pow(level.saturating_sub(1).min(31));
-        self.base.saturating_mul(factor).min(self.max)
+        backoff(self.base, self.max, level)
     }
 }
 
