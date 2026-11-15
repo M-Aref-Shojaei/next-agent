@@ -367,6 +367,11 @@
           <Button size="sm" onclick={() => (banner = true)}>Show the dismissed banner</Button>
         {/if}
         <Banner tone="ok">Vault path saved.</Banner>
+        <div class="stack-tight">
+          <Banner compact tone="info" role="status">Undid edit_file (call_12): src/app.ts</Banner>
+          <Banner compact tone="ok" role="status">Completed: 3 files changed</Banner>
+          <Banner compact tone="danger" role="status">The tool call failed: permission denied</Banner>
+        </div>
         <Banner tone="warn" title="Hooks not installed">Claude Code sessions won't reach the island.</Banner>
         <Banner tone="danger" title="Audit chain broken">Entry #41 doesn't match its hash.</Banner>
         <div class="tiles-grid">
@@ -493,6 +498,7 @@
   .demo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-4); align-items: start; }
   .tiles-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-4); }
+  .stack-tight { display: grid; gap: var(--space-1); }
   .span2 { grid-column: 1 / -1; }
   .small { margin: 0; font-size: var(--font-size-sm); }
   code { font-size: var(--font-size-xs); color: var(--color-text-secondary); }

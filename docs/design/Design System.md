@@ -155,7 +155,7 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 ### Feedback
 | Component | Props | Use when |
 |---|---|---|
-| **Banner** | `tone` info\|ok\|warn\|danger, `title`, `ondismiss`, snippets `actions`, `children` | A page-level message. Danger is `role="alert"`; the other tones are `role="status"`. |
+| **Banner** | `tone` info\|ok\|warn\|danger, `title`, `ondismiss`, `compact`, `role`, snippets `actions`, `children` | A page-level message. Danger is `role="alert"`; the other tones are `role="status"`. `compact` is one small line with less padding, for notices inside a log or timeline. Inside a region that already announces (`role="log"`), pass `role="status"` so an error is not announced twice. |
 | **StatTile** | `label`, `value`, `delta`, `hint`, `tone` neutral\|accent\|info\|ok\|warn\|danger, snippet `children` | One headline number with its label (usage totals). `delta` ("+8%", "3 failed") takes the tone colour and always says it in words. Lay tiles out in a CSS grid: `repeat(auto-fit, minmax(150px, 1fr))`. |
 | **Badge** | `tone` neutral\|accent\|info\|ok\|warn\|danger, `variant` subtle\|solid\|outline, `size` | A short label or count. Not clickable. |
 | **StatusDot** | `tone`, `text` or `label`, `pulse` | Connection or run state in rows ("Installed", "Online"). Always give text or a label. |

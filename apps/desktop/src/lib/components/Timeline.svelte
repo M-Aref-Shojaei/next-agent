@@ -36,7 +36,7 @@
       {:else if item.kind === "tool"}
         <ToolCard {item} />
       {:else}
-        <Banner tone={item.tone === "error" ? "danger" : item.tone}>{item.text}</Banner>
+        <Banner compact role="status" tone={item.tone === "error" ? "danger" : item.tone}>{item.text}</Banner>
       {/if}
     {/each}
     {#each pending as approval (approval.approvalId)}
