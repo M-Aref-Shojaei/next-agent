@@ -11,6 +11,7 @@ A local-first AI workstation: coding agents working on a local repo, a Markdown 
 - [[Roadmap]] — milestones M0–M5, sequencing, exit criteria
 - [[M1 Vertical Slice]] — step-by-step task breakdown for the first milestone
 - [[M1 Progress]] — live task ledger (what is done, tested, and deviated)
+- [[Overlay Fixes]]: notch hover hides the right-side pills; logo mark on the pills (agent-ready tasks)
 - [[Logging System Plan]]: one local diagnostics log for the whole app, with no user content (prompts, notes, files, messages, keys); 3 waves, 8 agents
 - [[Built-in Upstreams Plan]]: waves for building 9Router, opencode, Hermes, OpenClaw, Coucou, Logseq and the Excalidraw design board into the app
 - [[Risks and Open Questions]] — things that need a decision or verification
