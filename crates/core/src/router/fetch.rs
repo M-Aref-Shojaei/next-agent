@@ -6,6 +6,9 @@ use crate::local_tools::{FetchedPage, HttpFetch};
 use futures_util::StreamExt;
 use std::time::Duration;
 
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_REDIRECTS: usize = 5;
+
 /// `reqwest`-backed [`HttpFetch`].
 #[derive(Debug, Clone)]
 pub struct ReqwestFetcher {
@@ -19,8 +22,8 @@ impl ReqwestFetcher {
     /// Returns a message if the HTTP client cannot be built.
     pub fn new(timeout: Duration, max_body_bytes: usize) -> Result<Self, String> {
         let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .redirect(reqwest::redirect::Policy::limited(5))
+            .connect_timeout(CONNECT_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
             .user_agent(concat!("next-agent/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|error| error.to_string())?;
@@ -75,5 +78,16 @@ impl ReqwestFetcher {
 impl HttpFetch for ReqwestFetcher {
     fn fetch(&self, url: &str) -> Result<FetchedPage, String> {
         super::block_on(self.get(url))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_http_schemes_are_refused_without_a_request() {
+        let fetcher = ReqwestFetcher::new(Duration::from_secs(1), 1024).expect("client builds");
+        assert!(fetcher.fetch("ftp://example.com/file.txt").is_err());
     }
 }
