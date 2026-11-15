@@ -148,7 +148,7 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 ### Settings
 | Component | Props | Use when |
 |---|---|---|
-| **SettingsLayout** | `title`, `description`, `nav: {id,label,href,badge?}[]`, `current`, snippets `top`, `actions`, `children` | Every settings page: section nav on the left and content on the right. Below a 640px container width, the nav moves to a strip on top. |
+| **SettingsLayout** | `title`, `description`, `nav: {id,label,href,badge?}[]`, `current`, snippets `top`, `actions`, `children` | Every settings page: section nav on the left and content on the right. Below a 640px container width, the nav moves to a strip on top. The header's `actions` wrap under the title when there is no room, so a control never overlaps the description. |
 | **SettingsSection** | `title`, `description`, `id`, snippets `actions`, `footer`, `children` | A group of rows in one bordered box, with a heading and optional header actions. |
 | **SettingsRow** | `label`, `description`, `error`, `stacked`, `disabled`, `id`, snippet `children({id, describedby, invalid, labelId})` | **The main building block.** Label and description on the left, the control on the right. Put `id` on single controls; put `labelledby={labelId}` on groups. Use `stacked` for wide controls. It stacks by itself when narrow. |
 
