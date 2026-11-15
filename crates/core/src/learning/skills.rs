@@ -738,6 +738,7 @@ impl Skills {
         for root in &self.roots {
             // A symlinked root could point anywhere (`.next-agent -> ~`).
             if !resolves_to_itself(&root.path) {
+                tracing::warn!(root = %root.path.display(), "skills folder goes through a symlink; skipped");
                 continue;
             }
             let mut found = Vec::new();
@@ -775,13 +776,15 @@ impl Skills {
             return None;
         }
         let dir_name = dir.file_name()?.to_string_lossy().into_owned();
-        // Names reach the prompt index and tool calls: only valid ones.
+        // Names reach the prompt index: no line breaks, control characters
+        // or angle brackets. Hand-written names need not follow the stricter
+        // create-time rule (they just cannot be changed by skill_manage).
         let name = front
             .get("name")
             .and_then(Yaml::text)
             .map(|n| n.trim().to_string())
-            .filter(|n| validate_name(n).is_ok())
-            .or_else(|| validate_name(&dir_name).is_ok().then_some(dir_name))?;
+            .filter(|n| display_safe(n))
+            .or_else(|| display_safe(&dir_name).then_some(dir_name))?;
         let mut description = description_of(&front);
         if description.is_empty() {
             description = body
@@ -1396,6 +1399,15 @@ pub fn resolves_to_itself(path: &Path) -> bool {
         }
     }
     fs::canonicalize(at).is_ok_and(|real| real == at)
+}
+
+/// A name that can be shown in the prompt index as one plain token run.
+fn display_safe(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().count() <= MAX_NAME_LENGTH
+        && name
+            .chars()
+            .all(|c| !c.is_control() && c != '<' && c != '>')
 }
 
 fn real_root(root: &Path) -> Result<(), String> {

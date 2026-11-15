@@ -683,7 +683,7 @@ fn a_symlinked_skills_root_is_neither_read_nor_written() {
 }
 
 #[test]
-fn names_that_are_not_valid_skill_names_never_reach_the_index() {
+fn unsafe_names_never_reach_the_index_but_hand_written_ones_stay() {
     let f = fixture();
     put(
         &f.ws,
@@ -692,11 +692,13 @@ fn names_that_are_not_valid_skill_names_never_reach_the_index() {
     );
     put(
         &f.ws,
-        "Bad Dir/SKILL.md",
-        "---\ndescription: d\n---\nbody\n",
+        "PDF-Tools/SKILL.md",
+        "---\nname: PDF Tools\ndescription: d\n---\nbody\n",
     );
+    put(&f.ws, "a<b/SKILL.md", "---\ndescription: d\n---\nbody\n");
     let names: Vec<String> = f.skills.discover().into_iter().map(|s| s.name).collect();
-    assert_eq!(names, ["good-dir"]);
+    assert_eq!(names, ["PDF Tools", "good-dir"]);
+    assert!(f.skills.view_json("PDF Tools", None).is_ok());
 }
 
 #[test]
