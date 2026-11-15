@@ -73,7 +73,7 @@ test("style inspector: values, changes, safety, tokens", () => {
     { property: "gap", value: "var(--space-2)" },
     { property: "color", value: "" },
   ]);
-  for (const bad of ['red" onclick="x', "a;b", "url(x)", "</style>", "a\nb"]) assert.equal(safeValue(bad), false, bad);
+  for (const bad of ['red" onclick="x', "a;b", "url(x)", "</style>", "a\nb", "a\tb"]) assert.equal(safeValue(bad), false, bad);
   assert.equal(safeValue("var(--accent)"), true);
   const gap = STYLE_FIELDS.find((f) => f.key === "gap")!;
   assert.deepEqual(tokenOptions(gap, [{ name: "--space-1", value: "4px", kind: "spacing", derived: true }, { name: "--bg", value: "#fff", kind: "color", derived: false }]), ["var(--space-1)"]);

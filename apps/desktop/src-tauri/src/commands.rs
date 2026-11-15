@@ -69,15 +69,7 @@ pub fn task_start(
     on_event: Channel<StreamMessage>,
     profile: Option<String>,
 ) -> Result<String, String> {
-    let direct: Sink = Arc::new(move |message| {
-        let _ = on_event.send(message);
-    });
-    // Same stream for the overlay window: broadcast alongside the Channel.
-    let handle = app.clone();
-    let broadcast: Sink = Arc::new(move |message| {
-        let _ = handle.emit("task-stream", &message);
-    });
-    let sink = crate::overlay::fanout(direct, broadcast);
+    let sink = task_sink(&app, on_event);
     let title: String = prompt.chars().take(60).collect();
     let request = TaskRequest {
         workspace_id,
@@ -86,11 +78,29 @@ pub fn task_start(
         profile,
     };
     let id = Arc::clone(&service).task_start(&request, sink)?;
+    announce_task(&app, &id, &title, &mode);
+    Ok(id)
+}
+
+/// A task's event sink: the caller's Channel plus the same stream broadcast
+/// to the overlay window.
+pub(crate) fn task_sink(app: &tauri::AppHandle, on_event: Channel<StreamMessage>) -> Sink {
+    let direct: Sink = Arc::new(move |message| {
+        let _ = on_event.send(message);
+    });
+    let handle = app.clone();
+    let broadcast: Sink = Arc::new(move |message| {
+        let _ = handle.emit("task-stream", &message);
+    });
+    crate::overlay::fanout(direct, broadcast)
+}
+
+/// Tell every window a task started (sidebar, overlay).
+pub(crate) fn announce_task(app: &tauri::AppHandle, id: &str, title: &str, mode: &str) {
     let _ = app.emit(
         "task-started",
         serde_json::json!({ "taskId": id, "title": title, "mode": mode }),
     );
-    Ok(id)
 }
 
 #[tauri::command]

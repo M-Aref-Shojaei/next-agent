@@ -143,12 +143,18 @@ export function lineage(all: DesignDirection[], id: string): DesignDirection[] {
 /** Latest version per original direction for a batch (refinements replace their parents). */
 export function batchHeads(all: DesignDirection[], batchId: string): DesignDirection[] {
   const inBatch = all.filter((d) => d.batchId === batchId);
+  const byId = new Map(inBatch.map((d) => [d.id, d]));
   const parents = new Set(inBatch.map((d) => d.parentId).filter(Boolean));
-  return inBatch.filter((d) => !parents.has(d.id)).sort((a, b) => rootOf(inBatch, a).localeCompare(rootOf(inBatch, b)));
-}
-function rootOf(all: DesignDirection[], d: DesignDirection): string {
-  const line = lineage(all, d.id);
-  return line[0]?.id ?? d.id;
+  const root = (d: DesignDirection): string => {
+    let cur = d;
+    for (let n = 0; cur.parentId && byId.has(cur.parentId) && n < 50; n++) cur = byId.get(cur.parentId)!;
+    return cur.id;
+  };
+  return inBatch
+    .filter((d) => !parents.has(d.id))
+    .map((d) => ({ d, key: root(d) }))
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map((x) => x.d);
 }
 
 // ---- Edit mode: style inspector ----
@@ -197,7 +203,8 @@ export function styleChanges(before: Record<string, string>, after: Record<strin
 /** Mirrors `codemod::check_value`: values the Rust side will accept. */
 export function safeValue(value: string): boolean {
   const v = value.toLowerCase();
-  return value.length <= 200 && !/["'`;{}<>\\\n\r]/.test(value) && !v.includes("url(") && !v.includes("expression(") && !v.includes("@import");
+  // eslint-disable-next-line no-control-regex
+  return value.length <= 200 && !/["'`;{}<>\\\x00-\x1f\x7f]/.test(value) && !v.includes("url(") && !v.includes("expression(") && !v.includes("@import");
 }
 
 /** Token suggestions for a field: `var(--name)` strings. */

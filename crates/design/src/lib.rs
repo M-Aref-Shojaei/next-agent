@@ -37,6 +37,12 @@ pub use artifact::Artifact;
 pub use studio::{DesignModel, Direction, Frame, GenerateRequest, IterateRequest, Progress, Turn};
 pub use system::{DesignSystem, Token, TokenKind};
 
+impl From<DesignError> for String {
+    fn from(e: DesignError) -> Self {
+        e.to_string()
+    }
+}
+
 /// Errors from design-studio mechanics.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DesignError {

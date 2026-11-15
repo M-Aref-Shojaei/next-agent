@@ -43,7 +43,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
-use tauri::{Emitter, State};
+use tauri::State;
 
 const MAX_DOC_BYTES: usize = 256 * 1024;
 const MAX_SOURCE_BYTES: u64 = 2 * 1024 * 1024;
@@ -240,10 +240,7 @@ impl DesignState {
 // -------------------------------------------------------------- the service --
 
 fn new_id(prefix: &str, n: usize) -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    format!("{prefix}_{nanos:x}{n}")
+    format!("{}{n}", crate::gateway::new_id(prefix))
 }
 
 /// Where a workspace's design files live: the folder holding `DESIGN.md`
@@ -289,29 +286,13 @@ fn write_doc(dir: &Path, name: &str, text: &str) -> Result<(), String> {
     if std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(format!("{} is a symlink", dir.display()));
     }
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join(name);
     if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(format!("{} is a symlink", path.display()));
     }
-    // A fresh, unpredictable temp name opened with `create_new` (O_EXCL):
-    // it never follows a planted symlink or reuses an existing file.
-    let tmp = dir.join(format!(
-        ".{name}.{}.next-agent-tmp",
-        new_id(&std::process::id().to_string(), 0)
-    ));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)
-        .map_err(|e| e.to_string())?;
-    let written = std::io::Write::write_all(&mut file, text.as_bytes());
-    drop(file);
-    if let Err(e) = written.and_then(|()| std::fs::rename(&tmp, &path)) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    Ok(())
+    // Atomic, fsynced, and `create_new` on the temp file: a symlink
+    // planted at the temp path is removed, never followed.
+    next_agent_graph::layout::write_atomic(&path, text).map_err(|e| e.to_string())
 }
 
 impl AppService {
@@ -389,7 +370,7 @@ impl AppService {
     }
 
     fn design_system_draft(&self, root: &Path, name: &str) -> Result<DesignFiles, String> {
-        let extracted = system::extract(root, name).map_err(|e| e.to_string())?;
+        let extracted = system::extract(root, name)?;
         let dir = design_dir(root);
         Ok(DesignFiles {
             design_path: rel(root, &dir.join("DESIGN.md")),
@@ -538,8 +519,7 @@ impl AppService {
             sketch: sketch_text.as_deref(),
             critique,
         };
-        let directions =
-            studio::generate(model.as_ref(), &request, progress).map_err(|e| e.to_string())?;
+        let directions = studio::generate(model.as_ref(), &request, progress)?;
         let batch_id = new_id("batch", 0);
         let mut out = Vec::new();
         for (i, d) in directions.into_iter().enumerate() {
@@ -590,6 +570,17 @@ impl AppService {
             .ok_or_else(|| format!("unknown direction {id}"))
     }
 
+    /// A stored direction with its workspace's design files.
+    fn load_direction(
+        &self,
+        id: &str,
+    ) -> Result<(DesignDirectionRow, DesignFiles, Direction), String> {
+        let row = self.direction_row(id)?;
+        let files = self.design_system_get(&row.workspace_id)?;
+        let direction = serde_json::from_str(&row.body).map_err(|e| e.to_string())?;
+        Ok((row, files, direction))
+    }
+
     /// Mark a direction as the picked one in its batch.
     ///
     /// # Errors
@@ -609,9 +600,7 @@ impl AppService {
         if message.trim().is_empty() {
             return Err("say what to change".into());
         }
-        let row = self.direction_row(id)?;
-        let files = self.design_system_get(&row.workspace_id)?;
-        let current: Direction = serde_json::from_str(&row.body).map_err(|e| e.to_string())?;
+        let (row, files, current) = self.load_direction(id)?;
         // Earlier refinements of this lineage, oldest first (at most 6).
         let mut history = Vec::new();
         let mut cursor = Some(row.clone());
@@ -638,8 +627,7 @@ impl AppService {
                 history: &history,
                 message,
             },
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
         let new_row = DesignDirectionRow {
             id: new_id("dir", 0),
             parent_id: Some(row.id.clone()),
@@ -672,18 +660,14 @@ impl AppService {
         studio_origin: &str,
     ) -> Result<PreviewDto, String> {
         let (root, _) = self.workspace_root(workspace_id)?;
-        let bridge = proxy::bridge_script(studio_origin).map_err(|e| e.to_string())?;
+        let bridge = proxy::bridge_script(studio_origin)?;
         let (target, dev) = match url.map(str::trim).filter(|u| !u.is_empty()) {
-            Some(url) => (
-                ssrf::check_preview_url(url).map_err(|e| e.to_string())?,
-                None,
-            ),
+            Some(url) => (ssrf::check_preview_url(url)?, None),
             None => {
                 // Stop the old preview first: it may be this project's dev server.
                 state.previews()?.remove(workspace_id);
                 let dev = start_dev_server(&root)?;
-                let target = ssrf::check_preview_url(&format!("http://localhost:{}/", dev.1))
-                    .map_err(|e| e.to_string())?;
+                let target = ssrf::check_preview_url(&format!("http://localhost:{}/", dev.1))?;
                 (target, Some(dev.0))
             }
         };
@@ -714,7 +698,7 @@ impl AppService {
         location: &RawLocation,
     ) -> Result<SourceView, String> {
         let (root, _) = self.workspace_root(workspace_id)?;
-        let loc = source_map::resolve(&root, location).map_err(|e| e.to_string())?;
+        let loc = source_map::resolve(&root, location)?;
         let text = read_source(&root, &loc.file)?;
         let (first_line, lines) = source_map::snippet(&text, loc.line.max(1), 8);
         Ok(SourceView {
@@ -734,7 +718,7 @@ impl AppService {
         location: &RawLocation,
         changes: &[StyleChange],
     ) -> Result<(String, String, codemod::StyleEdit), String> {
-        let loc = source_map::resolve(root, location).map_err(|e| e.to_string())?;
+        let loc = source_map::resolve(root, location)?;
         if loc.line == 0 {
             return Err(format!(
                 "{} gives no line number (Vue without the instrument plugin); add `nextAgentSource()` from @next-agent/design-instrument to vite.config to edit visually",
@@ -744,8 +728,7 @@ impl AppService {
         let syntax =
             Syntax::for_path(&loc.file).ok_or("this file type can't be edited visually")?;
         let seen = read_source(root, &loc.file)?;
-        let edit = codemod::apply_style(&seen, syntax, loc.line, loc.column, &loc.tag, changes)
-            .map_err(|e| e.to_string())?;
+        let edit = codemod::apply_style(&seen, syntax, loc.line, loc.column, &loc.tag, changes)?;
         Ok((loc.file, seen, edit))
     }
 
@@ -792,8 +775,7 @@ impl AppService {
                 ));
             }
             let current = read_source(sandbox, &target)?;
-            let contents =
-                codemod::transplant(&seen, &current, &edit).map_err(|e| e.to_string())?;
+            let contents = codemod::transplant(&seen, &current, &edit)?;
             Ok(vec![
                 AgentStep::Emit(EventKind::Message {
                     text: format!(
@@ -829,10 +811,8 @@ impl AppService {
         framework: Option<&str>,
         sink: Sink,
     ) -> Result<DesignTask, String> {
-        let row = self.direction_row(id)?;
+        let (row, files, direction) = self.load_direction(id)?;
         let (root, _) = self.workspace_root(&row.workspace_id)?;
-        let files = self.design_system_get(&row.workspace_id)?;
-        let direction: Direction = serde_json::from_str(&row.body).map_err(|e| e.to_string())?;
         let framework = framework
             .and_then(Framework::parse)
             .unwrap_or_else(|| convert::detect(&root));
@@ -843,8 +823,7 @@ impl AppService {
             &direction,
             framework,
             &files.design_md,
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
         // Never overwrite an existing file: pick a free name.
         let mut n = 2;
         let original = converted.path.clone();
@@ -894,9 +873,7 @@ impl AppService {
     /// # Errors
     /// Unknown direction or the task could not start.
     pub fn design_implement(self: &Arc<Self>, id: &str, sink: Sink) -> Result<DesignTask, String> {
-        let row = self.direction_row(id)?;
-        let files = self.design_system_get(&row.workspace_id)?;
-        let direction: Direction = serde_json::from_str(&row.body).map_err(|e| e.to_string())?;
+        let (row, files, direction) = self.load_direction(id)?;
         let prompt = prompts::implement_task(
             &direction.title,
             &row.prompt,
@@ -931,7 +908,7 @@ fn design_request(workspace_id: &str, prompt: String) -> TaskRequest {
 
 /// Read a workspace source file after the same checks edit mode uses.
 fn read_source(root: &Path, rel: &str) -> Result<String, String> {
-    let real = source_map::check_source_file(root, rel).map_err(|e| e.to_string())?;
+    let real = source_map::check_source_file(root, rel)?;
     let size = std::fs::metadata(&real).map_err(|e| e.to_string())?.len();
     if size > MAX_SOURCE_BYTES {
         return Err(format!("{rel} is too large to edit visually"));
@@ -1093,24 +1070,8 @@ fn start_dev_server(root: &Path) -> Result<(DevServer, u16), String> {
 type Svc<'a> = State<'a, Arc<AppService>>;
 type Design<'a> = State<'a, DesignState>;
 
-/// Same fan-out as `task_start`: the caller's channel plus the overlay
-/// broadcast, and a `task-started` event.
-fn task_sink(app: &tauri::AppHandle, on_event: Channel<StreamMessage>) -> Sink {
-    let direct: Sink = Arc::new(move |message| {
-        let _ = on_event.send(message);
-    });
-    let handle = app.clone();
-    let broadcast: Sink = Arc::new(move |message| {
-        let _ = handle.emit("task-stream", &message);
-    });
-    crate::overlay::fanout(direct, broadcast)
-}
-
 fn announce(app: &tauri::AppHandle, task: &DesignTask) {
-    let _ = app.emit(
-        "task-started",
-        serde_json::json!({ "taskId": task.task_id, "title": task.title, "mode": "auto" }),
-    );
+    crate::commands::announce_task(app, &task.task_id, &task.title, "auto");
 }
 
 async fn blocking<T: Send + 'static>(
@@ -1121,12 +1082,14 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+// Off the main thread: disk walks, git worktrees, process spawns.
+#[tauri::command(async)]
 pub fn design_system_get(service: Svc, workspace_id: String) -> Result<DesignFiles, String> {
     service.design_system_get(&workspace_id)
 }
 
-#[tauri::command]
+// Off the main thread: disk walks, git worktrees, process spawns.
+#[tauri::command(async)]
 pub fn design_system_generate(
     service: Svc,
     workspace_id: String,
@@ -1135,7 +1098,8 @@ pub fn design_system_generate(
     service.design_system_generate(&workspace_id, overwrite)
 }
 
-#[tauri::command]
+// Off the main thread: disk walks, git worktrees, process spawns.
+#[tauri::command(async)]
 pub fn design_system_save(
     service: Svc,
     workspace_id: String,
@@ -1174,12 +1138,14 @@ pub async fn design_generate(
     .await
 }
 
-#[tauri::command]
+// Off the main thread: disk walks, git worktrees, process spawns.
+#[tauri::command(async)]
 pub fn design_history(service: Svc, workspace_id: String) -> Result<Vec<DirectionDto>, String> {
     service.design_history(&workspace_id)
 }
 
-#[tauri::command]
+// Off the main thread: disk walks, git worktrees, process spawns.
+#[tauri::command(async)]
 pub fn design_choose(service: Svc, id: String) -> Result<(), String> {
     service.design_choose(&id)
 }
@@ -1194,7 +1160,8 @@ pub async fn design_iterate(
     blocking(move || service.design_iterate(&id, &message)).await
 }
 
-#[tauri::command]
+// Off the main thread: disk walks, git worktrees, process spawns.
+#[tauri::command(async)]
 pub fn design_preview_start(
     service: Svc,
     state: Design,
@@ -1221,7 +1188,8 @@ pub fn design_preview_log(state: Design, workspace_id: String) -> Result<Vec<Str
         .unwrap_or_default())
 }
 
-#[tauri::command]
+// Off the main thread: disk walks, git worktrees, process spawns.
+#[tauri::command(async)]
 pub fn design_source(
     service: Svc,
     workspace_id: String,
@@ -1230,7 +1198,8 @@ pub fn design_source(
     service.design_source(&workspace_id, &location)
 }
 
-#[tauri::command]
+// Off the main thread: disk walks, git worktrees, process spawns.
+#[tauri::command(async)]
 pub fn design_apply_style(
     app: tauri::AppHandle,
     service: Svc,
@@ -1243,7 +1212,7 @@ pub fn design_apply_style(
         &workspace_id,
         &location,
         &changes,
-        task_sink(&app, on_event),
+        crate::commands::task_sink(&app, on_event),
     )?;
     announce(&app, &task);
     Ok(task)
@@ -1258,20 +1227,22 @@ pub async fn design_convert(
     on_event: Channel<StreamMessage>,
 ) -> Result<DesignTask, String> {
     let service = Arc::clone(&service);
-    let sink = task_sink(&app, on_event);
+    let sink = crate::commands::task_sink(&app, on_event);
     let task = blocking(move || service.design_convert(&id, framework.as_deref(), sink)).await?;
     announce(&app, &task);
     Ok(task)
 }
 
-#[tauri::command]
+// Off the main thread: disk walks, git worktrees, process spawns.
+#[tauri::command(async)]
 pub fn design_implement(
     app: tauri::AppHandle,
     service: Svc,
     id: String,
     on_event: Channel<StreamMessage>,
 ) -> Result<DesignTask, String> {
-    let task = Arc::clone(&service).design_implement(&id, task_sink(&app, on_event))?;
+    let task =
+        Arc::clone(&service).design_implement(&id, crate::commands::task_sink(&app, on_event))?;
     announce(&app, &task);
     Ok(task)
 }

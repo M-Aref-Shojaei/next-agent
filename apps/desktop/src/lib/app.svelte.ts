@@ -139,22 +139,10 @@ class AppStore {
   async startTask(prompt: string): Promise<void> {
     const ws = this.activeWorkspace;
     if (!ws || !prompt.trim()) return;
-    const buffered: StreamMessage[] = [];
-    let taskId: string | null = null;
-    const deliver = (message: StreamMessage) => {
-      if (taskId === null) buffered.push(message);
-      else this.apply(taskId, message);
-    };
-    try {
-      const id = await api.taskStart(ws.id, prompt, this.mode, deliver, this.profile || undefined);
-      this.tasks = [{ ...newTask(id, prompt.slice(0, 60)), status: "running" }, ...this.tasks];
-      this.activeTaskId = id;
-      taskId = id;
-      for (const m of buffered) this.apply(id, m);
-      this.error = null;
-    } catch (e) {
-      this.error = String(e);
-    }
+    const id = await this.trackTask(prompt, (deliver) =>
+      api.taskStart(ws.id, prompt, this.mode, deliver, this.profile || undefined),
+    );
+    if (id) this.activeTaskId = id;
   }
 
   /**
