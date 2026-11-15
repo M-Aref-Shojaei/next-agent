@@ -29,7 +29,7 @@ The outfit choice, the seasonal "auto" pick and the wardrobe view still work. On
 
 ## 2. Icons → done: Next Agent's logo (2026-11-15)
 
-The owner supplied the Next Agent logo (`apps/desktop/src-tauri/icons/source/logo.png`, made transparent from `logo-original.png`); `pnpm tauri icon` generated every size below, and the tray uses it through `default_window_icon()`. **Open:** a monochrome macOS menu-bar *template* icon would match the system better than the colour logo.
+The owner supplied the Next Agent logo (`apps/desktop/src-tauri/icons/source/logo.png`, made transparent from `logo-original.png`); `pnpm tauri icon` generated every size below, and the tray uses it through `default_window_icon()`. The macOS menu bar uses a one-colour template of the logo (`icons/tray/menubar-template.png`, 64×64; `tray.rs` `menubar_template()`), tinted by the system; the update hint shows the colour logo.
 
 | Upstream file (not copied) | Size / format | Used for | Now |
 |---|---|---|---|

@@ -66,7 +66,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             }
         });
 
-    if let Some(icon) = app.default_window_icon().cloned() {
+    // Next Agent: on macOS the menu bar shows a one-colour template of the
+    // Next Agent logo (the system tints it for light and dark menu bars);
+    // elsewhere the app icon, as upstream.
+    if cfg!(target_os = "macos") {
+        builder = builder.icon(menubar_template()).icon_as_template(true);
+    } else if let Some(icon) = app.default_window_icon().cloned() {
         builder = builder.icon(icon);
     }
 
@@ -140,12 +145,33 @@ pub fn tint_blue(rgba: &[u8]) -> Vec<u8> {
 pub fn tray_update_hint(app: AppHandle, on: bool) {
     let Some(tray) = app.tray_by_id("coucou") else { return };
     let Some(base) = app.default_window_icon() else { return };
+    // Next Agent: a template image is drawn in one colour, so on macOS the hint
+    // shows the colour logo (tinted) and "off" goes back to the template.
+    if cfg!(target_os = "macos") && !on {
+        let _ = tray.set_icon(Some(menubar_template()));
+        let _ = tray.set_icon_as_template(true);
+        return;
+    }
     let icon = if on {
         Image::new_owned(tint_blue(base.rgba()), base.width(), base.height())
     } else {
         base.clone().to_owned()
     };
     let _ = tray.set_icon(Some(icon));
+    if cfg!(target_os = "macos") {
+        let _ = tray.set_icon_as_template(false);
+    }
+}
+
+/// Next Agent: the macOS menu-bar icon, 64×64 RGBA (black + alpha), made from
+/// `apps/desktop/src-tauri/icons/source/logo.png`.
+fn menubar_template() -> Image<'static> {
+    const SIZE: u32 = 64;
+    Image::new(
+        include_bytes!("../../../src-tauri/icons/tray/menubar-template-64.rgba"),
+        SIZE,
+        SIZE,
+    )
 }
 
 #[cfg(test)]
