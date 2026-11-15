@@ -23,8 +23,8 @@ use next_agent_core::learning::skills::{self, Scope, SkillRoot, Skills, Transiti
 use next_agent_core::learning::{LearnChange, Learning, LearningTools, ToolSet};
 use next_agent_core::store::{CronJobRow, SessionRow};
 use next_agent_core::{
-    context_for, spawn_task_with, AgentEvent, BuiltinExecutor, Store, TaskId, TaskLaunch,
-    TaskOptions, TaskSpec,
+    context_for, spawn_task_with, AgentEvent, BuiltinExecutor, TaskId, TaskLaunch, TaskOptions,
+    TaskSpec,
 };
 use next_agent_permission_engine::Mode;
 use serde::{Deserialize, Serialize};
@@ -393,9 +393,10 @@ impl AppService {
             .role_target("summary")
             .unwrap_or_else(|| self.chat_target());
         let budget = review::token_budget(context_window(&gateway));
-        let messages = Store::open(self.db_path())
-            .and_then(|s| s.session_messages(&job.task_id, true))
-            .map_err(|e| e.to_string())?;
+        let messages = self.open_store().and_then(|s| {
+            s.session_messages(&job.task_id, true)
+                .map_err(|e| e.to_string())
+        })?;
         if messages.is_empty() {
             return Ok(Vec::new());
         }

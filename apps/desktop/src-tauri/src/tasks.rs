@@ -14,8 +14,8 @@ use next_agent_core::router::ReqwestFetcher;
 use next_agent_core::vault::{FileStat, TaskDoc, TaskMeta, VaultWriter};
 use next_agent_core::{
     context_for, spawn_task_with, AgentEvent, AgentExecutor, AgentStep, Approval, BuiltinExecutor,
-    EventKind, GitCli, GitSnapshots, LocalTools, MergeOptions, MockExecutor, RunContext, Store,
-    TaskId, TaskLaunch, TaskOptions, TaskSpec, TaskWorktree, ToolExecutor, ToolRequest, ToolResult,
+    EventKind, GitCli, GitSnapshots, LocalTools, MergeOptions, MockExecutor, RunContext, TaskId,
+    TaskLaunch, TaskOptions, TaskSpec, TaskWorktree, ToolExecutor, ToolRequest, ToolResult,
     WorktreeProvider,
 };
 use next_agent_permission_engine::Mode;
@@ -628,7 +628,7 @@ impl AppService {
         if self.running()?.contains_key(task_id) {
             return Err("stop or wait for the task before undoing its steps".into());
         }
-        let store = Store::open(self.db_path()).map_err(|e| e.to_string())?;
+        let store = self.open_store()?;
         let outcome =
             next_agent_core::undo_last_step(&store, task_id).map_err(|e| e.to_string())?;
         Ok(UndoDto {
@@ -645,7 +645,7 @@ impl AppService {
     /// # Errors
     /// Database errors.
     pub fn task_undoable(&self, task_id: &str) -> Result<usize, String> {
-        let store = Store::open(self.db_path()).map_err(|e| e.to_string())?;
+        let store = self.open_store()?;
         next_agent_core::undoable_steps(&store, task_id)
             .map(|steps| steps.len())
             .map_err(|e| e.to_string())
@@ -761,7 +761,7 @@ impl AppService {
             calls: task.calls.clone(),
             diff_stats: task.diff_stats.clone(),
         };
-        let store = Store::open(self.db_path()).map_err(|e| e.to_string())?;
+        let store = self.open_store()?;
         let outcome = VaultWriter::new(vault)
             .document_task(&store, &doc, None)
             .map_err(|e| e.to_string())?;
