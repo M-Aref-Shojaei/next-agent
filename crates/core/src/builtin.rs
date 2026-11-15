@@ -360,6 +360,12 @@ impl BuiltinExecutor {
         self.profile_name().unwrap_or("build")
     }
 
+    /// Mark the run as errored and return the step that reports it.
+    fn fail(&mut self, error: String) -> AgentStep {
+        self.exit = Exit::Error;
+        AgentStep::Fail { error }
+    }
+
     // -- requests ----------------------------------------------------------
 
     /// Send the conversation (after the cache-invariant check), compacting
@@ -372,10 +378,9 @@ impl BuiltinExecutor {
         self.flush_transcript();
         loop {
             if let Err(error) = self.check_invariants() {
-                self.exit = Exit::Error;
-                return Err(AgentStep::Fail {
-                    error: format!("internal error: prompt-cache invariant violated: {error}"),
-                });
+                return Err(self.fail(format!(
+                    "internal error: prompt-cache invariant violated: {error}"
+                )));
             }
             let request = ChatRequest {
                 model: self.model.clone(),
@@ -399,17 +404,11 @@ impl BuiltinExecutor {
                 Err(error) if compaction::is_context_overflow(&error) && !retried => {
                     retried = true;
                     if let Err(message) = self.compact(Reason::Overflow) {
-                        self.exit = Exit::Error;
-                        return Err(AgentStep::Fail {
-                            error: format!("{error}; {message}"),
-                        });
+                        return Err(self.fail(format!("{error}; {message}")));
                     }
                 }
                 Err(error) => {
-                    self.exit = Exit::Error;
-                    return Err(AgentStep::Fail {
-                        error: error.to_string(),
-                    });
+                    return Err(self.fail(error.to_string()));
                 }
             }
         }
@@ -868,11 +867,10 @@ impl BuiltinExecutor {
             .any(|child| matches!(child.state, ChildState::Waiting { .. }))
         {
             // Only reachable if the runner skipped a result; fail safe.
-            self.exit = Exit::Error;
             self.active = None;
-            return Some(AgentStep::Fail {
-                error: "internal error: a subagent is waiting for a tool result".into(),
-            });
+            return Some(
+                self.fail("internal error: a subagent is waiting for a tool result".into()),
+            );
         }
         let run = self.active.take()?;
         let reports: Vec<Report> = run
