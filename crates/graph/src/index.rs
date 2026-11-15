@@ -894,9 +894,10 @@ fn index_file_tx(tx: &rusqlite::Transaction<'_>, graph: &Graph, rel: &str) -> Re
         ins.insert(&content, &info, None, 0, -1)?;
     }
     ins.insert_tree(&doc.blocks, None, 0)?;
+    let (mtime_ns, size) = stamp(&meta);
     tx.execute(
         "INSERT OR REPLACE INTO files(path, mtime_ns, size) VALUES (?1, ?2, ?3)",
-        params![rel, stamp(&meta).0, stamp(&meta).1],
+        params![rel, mtime_ns, size],
     )?;
     Ok(FileResult::Indexed)
 }
