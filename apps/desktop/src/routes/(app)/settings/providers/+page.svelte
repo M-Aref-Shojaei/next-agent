@@ -66,6 +66,12 @@
   async function attempt(work: () => Promise<void>, done: string) {
     try {
       await work();
+    } catch (e) {
+      message = String(e);
+      return;
+    }
+    // The action worked; a failed reload must not read as a failed save.
+    try {
       message = done;
       await load();
     } catch (e) {
