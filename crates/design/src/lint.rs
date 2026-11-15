@@ -142,7 +142,8 @@ pub fn lint(html: &str, token_colors: &[String]) -> Vec<Finding> {
     while let Some(p) = lower[i..].find('#') {
         let at = i + p;
         i = at + 1;
-        let found = css::colors_in(&lower[at..lower.len().min(at + 10)]);
+        let window: String = lower[at..].chars().take(10).collect();
+        let found = css::colors_in(&window);
         let Some(color) = found.first() else { continue };
         if !lower[at..].starts_with(color.as_str()) || roots.iter().any(|(s, e)| at > *s && at < *e)
         {
@@ -226,5 +227,10 @@ mod tests {
         }
         // P0 first.
         assert_eq!(lint(html, &[])[0].severity, Severity::P0);
+    }
+
+    #[test]
+    fn hash_before_multibyte_char_does_not_panic() {
+        let _ = lint("<p>#— hi</p>", &[]);
     }
 }
