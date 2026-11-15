@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "$lib/app.svelte.ts";
   import { pendingApprovals } from "$lib/timeline.ts";
+  import { Banner, BrandMark, EmptyState } from "$lib/ds/index.ts";
   import ApprovalCard from "./ApprovalCard.svelte";
   import ToolCard from "./ToolCard.svelte";
 
@@ -17,7 +18,11 @@
 
 <div class="timeline" bind:this={scroller} role="log" aria-live="polite" aria-label="Task timeline" tabindex="-1">
   {#if !task}
-    <p class="muted empty">Open a workspace, then describe a task below. Without a router and model, a scripted demo agent runs it.</p>
+    <div class="empty">
+      <EmptyState title="No task yet" description="Open a workspace, then describe a task below. Without a router and model, a scripted demo agent runs it.">
+        {#snippet icon()}<BrandMark size={32} />{/snippet}
+      </EmptyState>
+    </div>
   {:else}
     {#if task.origin}
       <div class="origin" role="note">From {task.origin} · approvals happen here, never in the chat</div>
@@ -31,7 +36,7 @@
       {:else if item.kind === "tool"}
         <ToolCard {item} />
       {:else}
-        <div class="notice {item.tone}" role="status">{item.text}</div>
+        <Banner tone={item.tone === "error" ? "danger" : item.tone}>{item.text}</Banner>
       {/if}
     {/each}
     {#each pending as approval (approval.approvalId)}
@@ -41,13 +46,19 @@
 </div>
 
 <style>
-  .timeline { overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
-  .empty { margin: auto; text-align: center; max-width: 360px; }
-  .user { align-self: flex-end; background: var(--accent); color: #fff; padding: 6px 12px; border-radius: 12px; max-width: 80%; }
-  .msg { max-width: 85%; white-space: pre-wrap; }
-  .origin { align-self: flex-end; font-size: 11px; color: var(--muted); }
-  .user.channel { background: var(--panel); color: inherit; border: 1px solid var(--accent); }
-  .msg.plan { border-left: 3px solid var(--info); padding-left: 10px; }
-  .notice { font-size: 12px; color: var(--muted); }
-  .notice.ok { color: var(--ok); } .notice.error { color: var(--danger); }
+  .timeline { overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); flex: 1; }
+  .empty { margin: auto; max-width: 360px; }
+  .user {
+    align-self: flex-end;
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    padding: var(--space-1-5) var(--space-3);
+    border-radius: var(--radius-xl);
+    max-width: 80%;
+    overflow-wrap: anywhere;
+  }
+  .msg { max-width: 85%; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .origin { align-self: flex-end; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+  .user.channel { background: var(--color-surface); color: inherit; border: var(--border-width) solid var(--color-accent); }
+  .msg.plan { border-left: 3px solid var(--color-info); padding-left: var(--space-3); }
 </style>

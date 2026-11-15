@@ -2,6 +2,7 @@
   import type { ModeName } from "@next-agent/contracts";
   import { MODE_LABELS, MODE_TONE } from "$lib/modes.ts";
   import { bypassConfirmed } from "$lib/shortcuts.ts";
+  import { Dialog, TextField } from "$lib/ds/index.ts";
 
   let {
     mode,
@@ -21,11 +22,11 @@
       confirming = true;
     } else onselect(next);
   }
+  const matches = $derived(bypassConfirmed(typed, workspaceName));
+  /** The dialog stays open (the confirm throws) until the workspace name matches. */
   function confirm() {
-    if (bypassConfirmed(typed, workspaceName)) {
-      confirming = false;
-      onselect("bypassPermissions");
-    }
+    if (!matches) throw new Error("Workspace name does not match");
+    onselect("bypassPermissions");
   }
 </script>
 
@@ -51,37 +52,67 @@
       {/each}
     </ul>
   {/if}
-  {#if confirming}
-    <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="bypass-title">
-      <h2 id="bypass-title">Enable Bypass mode?</h2>
-      <p>
-        Bypass unlocks the sandbox: every sensitive action runs without asking (and is audited). Type the
-        workspace name <strong>{workspaceName || "(none open)"}</strong> to confirm.
-      </p>
-      <input aria-label="Workspace name" bind:value={typed} onkeydown={(e) => e.key === "Enter" && confirm()} />
-      <div class="row">
-        <button onclick={() => (confirming = false)}>Cancel</button>
-        <button class="danger" disabled={!bypassConfirmed(typed, workspaceName)} onclick={confirm}>Enable Bypass</button>
-      </div>
-    </div>
-  {/if}
+  <Dialog
+    bind:open={confirming}
+    tone="danger"
+    title="Enable Bypass mode?"
+    confirmLabel="Enable Bypass"
+    onconfirm={confirm}
+  >
+    <p class="warning">
+      Bypass unlocks the sandbox: every sensitive action runs without asking (and is audited). Type the
+      workspace name <strong>{workspaceName || "(none open)"}</strong> to confirm.
+    </p>
+    <TextField
+      label="Workspace name"
+      hideLabel
+      bind:value={typed}
+      onkeydown={(e) => {
+        if (e.key === "Enter" && matches) {
+          confirm();
+          confirming = false;
+        }
+      }}
+    />
+  </Dialog>
 </span>
 
 <style>
   .wrap { position: relative; display: inline-block; }
   .badge {
-    color: var(--tone); border-color: var(--tone); font-weight: 700; letter-spacing: 0.06em; padding: 1px 10px;
+    height: var(--control-height-sm);
+    padding: 0 var(--space-3);
+    color: var(--tone);
+    border-color: var(--tone);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: var(--letter-spacing-caps);
   }
-  .badge.tone-danger { background: var(--danger); color: #fff; }
+  .badge.tone-info { --tone: var(--color-info-text); }
+  .badge.tone-neutral { --tone: var(--color-text-secondary); }
+  .badge.tone-warn { --tone: var(--color-warn-text); }
+  .badge.tone-danger { --tone: var(--color-on-danger); background: var(--color-danger); border-color: var(--color-danger); }
+  .badge:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   .menu {
-    position: absolute; bottom: 120%; left: 0; list-style: none; margin: 0; padding: 4px; min-width: 150px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; z-index: 5;
+    position: absolute;
+    bottom: 120%;
+    left: 0;
+    list-style: none;
+    margin: 0;
+    padding: var(--space-1);
+    min-width: 150px;
+    background: var(--color-surface-raised);
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    z-index: var(--z-popover);
   }
-  .menu button { width: 100%; text-align: left; border: 0; color: var(--tone); }
-  .menu button[aria-checked="true"] { font-weight: 700; }
-  .dialog {
-    position: fixed; inset: 30% auto auto 50%; transform: translateX(-50%); width: 420px; z-index: 10;
-    background: var(--panel); border: 2px solid var(--danger); border-radius: 10px; padding: 16px; display: grid; gap: 10px;
-  }
-  .row { display: flex; gap: 8px; justify-content: flex-end; }
+  .menu .tone-info { --tone: var(--color-info-text); }
+  .menu .tone-neutral { --tone: var(--color-text); }
+  .menu .tone-warn { --tone: var(--color-warn-text); }
+  .menu .tone-danger { --tone: var(--color-danger-text); }
+  .menu button { width: 100%; text-align: left; border: 0; background: transparent; color: var(--tone); }
+  .menu button:hover { background: var(--color-surface-hover); }
+  .menu button[aria-checked="true"] { font-weight: var(--font-weight-bold); }
+  .warning { margin: 0 0 var(--space-3); }
 </style>

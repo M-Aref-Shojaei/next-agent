@@ -1,9 +1,12 @@
 <script lang="ts">
   // Side-by-side reviewer for an auto-mode task's worktree branch.
+  import { Badge, Banner, Button } from "$lib/ds/index.ts";
+  import type { DiffFileStatus } from "$lib/diff.ts";
   import { diffStats, sideBySide, type DiffViewerProps } from "$lib/diff.ts";
   let { files, branch, onAction, outcome }: DiffViewerProps = $props();
   const stats = $derived(diffStats(files));
   let busy = $state(false);
+  const STATUS_TONE: Partial<Record<DiffFileStatus, "ok" | "danger">> = { added: "ok", deleted: "danger" };
 
   async function act(action: "merge" | "discard" | "keep") {
     busy = true;
@@ -24,17 +27,17 @@
       <span>{files.length} file{files.length === 1 ? "" : "s"}, <span class="add">+{stats.added}</span> <span class="rem">−{stats.removed}</span></span>
     </header>
     {#if outcome}
-      <p class="outcome" role="status">Changes {outcome}.</p>
+      <Banner tone="ok">Changes {outcome}.</Banner>
     {:else}
       <div class="row" role="group" aria-label="Review actions">
-        <button class="primary" disabled={busy} onclick={() => act("merge")}>Merge</button>
-        <button class="danger" disabled={busy} onclick={() => act("discard")}>Discard</button>
-        <button disabled={busy} onclick={() => act("keep")}>Keep for later</button>
+        <Button size="sm" variant="primary" disabled={busy} onclick={() => act("merge")}>Merge</Button>
+        <Button size="sm" variant="danger" disabled={busy} onclick={() => act("discard")}>Discard</Button>
+        <Button size="sm" disabled={busy} onclick={() => act("keep")}>Keep for later</Button>
       </div>
     {/if}
     {#each files as file (file.path)}
       <details open>
-        <summary><span class="status {file.status}">{file.status}</span> {file.oldPath ? `${file.oldPath} → ` : ""}{file.path}</summary>
+        <summary><Badge size="sm" tone={STATUS_TONE[file.status] ?? "neutral"}>{file.status}</Badge> {file.oldPath ? `${file.oldPath} → ` : ""}{file.path}</summary>
         {#if file.binary}
           <p class="muted">Binary file.</p>
         {:else}
@@ -59,18 +62,16 @@
 </section>
 
 <style>
-  .diff { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
-  header { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-  .add { color: var(--ok); } .rem { color: var(--danger); }
-  .row { display: flex; gap: 6px; flex-wrap: wrap; }
-  .outcome { color: var(--ok); margin: 0; }
-  summary { cursor: pointer; font-family: ui-monospace, monospace; word-break: break-all; }
-  .status { font-family: inherit; font-size: 11px; padding: 0 4px; border-radius: 3px; background: var(--border); }
-  .status.added { background: var(--ok); color: #fff; } .status.deleted { background: var(--danger); color: #fff; }
-  .hunk { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 4px; font-family: ui-monospace, monospace; }
-  .num { width: 2.5em; color: var(--muted); text-align: right; padding-right: 4px; user-select: none; vertical-align: top; }
-  .code { white-space: pre-wrap; word-break: break-all; padding: 0 4px; vertical-align: top; }
-  .code.add { background: color-mix(in srgb, var(--ok) 18%, transparent); }
-  .code.remove { background: color-mix(in srgb, var(--danger) 18%, transparent); }
-  .code.blank { background: color-mix(in srgb, var(--border) 40%, transparent); }
+  .diff { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--font-size-sm); }
+  header { display: flex; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+  .add { color: var(--color-ok-text); } .rem { color: var(--color-danger-text); }
+  .row { display: flex; gap: var(--space-1-5); flex-wrap: wrap; }
+  summary { cursor: pointer; font-family: var(--font-mono); word-break: break-all; }
+  summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+  .hunk { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: var(--space-1); font-family: var(--font-mono); }
+  .num { width: 2.5em; color: var(--color-text-tertiary); text-align: right; padding-right: var(--space-1); user-select: none; vertical-align: top; }
+  .code { white-space: pre-wrap; word-break: break-all; padding: 0 var(--space-1); vertical-align: top; }
+  .code.add { background: var(--color-ok-subtle); }
+  .code.remove { background: var(--color-danger-subtle); }
+  .code.blank { background: var(--color-surface-sunken); }
 </style>

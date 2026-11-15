@@ -1,69 +1,94 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { page } from "$app/state";
   import { app } from "$lib/app.svelte.ts";
   import { upstreams } from "$lib/upstreams.svelte.ts";
+  import { Badge, Button, List, ListRow, StatusDot, TextField } from "$lib/ds/index.ts";
+  import type { Tone } from "$lib/ds/types.ts";
   onMount(() => void upstreams.init());
   let path = $state("");
   async function open(event: SubmitEvent) {
     event.preventDefault();
     if (await app.openWorkspace(path)) path = "";
   }
+
+  const TASK_TONE: Record<string, Tone> = { running: "info", completed: "ok", failed: "danger" };
+  const LINKS = [
+    { href: "/notes", label: "Notes" },
+    { href: "/boards", label: "Boards" },
+    { href: "/design", label: "Design" },
+    { href: "/settings/providers", label: "Providers" },
+    { href: "/usage", label: "Usage" },
+    { href: "/settings/channels", label: "Channels" },
+    { href: "/settings/learning", label: "Memory and skills" },
+  ];
 </script>
 
 <nav class="sidebar" aria-label="Workspaces and tasks">
   <h2>Workspaces</h2>
-  <ul>
-    {#each app.workspaces as ws (ws.id)}
-      <li>
-        <button aria-current={ws.id === app.activeWorkspaceId} title={ws.path} onclick={() => app.selectWorkspace(ws.id)}>
-          {ws.name}
-        </button>
-      </li>
-    {:else}
-      <li class="muted">No workspace yet</li>
-    {/each}
-  </ul>
+  {#if app.workspaces.length}
+    <List bordered={false} label="Workspaces">
+      {#each app.workspaces as ws (ws.id)}
+        <ListRow title={ws.name} selected={ws.id === app.activeWorkspaceId} onclick={() => app.selectWorkspace(ws.id)} />
+      {/each}
+    </List>
+  {:else}
+    <p class="muted">No workspace yet</p>
+  {/if}
   <form onsubmit={open}>
-    <label class="sr-only" for="ws-path">Workspace folder path</label>
-    <input id="ws-path" placeholder="/path/to/project" bind:value={path} />
-    <button type="submit">Open</button>
+    <TextField size="sm" label="Workspace folder path" hideLabel placeholder="/path/to/project" mono bind:value={path} />
+    <Button size="sm" type="submit">Open</Button>
   </form>
 
   <h2>Tasks</h2>
-  <ul aria-label="Tasks">
-    {#each app.tasks as task (task.id)}
-      <li>
-        <button aria-current={task.id === app.activeTaskId} onclick={() => app.selectTask(task.id)}>
-          <span class="s {task.status}" aria-hidden="true"></span>{#if task.origin}<span class="chan" title={task.origin}>chat</span>{/if}{task.title}
-          <span class="sr-only">({task.status})</span>
-        </button>
-      </li>
-    {:else}
-      <li class="muted">No tasks yet</li>
-    {/each}
-  </ul>
-  <a class="settings" href="/notes">Notes</a>
-  <a class="nav" href="/boards">Boards</a>
-  <a class="nav" href="/design">Design</a>
-  <a class="nav" href="/settings/providers">Providers</a>
-  <a class="nav" href="/usage">Usage</a>
-  <a class="nav" href="/settings/channels">Channels</a>
-  <a class="nav" href="/settings/learning">Memory and skills</a>
-  <a class="nav" href="/settings">Settings{#if upstreams.unseen > 0}<span class="badge" title="New upstream changes">{upstreams.unseen}</span><span class="sr-only"> (new upstream changes)</span>{/if}</a>
+  {#if app.tasks.length}
+    <List bordered={false} label="Tasks">
+      {#each app.tasks as task (task.id)}
+        <ListRow title={task.title} selected={task.id === app.activeTaskId} onclick={() => app.selectTask(task.id)}>
+          {#snippet leading()}<StatusDot tone={TASK_TONE[task.status] ?? "neutral"} label={task.status} />{/snippet}
+          {#if task.origin}<Badge size="sm">{task.origin}</Badge>{/if}
+        </ListRow>
+      {/each}
+    </List>
+  {:else}
+    <p class="muted">No tasks yet</p>
+  {/if}
+
+  <div class="links">
+    <List bordered={false} label="Pages">
+      {#each LINKS as link (link.href)}
+        <ListRow title={link.label} href={link.href} selected={page.url.pathname === link.href} />
+      {/each}
+      <ListRow title="Settings" href="/settings" selected={page.url.pathname === "/settings"}>
+        {#if upstreams.unseen > 0}
+          <Badge tone="accent" variant="solid" size="sm">{upstreams.unseen}<span class="sr-only"> new upstream changes</span></Badge>
+        {/if}
+      </ListRow>
+    </List>
+  </div>
 </nav>
 
 <style>
-  .sidebar { background: var(--sidebar); border-right: 1px solid var(--border); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
-  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 8px; }
-  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-  li button { width: 100%; text-align: left; border-color: transparent; background: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  li button[aria-current="true"] { background: var(--panel); border-color: var(--border); font-weight: 600; }
-  form { display: flex; gap: 6px; }
-  .s { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
-  .s.running { background: var(--info); } .s.completed { background: var(--ok); } .s.failed { background: var(--danger); }
-  .settings { margin-top: auto; color: var(--accent); }
-  .chan { font-size: 10px; border: 1px solid var(--border); border-radius: 4px; padding: 0 3px; margin-right: 4px; color: var(--muted); }
-  .nav { color: var(--accent); }
-  .badge { display: inline-block; min-width: 16px; margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
-  nav > a { color: var(--accent); }
+  .sidebar {
+    flex: 1;
+    min-width: 0;
+    background: var(--color-surface-sunken);
+    border-right: var(--border-width) solid var(--color-border);
+    padding: var(--space-3);
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  h2 {
+    margin-top: var(--space-2);
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--letter-spacing-caps);
+    color: var(--color-text-secondary);
+  }
+  p { margin: 0; font-size: var(--font-size-sm); }
+  form { display: flex; gap: var(--space-1-5); align-items: center; }
+  form :global(.ds-input) { min-width: 0; }
+  .links { margin-top: auto; }
 </style>

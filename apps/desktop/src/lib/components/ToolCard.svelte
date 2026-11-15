@@ -15,10 +15,27 @@
 </details>
 
 <style>
-  .tool { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 6px 10px; }
-  summary { cursor: pointer; display: flex; gap: 8px; align-items: center; }
-  .running .icon { color: var(--info); } .waiting .icon { color: var(--warn); } .ok .icon { color: var(--ok); }
-  .failed .icon, .denied .icon { color: var(--danger); }
-  pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; overflow: auto; white-space: pre-wrap; }
-  p { margin: 6px 0 0; }
+  .tool {
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-sm);
+    padding: var(--space-1-5) var(--space-3);
+  }
+  summary { cursor: pointer; display: flex; gap: var(--space-2); align-items: center; }
+  summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+  .running .icon { color: var(--color-info-text); }
+  .waiting .icon { color: var(--color-warn-text); }
+  .ok .icon { color: var(--color-ok-text); }
+  .failed .icon, .denied .icon { color: var(--color-danger-text); }
+  pre {
+    margin: var(--space-1-5) 0 0;
+    padding: var(--space-2);
+    background: var(--color-surface-sunken);
+    border-radius: var(--radius-md);
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  p { margin: var(--space-1-5) 0 0; }
 </style>
