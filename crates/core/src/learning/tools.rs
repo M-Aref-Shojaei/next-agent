@@ -535,7 +535,8 @@ mod tests {
     #[test]
     fn requests_carry_the_policy_target() {
         let dir = tempfile::tempdir().expect("dir");
-        let l = learning(dir.path());
+        let base = std::fs::canonicalize(dir.path()).expect("canon");
+        let l = learning(base.as_path());
         let memory = learn(
             l.request("memory", &json!({"target": "user", "operations": []}))
                 .expect("offered"),
@@ -543,10 +544,10 @@ mod tests {
         assert!(memory.mutating);
         assert_eq!(memory.target, l.memory_dir.join("USER.md"));
         let create = learn(l.request("skill_manage", &json!({"operations": [{"name": "a", "action": "create", "scope": "user", "content": ""}]})).expect("offered"));
-        assert_eq!(create.target, dir.path().join("vault/skills"));
+        assert_eq!(create.target, base.as_path().join("vault/skills"));
         let list = learn(l.request("skills_list", &json!({})).expect("offered"));
         assert!(!list.mutating);
-        assert_eq!(list.target, dir.path().join("ws/.next-agent"));
+        assert_eq!(list.target, base.as_path().join("ws/.next-agent"));
         let both = l.request(
             "skill_manage",
             &json!({"operations": [
@@ -579,7 +580,8 @@ mod tests {
     #[test]
     fn executes_memory_skills_and_search_and_records_changes() {
         let dir = tempfile::tempdir().expect("dir");
-        let l = learning(dir.path());
+        let base = std::fs::canonicalize(dir.path()).expect("canon");
+        let l = learning(base.as_path());
         let mut tools = LearningTools::new(Box::new(UnavailableExecutor), l.clone());
         let changes = tools.changes();
         let call = |tools: &mut LearningTools, name: &str, args: Value| {
@@ -602,11 +604,7 @@ mod tests {
         let viewed = call(&mut tools, "skill_view", json!({"name": "deploy"}));
         assert!(viewed.ok && viewed.output.contains("make ship"));
         let store = Store::open(&l.db_path).expect("store");
-        let root = dir
-            .path()
-            .join("ws/.next-agent/skills")
-            .display()
-            .to_string();
+        let root = base.join("ws/.next-agent/skills").display().to_string();
         let usage = store.skill_usage(&root).expect("usage");
         assert_eq!(
             (usage[0].created_by.as_deref(), usage[0].view_count),
@@ -632,7 +630,8 @@ mod tests {
     #[test]
     fn repeated_memory_failures_end_with_a_stop_message() {
         let dir = tempfile::tempdir().expect("dir");
-        let l = learning(dir.path());
+        let base = std::fs::canonicalize(dir.path()).expect("canon");
+        let l = learning(base.as_path());
         let mut tools = LearningTools::new(Box::new(UnavailableExecutor), l.clone());
         let bad = l.request("memory", &json!({"target": "memory", "operations": [{"action": "remove", "old_text": "nothing"}]})).expect("o").expect("v");
         for _ in 0..4 {
@@ -647,8 +646,9 @@ mod tests {
     #[test]
     fn pinned_skills_survive_skill_manage_delete() {
         let dir = tempfile::tempdir().expect("dir");
-        let l = learning(dir.path());
-        let skill_dir = dir.path().join("ws/.next-agent/skills/keep");
+        let base = std::fs::canonicalize(dir.path()).expect("canon");
+        let l = learning(base.as_path());
+        let skill_dir = base.as_path().join("ws/.next-agent/skills/keep");
         std::fs::create_dir_all(&skill_dir).expect("dir");
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -658,7 +658,8 @@ mod tests {
         let store = Store::open(&l.db_path).expect("store");
         store
             .skill_set_pinned(
-                &dir.path()
+                &base
+                    .as_path()
                     .join("ws/.next-agent/skills")
                     .display()
                     .to_string(),

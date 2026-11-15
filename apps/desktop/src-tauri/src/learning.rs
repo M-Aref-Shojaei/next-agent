@@ -769,6 +769,19 @@ impl AppService {
     /// Start one claimed run as its own task. Returns the task id.
     pub fn cron_dispatch(self: &Arc<Self>, run: &DueRun, sink: Sink) -> Result<String, String> {
         let job = &run.job;
+        // Checked again here, not only when the job was saved: a row edited
+        // behind the app's back must not run with more power.
+        if !matches!(job.mode.as_str(), "plan" | "manual" | "auto") {
+            let error = format!("cron jobs never run in `{}` mode", job.mode);
+            let _ = self.store()?.cron_record_run(
+                &job.id,
+                sessions::now(),
+                "error",
+                Some(&error),
+                None,
+            );
+            return Err(error);
+        }
         let request = TaskRequest {
             workspace_id: job.workspace_id.clone(),
             prompt: job.prompt.clone(),

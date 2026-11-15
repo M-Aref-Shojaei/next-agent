@@ -134,3 +134,95 @@ fn cron_runs_get_skills_in_front_of_the_prompt() {
     assert!(prompt.ends_with("Ship it."));
     assert_eq!(svc.with_skills(&root, &[], "plain"), "plain");
 }
+
+fn null_sink() -> Sink {
+    Arc::new(|_| {})
+}
+
+#[test]
+fn a_bypass_job_written_behind_the_apps_back_never_runs() {
+    let (_dir, svc, ws, _) = service();
+    let job = svc
+        .cron_save(&CronInput {
+            workspace_id: ws,
+            prompt: "p".into(),
+            schedule: "every 1h".into(),
+            mode: Some("plan".into()),
+            ..CronInput::default()
+        })
+        .expect("save");
+    let mut row = svc
+        .store()
+        .expect("store")
+        .cron_get(&job.id)
+        .expect("get")
+        .expect("row");
+    row.mode = "bypassPermissions".into();
+    svc.store().expect("store").cron_put(&row).expect("tamper");
+    let run = cron::run_now(&svc.store().expect("store"), &job.id, sessions::now()).expect("run");
+    let error = svc.cron_dispatch(&run, null_sink()).expect_err("refused");
+    assert!(error.contains("never run"), "{error}");
+    let row = svc.list_jobs(None).expect("list").remove(0);
+    assert_eq!(row.last_status.as_deref(), Some("error"));
+    assert_eq!(row.last_task_id, None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_job_workdir_cannot_leave_the_workspace_through_a_symlink() {
+    let (dir, svc, ws, root) = service();
+    let outside = dir.path().join("outside");
+    std::fs::create_dir(&outside).expect("outside");
+    std::os::unix::fs::symlink(&outside, root.join("out")).expect("link");
+    std::fs::create_dir(root.join("inside")).expect("inside");
+    let job = svc
+        .cron_save(&CronInput {
+            workspace_id: ws.clone(),
+            prompt: "p".into(),
+            schedule: "every 1h".into(),
+            mode: Some("plan".into()),
+            workdir: Some("out".into()),
+            ..CronInput::default()
+        })
+        .expect("save");
+    let run = cron::run_now(&svc.store().expect("store"), &job.id, sessions::now()).expect("run");
+    let error = svc.cron_dispatch(&run, null_sink()).expect_err("refused");
+    assert!(error.contains("inside the workspace"), "{error}");
+    // `..` and absolute paths are refused when the job is saved.
+    for bad in ["../x", "/etc"] {
+        assert!(
+            svc.cron_save(&CronInput {
+                workspace_id: ws.clone(),
+                prompt: "p".into(),
+                schedule: "1h".into(),
+                workdir: Some(bad.into()),
+                ..CronInput::default()
+            })
+            .is_err(),
+            "{bad}"
+        );
+    }
+    // A real folder inside works.
+    let ok = svc
+        .cron_save(&CronInput {
+            workspace_id: ws.clone(),
+            prompt: "p".into(),
+            schedule: "every 1h".into(),
+            mode: Some("plan".into()),
+            workdir: Some("inside".into()),
+            ..CronInput::default()
+        })
+        .expect("save");
+    let run = cron::run_now(&svc.store().expect("store"), &ok.id, sessions::now()).expect("run");
+    let task = svc.cron_dispatch(&run, null_sink()).expect("dispatch");
+    svc.task_wait(&task);
+    // Unknown workspaces are refused.
+    assert!(svc
+        .cron_save(&CronInput {
+            workspace_id: "nope".into(),
+            prompt: "p".into(),
+            schedule: "1h".into(),
+            ..CronInput::default()
+        })
+        .is_err());
+}

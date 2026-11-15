@@ -524,3 +524,62 @@ fn recorder_implements_transcript() {
     let recorder = SessionRecorder::open(Path::new(&f.db), &row).expect("recorder");
     takes(&recorder);
 }
+
+#[test]
+fn the_broker_itself_denies_review_calls_outside_the_allowed_set_even_in_bypass() {
+    use next_agent_core::agent::AgentExecutor;
+    use next_agent_core::events::Emitter;
+    use next_agent_core::runner::{Floor, RunContext, ToolBroker};
+    use next_agent_core::ToolRequest;
+
+    let f = fixture();
+    let client = Scripted::new(vec![text("Nothing to save.")]);
+    let mut executor = BuiltinExecutor::new(client, &f.root)
+        .with_profile(review::profile())
+        .with_learning(Learning {
+            review: true,
+            ..f.learning.clone()
+        });
+    let spec = f.spec("floor", "bypassPermissions");
+    let _ = executor.start(&spec);
+    let write = ToolRequest::Write {
+        path: f.root.join("src/evil.rs"),
+        contents: "x".into(),
+    };
+    let exec = ToolRequest::Exec {
+        command: "touch pwned".into(),
+        cwd: f.root.clone(),
+    };
+    for request in [&write, &exec] {
+        // Even if a call got past the tool list, the profile floor rides with it.
+        let floor = executor.floor("c1", request);
+        assert!(
+            matches!(floor, Some(Floor::Deny(_))),
+            "{request:?}: {floor:?}"
+        );
+        let store = Store::open(&f.db).expect("store");
+        let mut broker = SqliteBroker::new(
+            &store,
+            Mode::BypassPermissions,
+            context_for(f.root.clone(), f.workspace.id().to_string(), None),
+        )
+        .with_executor(LocalTools::new())
+        .with_approver(ReviewApprover);
+        let events = Emitter::new(spec.id.clone());
+        let ctx = RunContext {
+            events: &events,
+            cancelled: &|| false,
+        };
+        let outcome = broker.handle_floored(&ctx, "c1", request, floor.as_ref());
+        assert_eq!(outcome.decision, "deny", "{request:?}");
+    }
+    assert!(!f.root.join("src/evil.rs").exists());
+    assert!(!f.root.join("pwned").exists());
+    // The learning writers stay allowed by the profile.
+    let memory = f
+        .learning
+        .request("memory", &json!({"target": "memory", "operations": []}))
+        .expect("offered")
+        .expect("valid");
+    assert_eq!(executor.floor("c2", &memory), None);
+}
