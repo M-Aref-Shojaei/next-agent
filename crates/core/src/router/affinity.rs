@@ -13,6 +13,11 @@
 use crate::hash::sha256_hex;
 use serde_json::{json, Value};
 
+/// Share of the score that comes from the key/target hash.
+const HASH_WEIGHT: f64 = 0.75;
+/// Share of the score that comes from target availability.
+const AVAILABILITY_WEIGHT: f64 = 0.25;
+
 /// Affinity key of a request, if it has a usable prefix.
 #[must_use]
 pub fn key(body: &Value) -> Option<String> {
@@ -38,13 +43,12 @@ pub fn key(body: &Value) -> Option<String> {
 
 /// Deterministic value in `[0, 1)` for `key` and `target`.
 #[must_use]
+#[allow(clippy::cast_precision_loss)]
 pub fn hash01(key: &str, target: &str) -> f64 {
     let digest = sha256_hex(format!("{key}\u{0}{target}").as_bytes());
     // 52 bits (13 hex digits) → an exact f64 in [0, 1).
     let bits = u64::from_str_radix(&digest[..13], 16).unwrap_or(0);
-    #[allow(clippy::cast_precision_loss)]
-    let value = bits as f64 / (1u64 << 52) as f64;
-    value
+    bits as f64 / (1u64 << 52) as f64
 }
 
 /// Sort `items` by affinity score, highest first. `id` names a target and
@@ -56,7 +60,7 @@ pub fn rank<T>(
     availability: impl Fn(&T) -> f64,
 ) {
     items.sort_by_cached_key(|item| {
-        let score = 0.75 * hash01(key, &id(item)) + 0.25 * availability(item);
+        let score = HASH_WEIGHT * hash01(key, &id(item)) + AVAILABILITY_WEIGHT * availability(item);
         // Non-negative floats order like their bit patterns.
         std::cmp::Reverse(score.max(0.0).to_bits())
     });
