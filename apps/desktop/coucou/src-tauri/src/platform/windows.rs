@@ -27,7 +27,8 @@ use ::windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
 // Next Agent: removed WhatsApp/Spotify (owner request): the registry import handles_scheme used.
 use ::windows::Win32::System::SystemInformation::GetLocalTime;
 use ::windows::Win32::System::Threading::{
-    AttachThreadInput, GetCurrentProcess, GetCurrentThreadId, OpenProcessToken,
+    AttachThreadInput, GetCurrentProcess, GetCurrentThreadId, OpenProcess, OpenProcessToken,
+    PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use ::windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayoutList, MapVirtualKeyExW, ToUnicodeEx, HKL, MAPVK_VK_TO_VSC,
@@ -63,7 +64,8 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub fn config_dir() -> PathBuf {
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .filter(|_| !cfg!(test)) // Next Agent: tests never touch the real home folder (security review)
+        .unwrap_or_else(|| super::home_dir().join("AppData").join("Roaming"));
     base.join("dev.nextagent.desktop").join("overlay")
 }
 
@@ -71,7 +73,8 @@ pub fn config_dir() -> PathBuf {
 pub fn local_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .filter(|_| !cfg!(test)) // Next Agent: tests never touch the real home folder (security review)
+        .unwrap_or_else(|| super::home_dir().join("AppData").join("Local"));
     base.join("dev.nextagent.desktop").join("overlay") // Next Agent: renamed from Coucou (owner request)
 }
 
@@ -184,9 +187,26 @@ pub fn cli_candidates(name: &str) -> Vec<PathBuf> {
 
 /// The SID of the account this process runs as, as `S-1-5-21-…`.
 pub fn current_user_sid() -> Option<String> {
+    unsafe { process_handle_user_sid(GetCurrentProcess()) }
+}
+
+/// Next Agent: relay limits (security review): the SID of the account process `pid` runs as, so the relay
+/// pipe serves only a next-agent-hook run by this same user.
+pub fn process_user_sid(pid: u32) -> Option<String> {
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let sid = process_handle_user_sid(process);
+        let _ = CloseHandle(process);
+        sid
+    }
+}
+
+/// The user SID of the process behind `process` (upstream's body of
+/// `current_user_sid`, for any process handle).
+unsafe fn process_handle_user_sid(process: HANDLE) -> Option<String> {
     unsafe {
         let mut token = HANDLE::default();
-        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
+        OpenProcessToken(process, TOKEN_QUERY, &mut token).ok()?;
 
         // First call sizes the buffer, second fills it.
         let mut needed = 0u32;

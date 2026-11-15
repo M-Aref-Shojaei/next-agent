@@ -76,7 +76,9 @@ pub struct HookPreview {
 }
 
 pub fn settings_path() -> PathBuf {
-    claude_dir(std::env::var_os("CLAUDE_CONFIG_DIR"), &platform::home_dir()).join("settings.json")
+    // Next Agent: tests never touch the real home folder (security review): a moved Claude folder is ignored under `cargo test`.
+    let moved = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|_| !cfg!(test));
+    claude_dir(moved, &platform::home_dir()).join("settings.json")
 }
 
 /// Claude Code's own folder: `CLAUDE_CONFIG_DIR` when the user moved it there,

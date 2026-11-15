@@ -298,6 +298,24 @@ async fn run(app: AppHandle, service: Arc<AppService>, mut rx: mpsc::UnboundedRe
     }
 }
 
+/// What the island's line may decide: `allow` (once) or `deny`, nothing
+/// else. The island offers no "Always" button (views.ts builds Deny and Allow
+/// only) and the overlay's `pipe::answer` turns an "always" into "allow", so no
+/// standing rule is ever made from the overlay, for any task.
+///
+/// TODO(channels): when the channels branch lands, its task events carry the
+/// channel a task came from, and its broker refuses "Always for this
+/// workspace" for them. If the island ever gets an "Always" button, hide it for
+/// a task the stream marks as from a channel (put the marker in the
+/// `PermissionRequest` payload `Translator::translate` builds).
+fn island_decision(line: &str) -> Option<&'static str> {
+    match line.trim() {
+        "allow" => Some("allow"),
+        "deny" => Some("deny"),
+        _ => None,
+    }
+}
+
 /// The island's answer for one approval, or nothing when the card went
 /// (answered elsewhere, timed out, or the island could not show it).
 async fn wait_for_decision(
@@ -311,8 +329,7 @@ async fn wait_for_decision(
     let mut line = String::new();
     tokio::select! {
         read = reader.read_line(&mut line) => {
-            let word = line.trim();
-            if read.is_ok() && matches!(word, "allow" | "deny") {
+            if let Some(word) = read.ok().and_then(|_| island_decision(&line)) {
                 if let Err(error) = service.approval_respond(&task_id, &approval_id, word) {
                     eprintln!("[next-agent] overlay approval {approval_id}: {error}");
                 }
@@ -326,6 +343,22 @@ async fn wait_for_decision(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_allow_once_or_deny_comes_back_from_the_island() {
+        assert_eq!(island_decision("allow\n"), Some("allow"));
+        assert_eq!(island_decision(" deny "), Some("deny"));
+        for line in [
+            "always",
+            "always_workspace",
+            "allow always",
+            "ALLOW",
+            "",
+            "{\"answers\":{}}",
+        ] {
+            assert_eq!(island_decision(line), None, "{line}");
+        }
+    }
 
     #[allow(clippy::needless_pass_by_value)] // the tests build `data` inline
     fn envelope(kind: &str, data: Value) -> Value {

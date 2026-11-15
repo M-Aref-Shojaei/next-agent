@@ -77,7 +77,18 @@ fn entry(key: &str) -> Option<Entry> {
     if !KNOWN_KEYS.contains(&key) {
         return None;
     }
+    test_store();
     Entry::new(SERVICE, key).ok()
+}
+
+/// Next Agent: tests never touch the real home folder (security review): under `cargo test` every entry is keyring's in-memory mock,
+/// never the user's Keychain, Credential Manager or Secret Service.
+fn test_store() {
+    #[cfg(test)]
+    {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| keyring::set_default_credential_builder(keyring::mock::default_credential_builder()));
+    }
 }
 
 /// Whether each key is stored, as last seen. Each Secret Service lookup opens a
@@ -176,6 +187,7 @@ fn internal_entry(key: &str) -> Result<Entry, String> {
     if !is_internal(key) {
         return Err(format!("unknown key {key}"));
     }
+    test_store();
     Entry::new(SERVICE, key).map_err(|e| e.to_string())
 }
 

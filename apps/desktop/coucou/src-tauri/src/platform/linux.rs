@@ -35,6 +35,10 @@ pub const HOME_VAR: &str = "HOME";
 /// An XDG base directory (`$XDG_CONFIG_HOME` …), or its fallback under the home
 /// directory when it is unset or not absolute.
 fn xdg(var: &str, fallback: &str) -> PathBuf {
+    // Next Agent: tests never touch the real home folder (security review).
+    if cfg!(test) {
+        return home_dir().join(fallback);
+    }
     std::env::var_os(var)
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())

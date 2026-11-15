@@ -49,6 +49,20 @@ const DECISION_TIMEOUT: Duration = Duration::from_secs(108);
 /// see for nearly two minutes.
 const ACK_TIMEOUT: Duration = Duration::from_millis(800);
 const MAX_PAYLOAD: usize = 1 << 20;
+/// Next Agent: relay limits (security review): a relay writes its one line at once. A connection that has
+/// not finished it by then is dropped, so a stuck or hostile local client
+/// cannot hold tasks open.
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// Next Agent: relay limits (security review): relay connections served at once. Every Claude Code hook is one
+/// short connection, and a waiting permission request one more; anything above
+/// this is refused until one ends.
+const MAX_CONNECTIONS: usize = 64;
+
+/// Next Agent: relay limits (security review): the connections being served.
+fn connection_slots() -> &'static std::sync::Arc<tokio::sync::Semaphore> {
+    static SLOTS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)))
+}
 
 /// What the island can say about a permission request.
 pub enum Reply {
@@ -105,8 +119,21 @@ pub fn start(app: AppHandle) {
                 }
             };
             let connected = std::mem::replace(&mut server, next);
+            // Next Agent: relay limits (security review): only a relay run by this same user (the SID check
+            // next-agent-hook does the other way round), and not too many at once.
+            if !connected_client_is_us(&connected) {
+                log::line("refused a relay connection from another user");
+                continue;
+            }
+            let Ok(slot) = connection_slots().clone().try_acquire_owned() else {
+                log::line("too many relay connections at once; one refused");
+                continue;
+            };
             let app = app.clone();
-            tauri::async_runtime::spawn(async move { handle(app, connected).await });
+            tauri::async_runtime::spawn(async move {
+                handle(app, connected).await;
+                drop(slot);
+            });
         }
     });
 }
@@ -158,10 +185,29 @@ pub fn start(app: AppHandle) {
                 log::line("refused a relay connection from another user");
                 continue;
             }
+            // Next Agent: relay limits (security review): not too many at once.
+            let Ok(slot) = connection_slots().clone().try_acquire_owned() else {
+                log::line("too many relay connections at once; one refused");
+                continue;
+            };
             let app = app.clone();
-            tauri::async_runtime::spawn(async move { handle(app, stream).await });
+            tauri::async_runtime::spawn(async move {
+                handle(app, stream).await;
+                drop(slot);
+            });
         }
     });
+}
+
+/// Next Agent: relay limits (security review): the process on the other end of the pipe runs as this user.
+#[cfg(windows)]
+fn connected_client_is_us(server: &NamedPipeServer) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    let Some(pid) = crate::platform::pipe_client_pid(server.as_raw_handle()) else { return false };
+    matches!(
+        (crate::platform::process_user_sid(pid), crate::platform::current_user_sid()),
+        (Some(theirs), Some(ours)) if theirs == ours
+    )
 }
 
 /// One accepted relay connection, whatever carries it.
@@ -196,20 +242,11 @@ impl Relay for tokio::net::UnixStream {
 }
 
 async fn handle(app: AppHandle, mut pipe: impl Relay) {
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 4096];
-    loop {
-        match pipe.read(&mut chunk).await {
-            Ok(0) => break,
-            Ok(n) => {
-                buf.extend_from_slice(&chunk[..n]);
-                if buf.contains(&b'\n') || buf.len() > MAX_PAYLOAD {
-                    break;
-                }
-            }
-            Err(_) => return,
-        }
-    }
+    // Next Agent: relay limits (security review): the line must arrive within READ_TIMEOUT.
+    let Ok(Some(buf)) = tokio::time::timeout(READ_TIMEOUT, read_line(&mut pipe)).await else {
+        log::line("dropped a relay connection that sent no complete line in time");
+        return;
+    };
     let line = match buf.iter().position(|b| *b == b'\n') {
         Some(i) => &buf[..i],
         None => &buf[..],
@@ -467,6 +504,30 @@ fn send(app: &AppHandle, request_id: &str, reply: Reply, keep: bool) {
     }
 }
 
+/// One relay line, at most MAX_PAYLOAD bytes (upstream's loop, moved here so
+/// `handle` can put a time limit on it). None: the connection failed.
+/// Next Agent: relay limits (security review): a payload over the limit is refused, not cut.
+async fn read_line(pipe: &mut impl Relay) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match pipe.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.contains(&b'\n') {
+                    break;
+                }
+                if buf.len() > MAX_PAYLOAD {
+                    return None;
+                }
+            }
+            Err(_) => return None,
+        }
+    }
+    Some(buf)
+}
+
 /// The island has the card on screen; the long wait may begin.
 pub fn acknowledge(app: &AppHandle, request_id: &str) {
     send(app, request_id, Reply::Ack, true);
@@ -542,5 +603,41 @@ mod tests {
             let gone = tokio::time::timeout(Duration::from_millis(50), client_gone(&mut ours)).await;
             assert!(gone.is_ok(), "a closed relay must be seen within the poll");
         });
+    }
+
+    /// Next Agent: relay limits (security review): one line, bounded in size
+    /// and in time.
+    #[test]
+    fn a_relay_line_is_bounded_in_size_and_time() {
+        block_on(async {
+            // A line arrives whole, in pieces.
+            let (mut ours, mut theirs) = tokio::io::duplex(64);
+            tokio::spawn(async move {
+                theirs.write_all(br#"{"hook_event_name":"#).await.unwrap();
+                theirs.write_all(b"\"Stop\"}\n").await.unwrap();
+            });
+            let line = read_line(&mut ours).await.unwrap();
+            assert!(line.starts_with(br#"{"hook_event_name":"Stop"}"#));
+
+            // Over the limit with no newline: refused, not cut to a parseable prefix.
+            let (mut ours, mut theirs) = tokio::io::duplex(MAX_PAYLOAD * 2);
+            theirs.write_all(&vec![b' '; MAX_PAYLOAD + 10]).await.unwrap();
+            assert!(read_line(&mut ours).await.is_none());
+
+            // Silence: the time limit ends it (READ_TIMEOUT in `handle`).
+            let (mut ours, _theirs) = tokio::io::duplex(64);
+            let silent = tokio::time::timeout(Duration::from_millis(50), read_line(&mut ours)).await;
+            assert!(silent.is_err());
+        });
+    }
+
+    #[test]
+    fn relay_connections_are_capped() {
+        let slots = connection_slots().clone();
+        let held: Vec<_> = (0..MAX_CONNECTIONS).filter_map(|_| slots.clone().try_acquire_owned().ok()).collect();
+        assert_eq!(held.len(), MAX_CONNECTIONS);
+        assert!(slots.clone().try_acquire_owned().is_err());
+        drop(held);
+        assert!(slots.try_acquire_owned().is_ok());
     }
 }

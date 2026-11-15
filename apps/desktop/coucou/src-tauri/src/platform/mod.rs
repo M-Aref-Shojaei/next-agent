@@ -37,10 +37,36 @@ pub struct LocalTime {
 }
 
 /// The user's home directory, where `.claude/settings.json` lives.
+#[cfg(not(test))]
 pub fn home_dir() -> PathBuf {
     std::env::var_os(HOME_VAR)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Next Agent: tests never touch the real home folder (security review): under `cargo test` the home folder is a temp folder of
+/// this test process (or the temp folder a test points the home variable at),
+/// so settings, the recap, Flow's history, update.json and ~/.claude never
+/// leave the temp directory, whatever a test calls.
+#[cfg(test)]
+pub fn home_dir() -> PathBuf {
+    let temp = std::env::temp_dir();
+    std::env::var_os(HOME_VAR)
+        .map(PathBuf::from)
+        .filter(|home| home.starts_with(&temp))
+        .unwrap_or_else(test_home)
+}
+
+/// This test process's own home folder.
+#[cfg(test)]
+pub fn test_home() -> PathBuf {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("next-agent-test-home-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    })
+    .clone()
 }
 
 /// How the desktop Mochi's window can be placed and clicked on this system.

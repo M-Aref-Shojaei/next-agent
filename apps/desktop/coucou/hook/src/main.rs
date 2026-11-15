@@ -60,6 +60,9 @@ const DROPPED_FIELDS: &[&str] = &["tool_response", "tool_output", "transcript_pa
 /// Longest string forwarded for any single field; the island truncates to far
 /// less than this anyway.
 const MAX_FIELD_LEN: usize = 2_000;
+/// Next Agent: relay limits (security review): the most of a hook payload read
+/// from stdin. Fields are cut far below this anyway (MAX_FIELD_LEN, MAX_DIFF_TOTAL).
+const MAX_STDIN: u64 = 32 * 1024 * 1024;
 
 mod statusline;
 
@@ -126,7 +129,8 @@ fn main() {
     }
     let args = args();
     let mut raw = Vec::new();
-    let _ = std::io::stdin().read_to_end(&mut raw);
+    // Next Agent: relay limits (security review): at most MAX_STDIN bytes are read.
+    let _ = std::io::stdin().take(MAX_STDIN).read_to_end(&mut raw);
     let env = |key: &str| std::env::var(key).ok();
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
