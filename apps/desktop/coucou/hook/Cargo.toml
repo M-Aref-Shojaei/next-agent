@@ -1,0 +1,48 @@
+# Ported from Coucou (MIT, © 2026 Louis Raillé): windows/hook/Cargo.toml @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
+[package]
+name = "coucou-hook"
+description = "Relays Claude Code hook events to Coucou over a named pipe (Windows) or a Unix socket (Linux)"
+# Next Agent: Coucou's own workspace (windows/Cargo.toml) set these three.
+version = "0.5.9"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "coucou-hook"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+# Just enough Win32 to know our own SID, to check who is serving the pipe, and
+# to notice the process that ran us going away (ToolHelp finds it).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+] }
+
+# The socket syscalls and peer credentials the Linux transport needs.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+# Next Agent: the macOS transport (src/mac.rs), with no `unsafe`: the user id
+# from rustix, the rest from std.
+[target.'cfg(target_os = "macos")'.dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "process"] }
+
+# Next Agent: upstream's Windows and Linux transports use `unsafe` (allowed
+# there per file); the macOS one does not.
+[lints.rust]
+unsafe_code = "deny"
+
+# Next Agent: upstream's code as it is. These default Clippy lints (most of
+# them newer than upstream's toolchain) flag its style, not bugs; they are
+# allowed here, by name, instead of rewriting copied code (ADR-0011).
+[lints.clippy]
+unnecessary_map_or = "allow"

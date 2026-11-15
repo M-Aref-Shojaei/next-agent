@@ -367,6 +367,47 @@ pub fn place(choice: &DisplayChoice, placement: Placement, panel: (f64, f64)) ->
     })
 }
 
+/// Put the panel at `(x, y_top)` (global top-left coordinates, points, y down
+/// from the top of the menu-bar screen) with size `(w, h)`, above the menu bar.
+/// For callers that pick the screen themselves (Coucou's `island.rs` does,
+/// from Tauri's monitors). Main thread only.
+#[must_use]
+pub fn place_frame(x: f64, y_top: f64, w: f64, h: f64) -> bool {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    // AppKit's y axis points up from the bottom of the menu-bar screen.
+    let top = NSScreen::screens(mtm)
+        .iter()
+        .next()
+        .map_or(0.0, |s| s.frame().size.height);
+    let y = top - (y_top + h);
+    let placed = with_panel(|p| {
+        p.setLevel(PANEL_LEVEL);
+        p.setFrame_display(NSRect::new(NSPoint::new(x, y), NSSize::new(w, h)), true);
+    })
+    .is_some();
+    if placed {
+        set_origin_cache(Some((x, y_top)));
+    }
+    placed
+}
+
+/// Let the panel take the keyboard (a text field in the island has focus) or
+/// give it back. Coucou's Mac app makes its panel key for its text fields.
+/// Main thread only.
+#[must_use]
+pub fn set_key(key: bool) -> bool {
+    with_panel(|p| {
+        if key {
+            p.makeKeyAndOrderFront(None);
+        } else if p.isKeyWindow() {
+            p.resignKeyWindow();
+        }
+    })
+    .is_some()
+}
+
 /// The main display is asleep: nothing to hover, the cursor poll pauses.
 /// Any thread.
 #[must_use]

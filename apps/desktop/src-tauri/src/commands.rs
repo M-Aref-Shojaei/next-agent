@@ -60,9 +60,11 @@ pub fn audit_verify(service: Svc) -> Result<AuditStatus, String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri injects the state and the channel.
 pub fn task_start(
     app: tauri::AppHandle,
     service: Svc,
+    adapter: State<crate::coucou::Adapter>,
     workspace_id: String,
     prompt: String,
     mode: String,
@@ -72,12 +74,19 @@ pub fn task_start(
     let direct: Sink = Arc::new(move |message| {
         let _ = on_event.send(message);
     });
-    // Same stream for the overlay window: broadcast alongside the Channel.
-    let handle = app.clone();
-    let broadcast: Sink = Arc::new(move |message| {
-        let _ = handle.emit("task-stream", &message);
-    });
-    let sink = crate::overlay::fanout(direct, broadcast);
+    // The same events reach Coucou's island as hook events (coucou.rs).
+    let cwd = service
+        .workspace_list()
+        .ok()
+        .and_then(|list| list.into_iter().find(|w| w.id == workspace_id))
+        .map_or_else(String::new, |w| w.path);
+    let sink = adapter.wrap(
+        crate::coucou::TaskContext {
+            prompt: prompt.clone(),
+            cwd,
+        },
+        direct,
+    );
     let title: String = prompt.chars().take(60).collect();
     let request = TaskRequest {
         workspace_id,
@@ -91,6 +100,13 @@ pub fn task_start(
         serde_json::json!({ "taskId": id, "title": title, "mode": mode }),
     );
     Ok(id)
+}
+
+/// Settings → Overlay: opens Coucou's own settings window on `page`
+/// (`general` when none).
+#[tauri::command]
+pub fn overlay_open(app: tauri::AppHandle, page: Option<String>) {
+    coucou_lib::open_window(&app, Some(page.as_deref().unwrap_or("general")));
 }
 
 #[tauri::command]

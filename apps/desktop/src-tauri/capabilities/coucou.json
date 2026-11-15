@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "coucou",
+  "description": "Coucou's windows (vendored, ADR-0011): core IPC and events only. Everything that touches the OS goes through Coucou's own commands, as in Coucou's capabilities/default.json; its autostart:default is left out because no page calls that plugin from JavaScript.",
+  "windows": ["coucou-island", "coucou-settings", "coucou-mochi", "coucou-pill"],
+  "permissions": ["core:default"]
+}

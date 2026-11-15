@@ -13,6 +13,13 @@ const RULES = [
   { test: (p) => /(^|\/)sounds\//.test(p), why: "a sounds/ folder" },
   { test: (p) => /^docs\/media\//.test(p), why: "docs/media/" },
   { test: (p) => /^design\//.test(p), why: "design/" },
+  // The vendored Tauri app (ADR-0011): code only. Its icons (src-tauri/icons/),
+  // screenshots and any picture, sound or video stay upstream.
+  {
+    test: (p) => /^apps\/desktop\/coucou\/.*\.(png|jpe?g|gif|webp|ico|icns|svg|wav|mp3|m4a|aiff?|ogg|mp4|mov|webm)$/i.test(p),
+    why: "a picture, sound or video in the vendored Coucou app",
+  },
+  { test: (p) => /^apps\/desktop\/coucou\/(screenshots|src-tauri\/icons)\//.test(p), why: "Coucou's screenshots or icons" },
 ];
 
 const failures = [];

@@ -7,6 +7,9 @@ members = [
   "crates/graph",
   "crates/macos-panel",
   "apps/desktop/src-tauri",
+  # Coucou's Tauri app and its hook relay, vendored whole (ADR-0011).
+  "apps/desktop/coucou/src-tauri",
+  "apps/desktop/coucou/hook",
 ]
 
 [workspace.package]

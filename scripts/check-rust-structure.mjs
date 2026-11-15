@@ -42,7 +42,12 @@ function checkModules(file, source) {
   }
 }
 
-const files = ["crates", "apps", "services"].flatMap((root) => walk(root));
+// Coucou's vendored code (ADR-0011) keeps upstream's syntax (raw strings,
+// `#[path]` modules) that this heuristic misreads; the compiler checks it.
+const VENDORED = "apps/desktop/coucou/";
+const files = ["crates", "apps", "services"]
+  .flatMap((root) => walk(root))
+  .filter((file) => !file.replaceAll("\\", "/").startsWith(VENDORED));
 for (const file of files) {
   const source = readFileSync(file, "utf8");
   for (const problem of scan(source)) failures.push(`${file}: ${problem}`);

@@ -23,6 +23,11 @@ pub mod placement;
 
 #[cfg(target_os = "macos")]
 mod mac;
+/// The few macOS system calls Coucou's macOS layer needs (vendored Coucou,
+/// `apps/desktop/coucou/src-tauri/src/platform/macos.rs`), kept here so no
+/// other crate needs `unsafe`.
+#[cfg(target_os = "macos")]
+pub mod sys;
 
 pub use display::{resolve, DisplayCandidate, DisplayChoice};
 pub use geometry::{IslandScreenGeometry, FALLBACK_NOTCH_WIDTH};
@@ -32,8 +37,8 @@ pub use placement::{
 
 #[cfg(target_os = "macos")]
 pub use mac::{
-    adopt, cursor_in_panel, display_asleep, order_front, place, release, screens,
-    set_ignores_mouse, Placed, ScreenEntry, PANEL_LEVEL,
+    adopt, cursor_in_panel, display_asleep, order_front, place, place_frame, release, screens,
+    set_ignores_mouse, set_key, Placed, ScreenEntry, PANEL_LEVEL,
 };
 
 /// Window level used by the overlay on macOS: three above
