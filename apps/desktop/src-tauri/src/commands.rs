@@ -73,10 +73,8 @@ pub fn task_start(
 ) -> Result<String, String> {
     // The same events reach Coucou's island as hook events (coucou.rs).
     let cwd = service
-        .workspace_list()
-        .ok()
-        .and_then(|list| list.into_iter().find(|w| w.id == workspace_id))
-        .map_or_else(String::new, |w| w.path);
+        .workspace(&workspace_id)
+        .map_or_else(|_| String::new(), |w| w.path);
     let sink = task_sink(
         &adapter,
         on_event,
