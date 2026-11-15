@@ -28,6 +28,7 @@ export { default as ShortcutField } from "./ShortcutField.svelte";
 export { default as Slider } from "./Slider.svelte";
 export { default as Spinner } from "./Spinner.svelte";
 export { default as StatusDot } from "./StatusDot.svelte";
+export { default as StatTile } from "./StatTile.svelte";
 export { default as Switch } from "./Switch.svelte";
 export { default as Table } from "./Table.svelte";
 export { default as Tabs } from "./Tabs.svelte";

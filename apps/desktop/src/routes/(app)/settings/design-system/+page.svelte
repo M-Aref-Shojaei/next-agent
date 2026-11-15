@@ -6,7 +6,7 @@
     ICON_NAMES, IconButton, Kbd, List, ListRow, ProgressBar, RadioGroup, SegmentedControl, Select,
     SettingsLayout, SettingsRow, SettingsSection, ShortcutField, Slider, Spinner, StatusDot, Switch, Tabs,
     TextArea, TextField, Tooltip,
-    Table, type TableColumn,
+    StatTile, Table, type TableColumn,
     type SettingsNavItem, type Tone,
   } from "$lib/ds/index.ts";
 
@@ -364,6 +364,12 @@
         <Banner tone="ok">Vault path saved.</Banner>
         <Banner tone="warn" title="Hooks not installed">Claude Code sessions won't reach the island.</Banner>
         <Banner tone="danger" title="Audit chain broken">Entry #41 doesn't match its hash.</Banner>
+        <div class="tiles-grid">
+          <StatTile label="Requests" value="1,536" delta="3 failed" tone="danger" />
+          <StatTile label="Input tokens" value="4.2M" hint="1.1M cached" />
+          <StatTile label="Cost (estimate)" value="$12.40" delta="+8% vs last week" tone="warn" />
+          <StatTile label="Cache hit rate" value="62%" delta="+4 points" tone="ok" hint="of input tokens" />
+        </div>
         <div class="demo">
           {#each tones as t (t)}<Badge tone={t}>{t}</Badge>{/each}
         </div>
@@ -481,6 +487,7 @@
   .stack { display: grid; gap: var(--space-3); }
   .demo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-4); align-items: start; }
+  .tiles-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-4); }
   .span2 { grid-column: 1 / -1; }
   .small { margin: 0; font-size: var(--font-size-sm); }
   code { font-size: var(--font-size-xs); color: var(--color-text-secondary); }

@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
   import {
-    Badge, Banner, ProgressBar, SegmentedControl, Select, SettingsLayout, SettingsRow, SettingsSection, Table,
+    Badge, Banner, ProgressBar, SegmentedControl, Select, SettingsLayout, SettingsRow, SettingsSection, StatTile, Table,
     type Option, type SettingsNavItem, type TableColumn,
   } from "$lib/ds/index.ts";
   import {
@@ -118,19 +118,16 @@
   {#if usage}
     <SettingsSection id="totals" title="Totals">
       <div class="cards">
-        <div><span class="muted">Requests</span><strong>{usage.totals.requests}</strong>
-          {#if usage.totals.failures}<span class="muted">{usage.totals.failures} failed</span>{/if}</div>
-        <div><span class="muted">Input tokens</span><strong>{formatTokens(usage.totals.promptTokens)}</strong>
-          <span class="muted">{formatTokens(usage.totals.cachedTokens)} cached</span></div>
-        <div><span class="muted">Output tokens</span><strong>{formatTokens(usage.totals.completionTokens)}</strong></div>
-        <div><span class="muted">Cost (estimate)</span><strong>{formatCost(usage.totals.cost)}</strong></div>
-        <div><span class="muted">Prompt cache hit rate</span><strong>{cacheHitRate(usage.totals)}%</strong>
-          <span class="muted">of input tokens</span></div>
-        <div><span class="muted">Response cache</span><strong>{usage.cacheHits} hits</strong>
-          <span class="muted">saved {formatTokens(usage.cacheSavedTokens)} tokens · {formatCost(usage.cacheSavedCost)}</span></div>
-        <div><span class="muted">Tool output saved (RTK)</span>
-          <strong>{savedPercent(usage.saverBytesBefore, usage.saverBytesAfter)}%</strong>
-          <span class="muted">{formatTokens(usage.saverBytesBefore - usage.saverBytesAfter)} bytes</span></div>
+        <StatTile label="Requests" value={usage.totals.requests}
+          delta={usage.totals.failures ? `${usage.totals.failures} failed` : undefined} tone={usage.totals.failures ? "danger" : "neutral"} />
+        <StatTile label="Input tokens" value={formatTokens(usage.totals.promptTokens)} hint="{formatTokens(usage.totals.cachedTokens)} cached" />
+        <StatTile label="Output tokens" value={formatTokens(usage.totals.completionTokens)} />
+        <StatTile label="Cost (estimate)" value={formatCost(usage.totals.cost)} />
+        <StatTile label="Prompt cache hit rate" value="{cacheHitRate(usage.totals)}%" hint="of input tokens" />
+        <StatTile label="Response cache" value="{usage.cacheHits} hits"
+          hint="saved {formatTokens(usage.cacheSavedTokens)} tokens · {formatCost(usage.cacheSavedCost)}" />
+        <StatTile label="Tool output saved (RTK)" value="{savedPercent(usage.saverBytesBefore, usage.saverBytesAfter)}%"
+          hint="{formatTokens(usage.saverBytesBefore - usage.saverBytesAfter)} bytes" />
       </div>
     </SettingsSection>
 
@@ -210,8 +207,6 @@
   .muted { color: var(--color-text-tertiary); }
   code { font-family: var(--font-mono); font-size: var(--font-size-xs); }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-4); padding: var(--space-4); }
-  .cards div { display: grid; gap: var(--space-0-5); align-content: start; font-size: var(--font-size-sm); }
-  .cards strong { font-size: var(--font-size-xl); }
   .meter { width: 200px; max-width: 100%; }
   .chart-box { padding: var(--space-4); }
   .chart { width: 100%; height: 140px; }
