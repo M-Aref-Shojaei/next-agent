@@ -6,7 +6,7 @@ use crate::review::ReviewOutcome;
 use crate::service::{
     AppService, AuditStatus, HealthDto, RuleDto, Sink, TaskRequest, WorkspaceDto,
 };
-use crate::wire::StreamMessage;
+use crate::wire::{StreamMessage, EVENT_TASK_STARTED};
 use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::Emitter;
@@ -111,7 +111,7 @@ pub(crate) fn task_sink(
 /// Tell every window a task started (sidebar, overlay).
 pub(crate) fn announce_task(app: &tauri::AppHandle, id: &str, title: &str, mode: &str) {
     let _ = app.emit(
-        "task-started",
+        EVENT_TASK_STARTED,
         serde_json::json!({ "taskId": id, "title": title, "mode": mode }),
     );
 }

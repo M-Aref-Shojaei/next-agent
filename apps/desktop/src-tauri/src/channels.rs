@@ -11,7 +11,7 @@
 
 use crate::service::{AppService, Sink, TaskRequest};
 use crate::tasks::ChannelLaunch;
-use crate::wire::StreamMessage;
+use crate::wire::{StreamMessage, EVENT_TASK_STARTED, EVENT_TASK_STREAM};
 use next_agent_channels::hub::{Delivery, HubEvent};
 use next_agent_channels::secret::{read_token, token_entry};
 use next_agent_channels::telegram::{self, api::DEFAULT_BASE_URL, TelegramChannel};
@@ -567,7 +567,7 @@ impl TaskRunner for DesktopRunner {
                 .take(80)
                 .collect();
             emit(
-                "task-started",
+                EVENT_TASK_STARTED,
                 json!({ "taskId": task_id, "title": title, "mode": job.mode.as_str(), "origin": job.origin }),
             );
             let origin_notice = StreamMessage::Notice {
@@ -581,7 +581,7 @@ impl TaskRunner for DesktopRunner {
                 ),
             };
             emit(
-                "task-stream",
+                EVENT_TASK_STREAM,
                 serde_json::to_value(&origin_notice).unwrap_or_default(),
             );
 
@@ -595,7 +595,7 @@ impl TaskRunner for DesktopRunner {
                 tokio::select! {
                     message = rx.recv() => {
                         let Some(message) = message else { break };
-                        emit("task-stream", serde_json::to_value(&message).unwrap_or_default());
+                        emit(EVENT_TASK_STREAM, serde_json::to_value(&message).unwrap_or_default());
                         observe(&message, &progress, &mut outcome, &mut last_message);
                     }
                     () = stop.stopped(), if !stopped => {
@@ -914,13 +914,13 @@ mod tests {
         let events = fx.events.lock().expect("lock").clone();
         let started = events
             .iter()
-            .find(|(name, _)| name == "task-started")
+            .find(|(name, _)| name == EVENT_TASK_STARTED)
             .expect("task-started");
         assert_eq!(started.1["origin"], "Telegram · @alice");
         assert!(started.1["title"]
             .as_str()
             .is_some_and(|t| t.contains("list the files")));
-        assert!(events.iter().any(|(name, v)| name == "task-stream"
+        assert!(events.iter().any(|(name, v)| name == EVENT_TASK_STREAM
             && v["type"] == "notice"
             && v["text"]
                 .as_str()
@@ -930,7 +930,7 @@ mod tests {
         let denied = events
             .iter()
             .filter(|(name, v)| {
-                name == "task-stream"
+                name == EVENT_TASK_STREAM
                     && v["event"]["kind"] == "permission_decided"
                     && v["event"]["data"]["decision"] == "deny"
             })

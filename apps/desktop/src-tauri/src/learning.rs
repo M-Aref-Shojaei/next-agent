@@ -14,7 +14,7 @@
 
 use crate::service::{AppService, Sink, TaskRequest};
 use crate::tasks::{context_window, local_tools, Plan, TaskExtras};
-use crate::wire::StreamMessage;
+use crate::wire::{StreamMessage, EVENT_TASK_STARTED, EVENT_TASK_STREAM};
 use next_agent_core::learning::cron::{self, DueRun, JobSpec};
 use next_agent_core::learning::memory::{self, MemoryStore, Target};
 use next_agent_core::learning::review::{self, BudgetClient, ReviewApprover};
@@ -835,12 +835,12 @@ fn cron_sink(app: &AppHandle, job: &CronJobRow) -> Sink {
         if !announced.swap(true, std::sync::atomic::Ordering::SeqCst) {
             if let Some(task_id) = task_of(&message) {
                 let _ = announce.emit(
-                    "task-started",
+                    EVENT_TASK_STARTED,
                     serde_json::json!({"taskId": task_id, "title": title, "mode": mode, "source": "cron"}),
                 );
             }
         }
-        let _ = handle.emit("task-stream", &message);
+        let _ = handle.emit(EVENT_TASK_STREAM, &message);
     })
 }
 

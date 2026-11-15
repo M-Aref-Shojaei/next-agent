@@ -5,6 +5,11 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Tauri event: a task was started (payload: the task's announcement).
+pub const EVENT_TASK_STARTED: &str = "task-started";
+/// Tauri event: a `StreamMessage` for a running task.
+pub const EVENT_TASK_STREAM: &str = "task-stream";
+
 /// Message pushed over the task `Channel`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
