@@ -27,7 +27,9 @@ Upstream draws Mochi in code on a Canvas 2D (no image files). Mochi's look is th
 
 The outfit choice, the seasonal "auto" pick and the wardrobe view still work. Only the costume drawing is missing.
 
-## 2. Icons → placeholder: Next Agent's own icon
+## 2. Icons → done: Next Agent's logo (2026-11-15)
+
+The owner supplied the Next Agent logo (`apps/desktop/src-tauri/icons/source/logo.png`, made transparent from `logo-original.png`); `pnpm tauri icon` generated every size below, and the tray uses it through `default_window_icon()`. **Open:** a monochrome macOS menu-bar *template* icon would match the system better than the colour logo.
 
 | Upstream file (not copied) | Size / format | Used for | Now |
 |---|---|---|---|

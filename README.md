@@ -1,3 +1,5 @@
+<p align="center"><img src="apps/desktop/src-tauri/icons/128x128@2x.png" width="128" alt="Next Agent logo"></p>
+
 # Next Agent
 
 Local-first, cross-platform AI workstation: coding agents + Markdown knowledge vault + auditable permission engine, built on Tauri 2.
