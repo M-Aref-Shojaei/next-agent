@@ -167,6 +167,7 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 |---|---|---|
 | **Card** | `title`, `description`, `variant` default\|hero\|subtle, `padding`, `level`, snippets `media`, `actions`, `children` | Grouping content. `hero` is for about and intro cards, with `<BrandMark>` as `media`. |
 | **List / ListRow** | List: `label`, `bordered`. ListRow: `title`, `description`, `meta`, `selected`, `disabled`, `onclick` or `href`, snippets `leading`, `actions`, `children` | Lists of things with per-item actions (bots, rules, providers). The row body can be one button or link; actions stay separate buttons. |
+| **Table** | `columns: {key,label,align?,sortable?,value?,sortValue?,nowrap?}[]`, `rows`, `rowKey`, `label` (required), bindable `sortKey` and `sortDir`, `empty`, `emptyDescription`, `onsort`, snippet `cell(row, column)` | Data that is clearly tabular (usage by model, commits). Sortable columns get a header button and `aria-sort`; `align="end"` right-aligns numbers in tabular figures; `sortValue` sorts by a raw value behind a formatted one; empty values sort last. With no rows it shows an `EmptyState`. At narrow widths it scrolls sideways inside a focusable region. For lists of things with actions, use ListRow. |
 | **Tabs** | `tabs: {id,label,disabled?,badge?}[]`, bindable `value`, `label`, snippet `children(activeId)` | Switching views of the same object. Arrow keys, Home and End move between tabs. Use SettingsLayout's nav for page-level navigation instead. |
 | **Dialog** | bindable `open`, `title`, `description`, `confirmLabel`, `cancelLabel`, `tone` default\|danger, `size` md\|lg (lg: a diff or a table), `busy`, `hideConfirm`, `onconfirm` (may be async), `oncancel`, snippet `children` | Confirming a consequential action. It uses native `<dialog>`, which traps focus and closes on Esc. `danger` focuses Cancel first. |
 | **Tooltip** | `text`, `placement` top\|bottom, snippet `children({describedby})` | Explaining an icon. Never hide required information in a tooltip. |
@@ -175,7 +176,8 @@ All components are in `$lib/ds/index.ts`, written in Svelte 5 runes with TypeScr
 Pure helpers (tested in `apps/desktop/tests/ds.test.ts`):
 
 - `recordPress`, `pressedKey`, `formatKeys`, `shortcutParts` and `shortcutLabel` (`shortcut.ts`);
-- `rovingIndex` (`keyboard.ts`).
+- `rovingIndex` (`keyboard.ts`);
+- `sortRows`, `compareValues` and `nextSort` (`table.ts`).
 
 ## Do and don't
 

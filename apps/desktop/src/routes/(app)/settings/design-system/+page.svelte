@@ -6,6 +6,7 @@
     ICON_NAMES, IconButton, Kbd, List, ListRow, ProgressBar, RadioGroup, SegmentedControl, Select,
     SettingsLayout, SettingsRow, SettingsSection, ShortcutField, Slider, Spinner, StatusDot, Switch, Tabs,
     TextArea, TextField, Tooltip,
+    Table, type TableColumn,
     type SettingsNavItem, type Tone,
   } from "$lib/ds/index.ts";
 
@@ -76,6 +77,19 @@
   let dangerOpen = $state(false);
   let largeOpen = $state(false);
   let progress = $state(42);
+  const tableRows = [
+    { model: "claude-sonnet", requests: 128, cost: 4.21, seen: "2026-07-02" },
+    { model: "gpt-mini", requests: 1042, cost: 1.07, seen: "2026-07-03" },
+    { model: "local/qwen", requests: 56, cost: 0, seen: "2026-06-28" },
+    { model: "claude-haiku", requests: 310, cost: 0.62, seen: "2026-07-01" },
+  ];
+  const tableColumns: TableColumn<(typeof tableRows)[number]>[] = [
+    { key: "model", label: "Model", sortable: true, value: (r) => r.model },
+    { key: "requests", label: "Requests", align: "end", sortable: true, value: (r) => r.requests },
+    { key: "cost", label: "Cost", align: "end", sortable: true, value: (r) => `$${r.cost.toFixed(2)}`, sortValue: (r) => r.cost },
+    { key: "seen", label: "Last used", nowrap: true, value: (r) => r.seen },
+    { key: "note", label: "A long column that forces the table to scroll sideways on a narrow screen", value: () => "Scrolls inside its box" },
+  ];
 
   function fakeLoad() {
     loading = true;
@@ -408,6 +422,12 @@
             {#snippet children()}<Badge size="sm" tone="warn">paused</Badge>{/snippet}
           </ListRow>
         </List>
+        <Card padding="none">
+          <Table label="Models by usage" columns={tableColumns} rows={tableRows} rowKey={(r) => r.model} sortKey="requests" sortDir="desc" />
+        </Card>
+        <Card padding="none">
+          <Table label="Empty example" columns={tableColumns} rows={[]} empty="No requests yet." emptyDescription="Rows appear here after the first request." />
+        </Card>
         <Card padding="none">
           <EmptyState title="No permission rules" description="&quot;Always for this workspace&quot; approvals appear here.">
             {#snippet icon()}<Icon name="info" size={20} />{/snippet}

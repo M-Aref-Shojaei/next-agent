@@ -29,11 +29,13 @@ export { default as Slider } from "./Slider.svelte";
 export { default as Spinner } from "./Spinner.svelte";
 export { default as StatusDot } from "./StatusDot.svelte";
 export { default as Switch } from "./Switch.svelte";
+export { default as Table } from "./Table.svelte";
 export { default as Tabs } from "./Tabs.svelte";
 export { default as TextArea } from "./TextArea.svelte";
 export { default as TextField } from "./TextField.svelte";
 export { default as Tooltip } from "./Tooltip.svelte";
 
+export { compareValues, nextSort, sortRows, type SortDir, type TableColumn } from "./table.ts";
 export { rovingIndex, type Orientation } from "./keyboard.ts";
 export {
   currentPlatform,
