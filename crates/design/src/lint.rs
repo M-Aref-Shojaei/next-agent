@@ -9,6 +9,9 @@
 use crate::css;
 use serde::{Deserialize, Serialize};
 
+/// How many off-palette colours are named in the `off-palette` message.
+const MAX_OFF_PALETTE_LISTED: usize = 6;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -44,7 +47,7 @@ fn root_blocks(html: &str) -> Vec<(usize, usize)> {
         let open = start + open;
         let close = html[open..].find('}').map_or(html.len(), |c| open + c);
         out.push((start, close));
-        from = close.max(start + 5);
+        from = close.max(start + ":root".len());
     }
     out
 }
@@ -188,7 +191,7 @@ fn raw_hex_findings(html: &str, token_colors: &[String]) -> Vec<Finding> {
         ));
     }
     if !off.is_empty() {
-        off.truncate(6);
+        off.truncate(MAX_OFF_PALETTE_LISTED);
         out.push(finding(
             "off-palette",
             Severity::P1,
