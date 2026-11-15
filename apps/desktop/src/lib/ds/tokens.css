@@ -7,7 +7,7 @@
  *
  * Accent: interactive blue-indigo. Brand: the Next Agent logo's blue → cyan →
  * teal with violet/purple (static/brand/logo.png). The island's resting orb
- * keeps its own red gradient (--orb-*), the owner's choice for the notch.
+ * (--orb-*) uses the same logo colours.
  */
 
 /* ---------- Theme-independent scales ---------- */
@@ -190,14 +190,21 @@
     var(--color-brand-purple) 100%
   );
 
-  /* The island orb (IslandMascot.svelte, tone "rest"): the little red gradient
-     circle beside the notch. */
+  /* The island orb (IslandMascot.svelte, tone "rest"): the little gradient
+     circle beside the notch, in the logo's colours (owner, 2026-11-15). */
   --brand-sheen: radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.55), transparent 42%);
-  --color-orb: #ff5f6d;
-  --color-orb-2: #c0263f;
+  --color-orb: var(--color-brand-blue);
+  --color-orb-2: var(--color-brand-teal);
   --orb-gradient:
     var(--brand-sheen),
-    conic-gradient(from 210deg, var(--color-orb), var(--color-orb-2), var(--color-orb));
+    conic-gradient(
+      from 210deg,
+      var(--color-brand-blue),
+      var(--color-brand-cyan),
+      var(--color-brand-teal),
+      var(--color-brand-purple),
+      var(--color-brand-blue)
+    );
 
   --shadow-sm: 0 1px 2px rgb(16 18 24 / 0.06);
   --shadow-md: 0 2px 6px rgb(16 18 24 / 0.08), 0 1px 2px rgb(16 18 24 / 0.06);

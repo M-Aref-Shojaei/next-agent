@@ -47,7 +47,7 @@
   .tone-working { --tone: var(--color-info); --tone-2: var(--color-accent); animation: turn 2.4s linear infinite; }
   .tone-approval { --tone: var(--color-warn); --tone-2: var(--color-danger); animation: breathe 1.6s ease-in-out infinite; }
   .tone-error { --tone: var(--color-danger); --tone-2: var(--color-orb-2); }
-  /* At rest beside the notch: the little red gradient orb. */
+  /* At rest beside the notch: the little gradient orb in the logo colours. */
   .tone-rest { --tone: var(--color-orb); --glow: 4; background: var(--orb-gradient); }
   .tone-finished { --tone: var(--color-ok); --tone-2: var(--color-info); }
   @keyframes turn { to { transform: rotate(360deg); } }

@@ -59,7 +59,7 @@ In CSS, use tokens only:
 3. **Status by colour plus text or icon.** Never colour alone, for colour-blind users and screen readers.
 4. **Accessible by default.** Every control has a name, a role, keyboard support and a visible focus ring (`--focus-ring`). Motion respects `prefers-reduced-motion`.
 5. **Native first.** System fonts (the CSP forbids web fonts), native `<dialog>`, `<select>`, radio and checkbox inputs where they behave well.
-6. **Accent is blue; brand is the logo.** The interactive accent is blue-indigo. The brand is the owner's Next Agent logo (blue → cyan → teal, with violet and purple): `--color-brand-*`, `--brand-gradient` and `<BrandMark>`. The island's resting orb keeps its own red (`--orb-*`); red elsewhere means danger.
+6. **Accent is blue; brand is the logo.** The interactive accent is blue-indigo. The brand is the owner's Next Agent logo (blue → cyan → teal, with violet and purple): `--color-brand-*`, `--brand-gradient` and `<BrandMark>`. The island's resting orb (`--orb-*`) uses the logo colours too; red means danger.
 
 ## Themes
 
@@ -83,7 +83,7 @@ In CSS, use tokens only:
 | Fill | `fill-1` … `fill-5` | Translucent washes over any surface: hover, tracks, hairlines, scrollbar thumbs. About 4 / 7 / 10 / 16 / 30 % of the text colour (dark ink in light, white in dark). |
 | Island | `island` | The fixed black of Coucou's island: it joins the hardware notch, so it is the same in every theme. Also the ink of the island's shadows and masks. |
 | Brand | `brand-blue` `#136AEF`, `brand-cyan` `#0B9FE1`, `brand-teal` `#11CAB2`, `brand-violet` `#5548EB`, `brand-purple` `#8048D6` (measured from the logo); `brand` (= blue), `brand-2` (= teal); `--brand-gradient` | Logo colours: brand surfaces and illustrations, never controls. |
-| Island orb | `orb`, `orb-2`, `--orb-gradient`, `--brand-sheen` | The red resting orb beside the notch (`IslandMascot`) and the hub sidebar orb. `--brand-sheen` is the white highlight; `IslandMascot` reuses it for its other tones. |
+| Island orb | `orb`, `orb-2`, `--orb-gradient`, `--brand-sheen` | The resting orb beside the notch, in the logo colours, (`IslandMascot`) and the hub sidebar orb. `--brand-sheen` is the white highlight; `IslandMascot` reuses it for its other tones. |
 
 Derived: `--focus-ring` (a two-layer box-shadow) and `--focus-ring-inset`.
 
