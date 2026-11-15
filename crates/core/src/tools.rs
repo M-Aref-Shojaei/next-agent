@@ -42,6 +42,24 @@ pub enum ToolRequest {
     AskUser {
         question: String,
     },
+    /// Memory, skills, session-search and scheduling tools
+    /// ([`crate::learning`], ported from Hermes Agent). Policy judges
+    /// [`LearnRequest::target`] as a write when the tool mutates, else as a
+    /// read.
+    Learn(LearnRequest),
+}
+
+/// One call of a learning tool. The arguments stay JSON: the executor
+/// ([`crate::learning::LearningTools`]) validates them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LearnRequest {
+    /// Agent-facing tool name (`memory`, `skill_manage`, `skills_list`, …).
+    pub tool: &'static str,
+    pub args: serde_json::Value,
+    /// What the permission engine judges: the memory file or skills root a
+    /// write lands in, or the workspace's `.next-agent` state for reads.
+    pub target: PathBuf,
+    pub mutating: bool,
 }
 
 impl ToolRequest {
@@ -56,6 +74,13 @@ impl ToolRequest {
             Self::Exec { .. } => "run_command",
             Self::Network { .. } => "http_fetch",
             Self::AskUser { .. } => "ask_user",
+            Self::Learn(learn) => {
+                if learn.mutating {
+                    "write_file"
+                } else {
+                    "read_file"
+                }
+            }
         }
     }
 
@@ -67,6 +92,7 @@ impl ToolRequest {
         match self {
             Self::ApplyPatch { .. } => "apply_patch",
             Self::Edit { .. } => "edit",
+            Self::Learn(learn) => learn.tool,
             other => other.kind(),
         }
     }
@@ -77,7 +103,7 @@ impl ToolRequest {
         matches!(
             self,
             Self::Write { .. } | Self::ApplyPatch { .. } | Self::Edit { .. } | Self::Exec { .. }
-        )
+        ) || matches!(self, Self::Learn(learn) if learn.mutating)
     }
 
     /// Arguments as JSON, for `tool_requested` events. File contents and
@@ -104,6 +130,7 @@ impl ToolRequest {
             Self::Exec { command, cwd } => json!({ "command": command, "cwd": cwd }),
             Self::Network { url } => json!({ "url": url }),
             Self::AskUser { question } => json!({ "question": question }),
+            Self::Learn(learn) => learn.args.clone(),
         }
     }
 
@@ -117,7 +144,8 @@ impl ToolRequest {
             | Self::Write { path, .. }
             | Self::ApplyPatch { path, .. }
             | Self::Edit { path, .. }
-            | Self::Exec { cwd: path, .. } => Some(path),
+            | Self::Exec { cwd: path, .. }
+            | Self::Learn(LearnRequest { target: path, .. }) => Some(path),
             Self::Network { .. } | Self::AskUser { .. } => None,
         }
     }

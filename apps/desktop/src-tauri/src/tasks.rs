@@ -26,7 +26,7 @@ use std::time::Duration;
 
 /// Smallest known context window across the chat role's targets (0 = unknown,
 /// so compaction runs only on a provider overflow).
-fn context_window(gateway: &next_agent_core::router::Gateway) -> u64 {
+pub(crate) fn context_window(gateway: &next_agent_core::router::Gateway) -> u64 {
     let config = gateway.config();
     let Ok(plan) = config.resolve("", "chat") else {
         return 0;
@@ -122,19 +122,39 @@ impl ToolExecutor for Recording {
     }
 }
 
-struct Plan {
-    spec: TaskSpec,
-    mode: Mode,
-    workspace_id: String,
+/// How a task was started, beyond [`TaskRequest`]: cron runs and the
+/// background review use these (`Default` = an ordinary task from the UI).
+#[derive(Debug, Clone, Default)]
+pub struct TaskExtras {
+    /// `task` (default), `cron` or `review`.
+    pub source: Option<&'static str>,
+    /// Skills whose SKILL.md goes in front of the prompt (cron jobs).
+    pub skills: Vec<String>,
+    /// Gateway role for the model (`chat` when unset).
+    pub model_role: Option<String>,
+    /// Workspace-relative folder the agent starts in.
+    pub workdir: Option<String>,
+}
+
+pub(crate) struct Plan {
+    pub(crate) spec: TaskSpec,
+    pub(crate) mode: Mode,
+    pub(crate) workspace_id: String,
     workspace_name: String,
     /// Sandbox root: the worktree in auto mode, else the workspace.
-    root: PathBuf,
+    pub(crate) root: PathBuf,
     /// The workspace itself (agent profiles live in its `.next-agent/agents`).
-    workspace_root: PathBuf,
+    pub(crate) workspace_root: PathBuf,
     /// Agent profile picked in the UI (`None` = default for the mode).
     profile: Option<String>,
     worktree: Option<TaskWorktree>,
     notices: Vec<String>,
+    // Memory and learning (crate::learning).
+    pub(crate) extras: TaskExtras,
+    /// The real agent ran (not the scripted demo).
+    pub(crate) builtin: bool,
+    /// Where relative paths resolve: the sandbox root, or `workdir` in it.
+    start_dir: PathBuf,
 }
 
 impl AppService {
@@ -148,7 +168,20 @@ impl AppService {
         request: &TaskRequest,
         sink: Sink,
     ) -> Result<String, String> {
-        let plan = self.plan(request)?;
+        self.task_start_with(request, sink, TaskExtras::default())
+    }
+
+    /// [`AppService::task_start`] for cron runs and other non-UI starts.
+    ///
+    /// # Errors
+    /// See [`AppService::task_start`]; also a bad `workdir`.
+    pub fn task_start_with(
+        self: &Arc<Self>,
+        request: &TaskRequest,
+        sink: Sink,
+        extras: TaskExtras,
+    ) -> Result<String, String> {
+        let mut plan = self.plan(request, extras)?;
         let task_id = plan.spec.id.as_str().to_string();
 
         if let Some(wt) = &plan.worktree {
@@ -158,7 +191,9 @@ impl AppService {
                 root: wt.root.display().to_string(),
             });
         }
-        let (executor, agent_notice) = self.choose_executor(&plan, &task_id);
+        let learning = self.learning_for(&plan);
+        let (executor, agent_notice, builtin) = self.choose_executor(&plan, &task_id, &learning);
+        plan.builtin = builtin;
         for text in plan.notices.iter().chain(agent_notice.iter()) {
             sink(StreamMessage::Notice {
                 task_id: task_id.clone(),
@@ -169,7 +204,10 @@ impl AppService {
 
         let calls: Calls = Arc::default();
         let tools = Recording {
-            inner: Box::new(local_tools()),
+            inner: Box::new(next_agent_core::learning::LearningTools::new(
+                Box::new(local_tools()),
+                learning,
+            )),
             calls: Arc::clone(&calls),
         };
         let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -190,7 +228,10 @@ impl AppService {
                 executor,
                 tools: Box::new(tools),
             },
-            TaskOptions { snapshots },
+            TaskOptions {
+                snapshots,
+                ..TaskOptions::default()
+            },
         );
         self.running()?.insert(task_id.clone(), handle.control());
 
@@ -217,7 +258,8 @@ impl AppService {
                     running.remove(&id);
                 }
                 let calls = calls.lock().map_or_else(|_| Vec::new(), |c| c.clone());
-                service.finish(&plan, events, calls, &sink);
+                service.finish(&plan, events.clone(), calls, &sink);
+                service.after_task(&plan, &events, &sink);
             })
             .map_err(|e| format!("could not start task thread: {e}"))?;
         self.joins()?.insert(task_id.clone(), join);
@@ -319,7 +361,7 @@ impl AppService {
             .unwrap_or_else(|| format!("task {task_id}"))
     }
 
-    fn plan(&self, request: &TaskRequest) -> Result<Plan, String> {
+    fn plan(&self, request: &TaskRequest, extras: TaskExtras) -> Result<Plan, String> {
         let mut mode = parse_mode(&request.mode)?;
         let workspace = self.workspace(&request.workspace_id)?;
         let n = self.counter().fetch_add(1, Ordering::SeqCst);
@@ -328,6 +370,8 @@ impl AppService {
             .map_or(0, |d| d.as_nanos());
         let id = TaskId::from_seed(&format!("{}:{nanos}:{n}", workspace.id));
         let workspace_root = PathBuf::from(&workspace.path);
+        // Check `workdir` before anything is created for the task.
+        start_dir(&workspace_root, extras.workdir.as_deref())?;
 
         let mut notices = Vec::new();
         let mut worktree = None;
@@ -352,11 +396,24 @@ impl AppService {
         self.store()?
             .create_task(id.as_str(), &workspace.id, &title, &request.prompt, name)
             .map_err(|e| e.to_string())?;
-        let model = self.chat_target();
+        let model = match &extras.model_role {
+            Some(role) => self
+                .gateway(role)
+                .ok()
+                .and_then(|g| g.config().role_target(role))
+                .unwrap_or_else(|| self.chat_target()),
+            None => self.chat_target(),
+        };
+        let prompt = self.with_skills(&workspace_root, &extras.skills, &request.prompt);
+        // An untracked folder may be missing from the worktree: start at its root.
+        let start_dir = start_dir(&root, extras.workdir.as_deref()).unwrap_or_else(|why| {
+            notices.push(format!("{why}; starting at the workspace root."));
+            root.clone()
+        });
         Ok(Plan {
             spec: TaskSpec {
                 id,
-                prompt: request.prompt.clone(),
+                prompt,
                 mode: name,
                 model,
             },
@@ -368,6 +425,9 @@ impl AppService {
             profile: request.profile.clone().filter(|p| !p.trim().is_empty()),
             worktree,
             notices,
+            extras,
+            builtin: false,
+            start_dir,
         })
     }
 
@@ -379,14 +439,20 @@ impl AppService {
         self: &Arc<Self>,
         plan: &Plan,
         task_id: &str,
-    ) -> (Box<dyn AgentExecutor + Send>, Option<String>) {
-        let root = &plan.root;
-        let gateway = match self.chat_gateway() {
+        learning: &next_agent_core::learning::Learning,
+    ) -> (Box<dyn AgentExecutor + Send>, Option<String>, bool) {
+        let root = &plan.start_dir;
+        let gateway = match &plan.extras.model_role {
+            Some(role) => self.gateway(role),
+            None => self.chat_gateway(),
+        };
+        let gateway = match gateway {
             Ok(gateway) => gateway,
             Err(why) => {
                 return (
                     Box::new(MockExecutor::new(demo_script(root))),
                     Some(format!("Running the scripted demo agent because {why}.")),
+                    false,
                 )
             }
         };
@@ -402,7 +468,11 @@ impl AppService {
         let mut executor = BuiltinExecutor::new(Arc::new(gateway.with_session(task_id)), root)
             .with_profiles(profiles.clone())
             .with_context_window(window)
-            .with_role_resolver(self.role_resolver(task_id));
+            .with_role_resolver(self.role_resolver(task_id))
+            .with_learning(learning.clone());
+        if let Some(recorder) = self.session_recorder(plan) {
+            executor = executor.with_transcript(Box::new(recorder));
+        }
         // Compaction summaries use the `summary` role (falls back to chat).
         if let Ok(summary) = self.gateway("summary") {
             executor = executor.with_summary_client(Arc::new(summary.with_session(task_id)), None);
@@ -419,7 +489,7 @@ impl AppService {
             }
         }
         let notice = (!notices.is_empty()).then(|| notices.join(" "));
-        (Box::new(executor), notice)
+        (Box::new(executor), notice, true)
     }
 
     /// Maps a profile's `model_role` to that role's gateway and target.
@@ -604,7 +674,27 @@ impl AppService {
     }
 }
 
-fn local_tools() -> LocalTools {
+/// `workdir` inside the sandbox root (must exist; no escaping it).
+fn start_dir(root: &Path, workdir: Option<&str>) -> Result<PathBuf, String> {
+    let Some(dir) = workdir.filter(|d| !d.trim().is_empty()) else {
+        return Ok(root.to_path_buf());
+    };
+    let root_real = root
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve {}: {e}", root.display()))?;
+    let real = root
+        .join(dir)
+        .canonicalize()
+        .map_err(|_| format!("workdir `{dir}` does not exist in the workspace"))?;
+    if !real.starts_with(&root_real) || !real.is_dir() {
+        return Err(format!(
+            "workdir `{dir}` must be a folder inside the workspace"
+        ));
+    }
+    Ok(real)
+}
+
+pub(crate) fn local_tools() -> LocalTools {
     match ReqwestFetcher::new(Duration::from_secs(20), 2 * 1024 * 1024) {
         Ok(fetcher) => LocalTools::new().with_http(Arc::new(fetcher)),
         Err(_) => LocalTools::new(),

@@ -468,6 +468,10 @@ impl ToolExecutor for LocalTools {
                 call_id,
                 "ask_user is not available in M1; ask in your final message instead",
             ),
+            ToolRequest::Learn(learn) => ToolResult::error(
+                call_id,
+                format!("tool `{}` needs the learning tools executor", learn.tool),
+            ),
         }
     }
 }

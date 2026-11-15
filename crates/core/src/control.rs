@@ -181,6 +181,9 @@ pub struct TaskOptions {
     /// Capture the work tree before each mutating step (per-step undo, see
     /// [`crate::snapshot`]).
     pub snapshots: Option<Box<dyn StepSnapshots + Send>>,
+    /// Answers `Ask` decisions instead of the approval card (e.g. the
+    /// background review's [`crate::learning::review::ReviewApprover`]).
+    pub approver: Option<Box<dyn Approver + Send>>,
 }
 
 /// A running task. Dropping the handle does not cancel the task.
@@ -291,10 +294,13 @@ fn run_launch(
     let events = Emitter::new(spec.id.clone())
         .with_sink(StoreSink::new(sink_store))
         .with_sink(forward);
-    let mut broker = SqliteBroker::new(&store, mode, context)
+    let broker = SqliteBroker::new(&store, mode, context)
         .for_task(task_id.clone())
-        .with_boxed_executor(tools)
-        .with_approver(ChannelApprover::new(Arc::clone(control), events.clone()));
+        .with_boxed_executor(tools);
+    let mut broker = match options.approver {
+        Some(approver) => broker.with_approver(approver),
+        None => broker.with_approver(ChannelApprover::new(Arc::clone(control), events.clone())),
+    };
     if let Some(snapshots) = options.snapshots {
         broker = broker.with_snapshots(snapshots);
     }

@@ -4,6 +4,7 @@ pub mod boards;
 pub mod commands;
 pub mod coucou;
 pub mod gateway;
+pub mod learning;
 pub mod notes;
 pub mod review;
 pub mod service;
@@ -50,6 +51,7 @@ pub fn run() {
             ));
             // Settings → Upstreams: a daily, report-only look at upstream GitHub repos.
             app.manage(upstreams::start(app.handle(), &dir));
+            learning::start_scheduler(app.handle().clone(), Arc::clone(&service));
             tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
             coucou_lib::setup(app, boot)?;
             Ok(())
@@ -115,6 +117,21 @@ pub fn run() {
             commands::board_delete,
             commands::board_sketch,
             commands::board_export,
+            learning::learning_settings_get,
+            learning::learning_settings_set,
+            learning::memory_get,
+            learning::memory_save,
+            learning::skills_overview,
+            learning::skill_read,
+            learning::skill_pin,
+            learning::skill_archive,
+            learning::skill_restore,
+            learning::curator_run,
+            learning::cron_jobs,
+            learning::cron_save,
+            learning::cron_pause,
+            learning::cron_delete,
+            learning::cron_run_now,
         ]))
         .build(tauri::generate_context!())
         .expect("error while running Next Agent")

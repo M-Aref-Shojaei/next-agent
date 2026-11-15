@@ -10,6 +10,7 @@ pub mod control;
 pub mod edit_match;
 pub mod events;
 pub mod hash;
+pub mod learning;
 pub mod llm;
 pub mod local_tools;
 pub mod profiles;
