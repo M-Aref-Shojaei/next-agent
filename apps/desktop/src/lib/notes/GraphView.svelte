@@ -5,6 +5,7 @@
   import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
+  import { Banner, Button, Checkbox, TextField } from "$lib/ds/index.ts";
   import type { GraphData, GraphNode } from "./types.ts";
   import { useNotes } from "./ctx.ts";
 
@@ -32,16 +33,24 @@
   let view = { k: 1, x: 0, y: 0 };
   let drag: { node: N | null; moved: boolean; sx: number; sy: number; vx: number; vy: number } | null = null;
   let raf = 0;
-  let palette = { text: "#000", muted: "#888", accent: "#36f", border: "#ccc", warn: "#c80" };
+  let palette = { text: "", muted: "", accent: "", warn: "", face: "", pt: 11 };
 
   const radius = (n: N) => 4 + Math.min(10, Math.sqrt(n.degree) * 2.2);
   const lower = (s: string) => s.toLowerCase();
 
+  // The canvas cannot use var(); read the design tokens from the document and re-read them
+  // whenever the theme changes.
   function readPalette() {
-    if (!canvas) return;
-    const css = getComputedStyle(canvas);
-    const get = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
-    palette = { text: get("--text", "#000"), muted: get("--muted", "#888"), accent: get("--accent", "#36f"), border: get("--border", "#ccc"), warn: get("--warn", "#c80") };
+    const css = getComputedStyle(document.documentElement);
+    const get = (name: string) => css.getPropertyValue(name).trim();
+    palette = {
+      text: get("--color-text"),
+      muted: get("--color-text-secondary"),
+      accent: get("--color-accent"),
+      warn: get("--color-warn"),
+      face: get("--font-sans"),
+      pt: parseFloat(get("--font-size-xs")),
+    };
   }
 
   function rebuild() {
@@ -119,7 +128,7 @@
     const scale = Math.max(view.k, 0.6);
     g.fillStyle = palette.text;
     g.textAlign = "center";
-    g.font = `${11 / scale}px -apple-system, sans-serif`;
+    g.font = `${palette.pt / scale}px ${palette.face}`;
     for (const n of nodes) {
       if (view.k < 0.55 && n.degree < 3 && n !== hover) continue;
       g.globalAlpha = dim(n) ? 0.25 : 0.9;
@@ -228,9 +237,12 @@
     const scheme = matchMedia("(prefers-color-scheme: dark)");
     const recolor = () => (readPalette(), schedule());
     scheme.addEventListener("change", recolor);
+    const themed = new MutationObserver(recolor); // <html data-theme="light|dark"> forces a theme
+    themed.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => {
       ro.disconnect();
       scheme.removeEventListener("change", recolor);
+      themed.disconnect();
       sim?.stop();
       cancelAnimationFrame(raf);
     };
@@ -253,13 +265,13 @@
 
 <div class="graph">
   <div class="bar">
-    <input placeholder="Highlight page" aria-label="Highlight page" bind:value={find} />
-    <label><input type="checkbox" bind:checked={showJournals} /> Journals</label>
-    <label><input type="checkbox" bind:checked={showMissing} /> Unwritten pages</label>
-    <button onclick={() => { view = { k: 1, x: 0, y: 0 }; sim?.alpha(0.6).restart(); schedule(); }}>Reset view</button>
+    <div class="find"><TextField placeholder="Highlight page" aria-label="Highlight page" bind:value={find} /></div>
+    <Checkbox label="Journals" bind:checked={showJournals} />
+    <Checkbox label="Unwritten pages" bind:checked={showMissing} />
+    <Button onclick={() => { view = { k: 1, x: 0, y: 0 }; sim?.alpha(0.6).restart(); schedule(); }}>Reset view</Button>
     <span class="muted">{counts.pages} pages · {counts.links} links</span>
   </div>
-  {#if problem}<div class="err" role="alert">{problem}</div>{/if}
+  {#if problem}<Banner tone="danger">{problem}</Banner>{/if}
   <div class="stage" bind:this={box}>
     <canvas bind:this={canvas} {onpointerdown} {onpointermove} {onpointerup} onpointercancel={onpointerup} {onwheel} aria-label="Page graph. The All pages view lists the same pages for keyboard use."></canvas>
   </div>
@@ -267,11 +279,8 @@
 
 <style>
   .graph { display: flex; flex-direction: column; height: 100%; min-height: 360px; }
-  .bar { display: flex; gap: 14px; align-items: center; padding-bottom: 8px; flex-wrap: wrap; }
-  .bar input:not([type]) { max-width: 220px; }
-  label { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
-  label input { width: auto; }
-  .stage { flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--panel); }
+  .bar { display: flex; gap: var(--space-4); align-items: center; padding-bottom: var(--space-2); flex-wrap: wrap; }
+  .find { flex: 1; max-width: 220px; min-width: 140px; }
+  .stage { flex: 1; min-height: 0; border: var(--border-width) solid var(--color-border); border-radius: var(--radius-lg); overflow: hidden; background: var(--color-surface); }
   canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
-  .err { color: var(--danger); }
 </style>

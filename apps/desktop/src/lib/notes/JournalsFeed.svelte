@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "$lib/api.ts";
+  import { Banner, Button } from "$lib/ds/index.ts";
   import { useNotes } from "./ctx.ts";
   import PageEditor from "./PageEditor.svelte";
 
@@ -33,16 +34,15 @@
 </script>
 
 <div class="feed">
-  {#if problem}<div class="err" role="alert">{problem}</div>{/if}
+  {#if problem}<Banner tone="danger">{problem}</Banner>{/if}
   {#if todayName}<PageEditor name={todayName} compact />{/if}
   {#each older as name (name)}
     <PageEditor {name} compact />
   {/each}
-  {#if more}<button class="more" onclick={() => (count += 6)}>Load older journals</button>{/if}
+  {#if more}<div class="more"><Button onclick={() => (count += 6)}>Load older journals</Button></div>{/if}
 </div>
 
 <style>
-  .feed { display: grid; gap: 4px; }
+  .feed { display: grid; gap: var(--space-1); }
   .more { justify-self: start; }
-  .err { color: var(--danger); }
 </style>

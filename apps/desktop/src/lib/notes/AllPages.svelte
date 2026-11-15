@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button, Checkbox, TextField } from "$lib/ds/index.ts";
   import { useNotes } from "./ctx.ts";
   import { notes } from "./store.svelte.ts";
 
@@ -18,22 +19,22 @@
 
 <div class="all">
   <div class="bar">
-    <input placeholder="Filter pages" aria-label="Filter pages" bind:value={filter} />
-    <label><input type="checkbox" bind:checked={journals} /> Journals</label>
+    <div class="filter"><TextField placeholder="Filter pages" aria-label="Filter pages" bind:value={filter} /></div>
+    <Checkbox label="Journals" bind:checked={journals} />
     <span class="muted">{rows.length} pages</span>
   </div>
   <table>
     <thead>
       <tr>
-        <th><button aria-pressed={sort === "name"} onclick={() => (sort = "name")}>Page</button></th>
-        <th class="n"><button aria-pressed={sort === "backlinks"} onclick={() => (sort = "backlinks")}>Backlinks</button></th>
-        <th class="n"><button aria-pressed={sort === "blocks"} onclick={() => (sort = "blocks")}>Blocks</button></th>
+        <th><Button variant={sort === "name" ? "secondary" : "ghost"} size="sm" aria-pressed={sort === "name"} onclick={() => (sort = "name")}>Page</Button></th>
+        <th class="n"><Button variant={sort === "backlinks" ? "secondary" : "ghost"} size="sm" aria-pressed={sort === "backlinks"} onclick={() => (sort = "backlinks")}>Backlinks</Button></th>
+        <th class="n"><Button variant={sort === "blocks" ? "secondary" : "ghost"} size="sm" aria-pressed={sort === "blocks"} onclick={() => (sort = "blocks")}>Blocks</Button></th>
       </tr>
     </thead>
     <tbody>
       {#each rows as p (p.name)}
         <tr>
-          <td><button class="link" onclick={() => ctx.open(p.name)}>{p.name}</button></td>
+          <td><Button variant="ghost" size="sm" onclick={() => ctx.open(p.name)}>{p.name}</Button></td>
           <td class="n">{p.backlinks}</td>
           <td class="n">{p.blocks}</td>
         </tr>
@@ -43,15 +44,10 @@
 </div>
 
 <style>
-  .bar { display: flex; gap: 14px; align-items: center; margin-bottom: 10px; }
-  .bar input:not([type]) { max-width: 280px; }
-  label { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
-  label input { width: auto; }
+  .bar { display: flex; gap: var(--space-4); align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; }
+  .filter { flex: 1; max-width: 280px; min-width: 140px; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
-  th button { all: unset; cursor: pointer; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-  th button[aria-pressed="true"] { color: var(--text); font-weight: 700; }
-  .n { text-align: right; width: 90px; font-variant-numeric: tabular-nums; }
-  .link { all: unset; cursor: pointer; color: var(--accent); }
-  .link:hover { text-decoration: underline; }
+  th, td { text-align: left; padding: var(--space-1) var(--space-2); border-bottom: var(--border-width) solid var(--color-border-subtle); }
+  th { font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: var(--letter-spacing-caps); font-weight: var(--font-weight-semibold); }
+  .n { text-align: right; width: 110px; font-variant-numeric: tabular-nums; }
 </style>

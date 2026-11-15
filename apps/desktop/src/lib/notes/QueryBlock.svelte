@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "$lib/api.ts";
+  import { Badge, Banner, Button } from "$lib/ds/index.ts";
   import type { Backlink } from "./types.ts";
   import { groupByPage } from "./group.ts";
   import BlockBody from "./BlockBody.svelte";
@@ -35,13 +36,13 @@
 </script>
 
 <div class="query">
-  <div class="head"><span class="tag">query</span> <code>{text}</code> {#if loaded && !error}<span class="count">{rows.length} {rows.length === 1 ? "result" : "results"}</span>{/if}</div>
+  <div class="head"><Badge size="sm">query</Badge> <code>{text}</code> {#if loaded && !error}<span class="count">{rows.length} {rows.length === 1 ? "result" : "results"}</span>{/if}</div>
   {#if error}
-    <div class="err" role="alert">{error}</div>
+    <Banner tone="danger">{error}</Banner>
   {:else}
     {#each groups as [page, items] (page)}
       <div class="group">
-        <button class="page" onclick={(e) => { e.stopPropagation(); ctx.open(page); }}>{page}</button>
+        <Button variant="ghost" size="sm" onclick={(e) => { e.stopPropagation(); ctx.open(page); }}>{page}</Button>
         {#each items as r (r.blockId)}
           <div class="hit"><BlockBody content={r.content} /></div>
         {/each}
@@ -53,14 +54,9 @@
 </div>
 
 <style>
-  .query { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; margin: 4px 0; background: color-mix(in srgb, var(--sidebar) 60%, transparent); }
-  .head { font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-  .head code { font-size: 12px; }
-  .tag { text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+  .query { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-1-5) var(--space-3); margin: var(--space-1) 0; background: var(--color-surface-sunken); }
+  .head { font-size: var(--font-size-sm); color: var(--color-text-secondary); display: flex; gap: var(--space-2); align-items: baseline; flex-wrap: wrap; }
   .count { margin-left: auto; }
-  .group { margin-top: 6px; }
-  .page { all: unset; cursor: pointer; font-weight: 600; font-size: 12px; color: var(--accent); }
-  .page:hover { text-decoration: underline; }
-  .hit { padding-left: 10px; border-left: 2px solid var(--border); margin: 2px 0; }
-  .err { color: var(--danger); font-size: 12px; margin-top: 4px; }
+  .group { margin-top: var(--space-1-5); }
+  .hit { padding-left: var(--space-3); border-left: var(--border-width-strong) solid var(--color-border); margin: var(--space-0-5) 0; }
 </style>

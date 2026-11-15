@@ -11,7 +11,7 @@ const HIDDEN = new Set(["id", "collapsed", "heading", "background-color", "creat
 const PROPERTY = /^\s*([A-Za-z0-9_/-]+)::(?:\s+(.*)|\s*)$/;
 const MARKER = /^((?:#{1,6}\s+)?)(TODO|DOING|DONE|NOW|LATER|WAITING|CANCELED|CANCELLED|IN-PROGRESS)(?=\s|$)/;
 
-export const normalizeKey = (raw: string): string => raw.toLowerCase().replace(/[ _]/g, "-");
+const normalizeKey = (raw: string): string => raw.toLowerCase().replace(/[ _]/g, "-");
 
 export function isHiddenProperty(key: string): boolean {
   const k = normalizeKey(key);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { Icon, IconButton } from "$lib/ds/index.ts";
   import Self from "./Block.svelte";
   import BlockBody from "./BlockBody.svelte";
   import { completeLink, editableText, isCollapsed, linkContext, markerOf } from "./content.ts";
@@ -121,9 +122,11 @@
 
 <li class="block">
   <div class="row">
-    <button class="twisty" class:invisible={!hasChildren} aria-label={collapsed ? "Expand" : "Collapse"} aria-expanded={!collapsed} tabindex="-1" onclick={() => outliner.toggleCollapsed(block.id)}>
-      <span class:open={!collapsed}>▸</span>
-    </button>
+    <span class="twisty" class:invisible={!hasChildren}>
+      <IconButton label={collapsed ? "Expand" : "Collapse"} size="sm" aria-expanded={!collapsed} tabindex={-1} onclick={() => outliner.toggleCollapsed(block.id)}>
+        <span class="chev" class:open={!collapsed}><Icon name="chevron-right" size={14} /></span>
+      </IconButton>
+    </span>
     <span class="bullet" class:folded={collapsed && hasChildren} aria-hidden="true"></span>
     <div class="content">
       {#if editing}
@@ -172,21 +175,22 @@
 
 <style>
   .block { list-style: none; }
-  .row { display: flex; align-items: flex-start; gap: 2px; }
-  .twisty { all: unset; width: 16px; height: 22px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--muted); font-size: 11px; opacity: 0; }
-  .row:hover .twisty { opacity: 1; }
+  .row { display: flex; align-items: flex-start; gap: var(--space-0-5); }
+  .twisty { flex: none; display: flex; opacity: 0; }
+  .twisty :global(button) { width: var(--space-4); height: var(--space-5); padding: 0; }
+  .row:hover .twisty, .twisty:focus-within { opacity: 1; }
   .twisty.invisible { visibility: hidden; }
-  .twisty span { transition: transform 0.1s; display: inline-block; }
-  .twisty span.open { transform: rotate(90deg); }
-  .bullet { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); margin: 8px 8px 0 2px; }
-  .bullet.folded { box-shadow: 0 0 0 3px color-mix(in srgb, var(--muted) 30%, transparent); }
+  .chev { display: inline-flex; transition: transform var(--duration-fast) var(--ease-standard); }
+  .chev.open { transform: rotate(90deg); }
+  .bullet { flex: none; width: var(--space-1-5); height: var(--space-1-5); border-radius: var(--radius-full); background: var(--color-text-secondary); margin: var(--space-2) var(--space-2) 0 var(--space-0-5); }
+  .bullet.folded { box-shadow: 0 0 0 var(--space-0-5) var(--color-border-strong); }
   .content { flex: 1; min-width: 0; position: relative; }
-  .view { min-height: 22px; border-radius: 4px; cursor: text; }
-  .view:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-  .editor { display: block; width: 100%; resize: none; overflow: hidden; border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; margin: 0; line-height: 1.5; background: var(--panel); font: inherit; }
+  .view { min-height: var(--space-5); border-radius: var(--radius-sm); cursor: text; }
+  .view:focus-visible { outline: var(--border-width-strong) solid var(--color-focus); outline-offset: 1px; }
+  .editor { display: block; width: 100%; resize: none; overflow: hidden; border: var(--border-width) solid var(--color-accent); border-radius: var(--radius-sm); padding: 0 var(--space-1); margin: 0; line-height: var(--line-height-normal); background: var(--color-surface); font: inherit; }
   .editor:focus-visible { outline: none; }
-  .children { margin: 0; padding: 0 0 0 20px; border-left: 1px solid var(--border); margin-left: 9px; }
-  .popup { position: absolute; z-index: 20; left: 0; top: 100%; margin: 2px 0 0; padding: 4px; list-style: none; min-width: 220px; max-width: 420px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.18); }
-  .popup button { all: unset; display: block; width: 100%; box-sizing: border-box; padding: 4px 8px; border-radius: 5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .popup button.on, .popup button:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .children { margin: 0 0 0 var(--space-2); padding: 0 0 0 var(--space-5); border-left: var(--border-width) solid var(--color-border); }
+  .popup { position: absolute; z-index: var(--z-dropdown); left: 0; top: 100%; margin: var(--space-0-5) 0 0; padding: var(--space-1); list-style: none; min-width: 220px; max-width: 420px; background: var(--color-surface-raised); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+  .popup button { all: unset; display: block; width: 100%; box-sizing: border-box; padding: var(--space-1) var(--space-2); border-radius: var(--radius-md); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .popup button.on, .popup button:hover { background: var(--color-accent-subtle); }
 </style>
