@@ -303,11 +303,9 @@ async fn run(app: AppHandle, service: Arc<AppService>, mut rx: mpsc::UnboundedRe
 /// only) and the overlay's `pipe::answer` turns an "always" into "allow", so no
 /// standing rule is ever made from the overlay, for any task.
 ///
-/// TODO(channels): when the channels branch lands, its task events carry the
-/// channel a task came from, and its broker refuses "Always for this
-/// workspace" for them. If the island ever gets an "Always" button, hide it for
-/// a task the stream marks as from a channel (put the marker in the
-/// `PermissionRequest` payload `Translator::translate` builds).
+/// Channel tasks are covered twice: their broker is `untrusted_origin` and
+/// their approver is `without_always` (`control::spawn_task_with`), so no
+/// standing rule can come from a channel task's approval anywhere.
 fn island_decision(line: &str) -> Option<&'static str> {
     match line.trim() {
         "allow" => Some("allow"),

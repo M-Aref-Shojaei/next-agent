@@ -1,6 +1,7 @@
 //! Tauri 2 shell for Next Agent.
 
 pub mod boards;
+pub mod channels;
 pub mod commands;
 pub mod coucou;
 pub mod gateway;
@@ -52,6 +53,18 @@ pub fn run() {
             // Settings → Upstreams: a daily, report-only look at upstream GitHub repos.
             app.manage(upstreams::start(app.handle(), &dir));
             learning::start_scheduler(app.handle().clone(), Arc::clone(&service));
+            // Chat channels (Telegram): tokens from the keychain, tasks
+            // through the normal pipeline, approvals here or in the overlay.
+            let emitter = app.handle().clone();
+            let channels = channels::ChannelService::new(
+                Arc::clone(&service),
+                Arc::new(move |name, payload| {
+                    let _ = emitter.emit(name, payload);
+                }),
+            )
+            .map_err(std::io::Error::other)?;
+            app.manage(Arc::clone(&channels));
+            tauri::async_runtime::spawn(async move { channels.start_all().await });
             tauri::async_runtime::spawn(poll_router_health(app.handle().clone(), service));
             coucou_lib::setup(app, boot)?;
             Ok(())
@@ -117,6 +130,17 @@ pub fn run() {
             commands::board_delete,
             commands::board_sketch,
             commands::board_export,
+            channels::channel_list,
+            channels::channel_save,
+            channels::channel_delete,
+            channels::channel_test,
+            channels::channel_restart,
+            channels::channel_pairings,
+            channels::channel_pairing_resolve,
+            channels::channel_allow_list,
+            channels::channel_allow_add,
+            channels::channel_allow_remove,
+            channels::channel_activity,
             learning::learning_settings_get,
             learning::learning_settings_set,
             learning::memory_get,

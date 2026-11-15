@@ -62,12 +62,13 @@
       "ported": "tools/memory_tool.py, tools/memory_tool_store.py, tools/threat_patterns.py, tools/skills_tool.py, tools/skills_tool_plugin.py, tools/skill_manager_tool.py, tools/skill_manager_batch.py, tools/skill_manager_guards.py, agent/skill_utils.py, agent/curator.py, hermes_state_common.py, hermes_state_search.py, tools/session_search_tool.py, agent/background_review.py, cron/jobs.py, cron/jobs_time.py, cron/missed_runs.py, cron/scheduler_tick.py -> crates/core/src/learning/{memory,threats,skills,sessions,review,cron}.rs"
     },
     "openclaw": {
-      "pin": "2026.11.3 (pin exact commit when porting)",
+      "pin": "main @ 1ac07b333581ff06e7d323015dc5912247415d4b (studied; ported, not bundled)",
+      "ported": "pairing/pairing-store-model.ts, pairing/pairing-messages.ts, routing/session-key.ts, channels/mention-gating.ts, channels/direct-dm-access.ts, channels/allowlist-match.ts, channels/channel-config.ts, channels/plugins/types.adapters.ts, channels/draft-stream-loop.ts, channels/plugins/outbound.types.ts, auto-reply/chunk.ts, security/external-content.ts, security/dangerous-tools.ts, security/dm-policy-shared.ts -> crates/channels",
       "licence": "MIT",
-      "adapter": "services/channel-gateway",
+      "adapter": "crates/channels",
       "checked": "2026-11-14",
       "risk": "medium",
-      "role": "wave 2"
+      "role": "channel gateway (Telegram first)"
     },
     "coucou": {
       "pin": "main @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8 (latest main on 2026-11-14; whole Tauri app vendored; no assets)",

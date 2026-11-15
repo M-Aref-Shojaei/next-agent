@@ -157,6 +157,14 @@ pub(crate) struct Plan {
     start_dir: PathBuf,
 }
 
+/// Extras for a task started from a chat channel (`crate::channels`): the
+/// channel tool profile (it only tightens) and the approval timeout (no
+/// answer from the desktop or overlay in time = deny).
+pub struct ChannelLaunch {
+    pub profile: AgentProfile,
+    pub approval_timeout: Duration,
+}
+
 impl AppService {
     /// Start a task on background threads, streaming to `sink`.
     ///
@@ -168,7 +176,7 @@ impl AppService {
         request: &TaskRequest,
         sink: Sink,
     ) -> Result<String, String> {
-        self.task_start_with(request, sink, TaskExtras::default())
+        self.task_start_inner(request, sink, TaskExtras::default(), None)
     }
 
     /// [`AppService::task_start`] for cron runs and other non-UI starts.
@@ -181,6 +189,33 @@ impl AppService {
         sink: Sink,
         extras: TaskExtras,
     ) -> Result<String, String> {
+        self.task_start_inner(request, sink, extras, None)
+    }
+
+    /// [`AppService::task_start`] as a channel task. A channel task runs
+    /// only in manual or plan mode, under the channel profile.
+    ///
+    /// # Errors
+    /// See [`AppService::task_start`]; also a channel task in any other mode.
+    pub fn task_start_channel(
+        self: &Arc<Self>,
+        request: &TaskRequest,
+        sink: Sink,
+        channel: &ChannelLaunch,
+    ) -> Result<String, String> {
+        self.task_start_inner(request, sink, TaskExtras::default(), Some(channel))
+    }
+
+    fn task_start_inner(
+        self: &Arc<Self>,
+        request: &TaskRequest,
+        sink: Sink,
+        extras: TaskExtras,
+        channel: Option<&ChannelLaunch>,
+    ) -> Result<String, String> {
+        if channel.is_some() {
+            next_agent_channels::config::guard_mode(parse_mode(&request.mode)?)?;
+        }
         let mut plan = self.plan(request, extras)?;
         let task_id = plan.spec.id.as_str().to_string();
 
@@ -192,8 +227,16 @@ impl AppService {
             });
         }
         let learning = self.learning_for(&plan);
-        let (executor, agent_notice, builtin) = self.choose_executor(&plan, &task_id, &learning);
+        let (executor, agent_notice, builtin) =
+            self.choose_executor(&plan, &task_id, &learning, channel.map(|c| &c.profile));
         plan.builtin = builtin;
+        let executor: Box<dyn AgentExecutor + Send> = match channel {
+            Some(c) => Box::new(next_agent_channels::ChannelExecutor::new(
+                executor,
+                c.profile.clone(),
+            )),
+            None => executor,
+        };
         for text in plan.notices.iter().chain(agent_notice.iter()) {
             sink(StreamMessage::Notice {
                 task_id: task_id.clone(),
@@ -230,6 +273,8 @@ impl AppService {
             },
             TaskOptions {
                 snapshots,
+                approval_timeout: channel.map(|c| c.approval_timeout),
+                untrusted_origin: channel.is_some(),
                 ..TaskOptions::default()
             },
         );
@@ -440,6 +485,7 @@ impl AppService {
         plan: &Plan,
         task_id: &str,
         learning: &next_agent_core::learning::Learning,
+        ancestor: Option<&AgentProfile>,
     ) -> (Box<dyn AgentExecutor + Send>, Option<String>, bool) {
         let root = &plan.start_dir;
         let gateway = match &plan.extras.model_role {
@@ -472,6 +518,9 @@ impl AppService {
             .with_learning(learning.clone());
         if let Some(recorder) = self.session_recorder(plan) {
             executor = executor.with_transcript(Box::new(recorder));
+        }
+        if let Some(profile) = ancestor {
+            executor = executor.with_ancestor_profile(profile.clone());
         }
         // Compaction summaries use the `summary` role (falls back to chat).
         if let Ok(summary) = self.gateway("summary") {

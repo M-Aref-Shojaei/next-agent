@@ -3287,6 +3287,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
+name = "next-agent-channels"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.2.17",
+ "next-agent-core",
+ "next-agent-permission-engine",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "next-agent-core"
 version = "0.1.0"
 dependencies = [
@@ -3318,6 +3333,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "coucou",
+ "next-agent-channels",
  "next-agent-core",
  "next-agent-graph",
  "next-agent-permission-engine",

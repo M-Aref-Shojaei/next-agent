@@ -29,6 +29,7 @@ next-agent-graph = { path = "../../../crates/graph" }
 tokio = { version = "1", features = ["sync", "macros", "io-util", "rt", "time"] }
 # The overlay: Coucou's Tauri app, vendored whole (ADR-0011, apps/desktop/coucou).
 coucou = { path = "../coucou/src-tauri" }
+next-agent-channels = { path = "../../../crates/channels" }
 
 [dev-dependencies]
 tempfile = "3"

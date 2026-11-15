@@ -102,6 +102,11 @@ impl RuleSet {
         Self::default()
     }
 
+    /// Keep only the rules `keep` accepts.
+    pub fn retain(&mut self, keep: impl FnMut(&Rule) -> bool) {
+        self.rules.retain(keep);
+    }
+
     pub fn push(&mut self, rule: Rule) {
         self.rules.push(rule);
     }

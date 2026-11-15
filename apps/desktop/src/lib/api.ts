@@ -30,6 +30,15 @@ import type {
 } from "./gateway.ts";
 import type { WatchView } from "./upstreams.ts";
 import type { CronInput, CronJob, CuratorReport, LearningSettings, MemoryState, SkillInfo } from "./learning.ts";
+import type {
+  AllowEntry,
+  BotIdentity,
+  ChannelActivity,
+  ChannelConfig,
+  ChannelHealth,
+  ChannelInfo,
+  PairingRequest,
+} from "./channels.ts";
 
 export interface Workspace {
   id: string;
@@ -83,6 +92,8 @@ export interface TaskStarted {
   mode: string;
   /** `cron` for scheduled runs started by the app itself. */
   source?: string;
+  /** Set for tasks that came from a chat channel, e.g. "Telegram · @alice". */
+  origin?: string;
 }
 export interface BoardMeta {
   name: string;
@@ -206,6 +217,24 @@ export interface Api {
   /** Every task's stream, as an app event (scheduled runs use it). */
   onTaskStream(callback: (message: StreamMessage) => void): Promise<() => void>;
   onTaskStarted(callback: (started: TaskStarted) => void): Promise<() => void>;
+  // Chat channels (Settings → Channels). Tokens go to the OS keychain and never come back.
+  channelList(): Promise<ChannelInfo[]>;
+  /** `token` only when the owner pasted a new one. */
+  channelSave(config: ChannelConfig, token?: string): Promise<ChannelInfo>;
+  channelDelete(id: string): Promise<boolean>;
+  /** Test a pasted token, or the saved one for `id`. */
+  channelTest(id: string | null, token?: string): Promise<BotIdentity>;
+  channelRestart(id: string): Promise<void>;
+  channelPairings(id: string): Promise<PairingRequest[]>;
+  /** Approve or deny a pairing code (desktop only). */
+  channelPairingResolve(id: string, code: string, approve: boolean): Promise<PairingRequest>;
+  channelAllowList(id: string): Promise<AllowEntry[]>;
+  channelAllowAdd(id: string, senderId: string, label: string): Promise<void>;
+  channelAllowRemove(id: string, senderId: string): Promise<boolean>;
+  channelActivity(id: string, limit?: number): Promise<ChannelActivity[]>;
+  onChannelHealth(callback: (channelId: string, health: ChannelHealth) => void): Promise<() => void>;
+  /** A pairing request or new activity on a channel (refresh the page). */
+  onChannelChange(callback: (channelId: string) => void): Promise<() => void>;
 }
 
 const tauriApi: Api = {
@@ -297,6 +326,26 @@ const tauriApi: Api = {
   upstreamWatchMarkSeen: () => invoke("upstream_watch_mark_seen"),
   upstreamOpen: (url) => invoke("upstream_open", { url }),
   onUpstreamWatch: (callback) => listen<WatchView>("upstream-watch", (event) => callback(event.payload)),
+  channelList: () => invoke("channel_list"),
+  channelSave: (config, token) => invoke("channel_save", { input: { config, token: token ?? null } }),
+  channelDelete: (id) => invoke("channel_delete", { id }),
+  channelTest: (id, token) => invoke("channel_test", { id, token: token ?? null }),
+  channelRestart: (id) => invoke("channel_restart", { id }),
+  channelPairings: (id) => invoke("channel_pairings", { id }),
+  channelPairingResolve: (id, code, approve) => invoke("channel_pairing_resolve", { id, code, approve }),
+  channelAllowList: (id) => invoke("channel_allow_list", { id }),
+  channelAllowAdd: (id, senderId, label) => invoke("channel_allow_add", { id, senderId, label }),
+  channelAllowRemove: (id, senderId) => invoke("channel_allow_remove", { id, senderId }),
+  channelActivity: (id, limit) => invoke("channel_activity", { id, limit: limit ?? null }),
+  onChannelHealth: (callback) =>
+    listen<{ channelId: string; health: ChannelHealth }>("channel-health", (e) => callback(e.payload.channelId, e.payload.health)),
+  onChannelChange: async (callback) => {
+    const offs = await Promise.all([
+      listen<{ channelId: string }>("channel-pairing", (e) => callback(e.payload.channelId)),
+      listen<{ channelId: string }>("channel-activity", (e) => callback(e.payload.channelId)),
+    ]);
+    return () => offs.forEach((off) => off());
+  },
 };
 
 export function inTauri(): boolean {

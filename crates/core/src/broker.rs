@@ -156,6 +156,7 @@ pub struct SqliteBroker<'a> {
     executor: Box<dyn ToolExecutor + 'a>,
     approver: Option<Box<dyn Approver + 'a>>,
     snapshots: Option<Box<dyn StepSnapshots + 'a>>,
+    untrusted: bool,
 }
 
 impl<'a> SqliteBroker<'a> {
@@ -170,7 +171,21 @@ impl<'a> SqliteBroker<'a> {
             executor: Box::new(UnavailableExecutor),
             approver: None,
             snapshots: None,
+            untrusted: false,
         }
+    }
+
+    /// The task comes from outside the desktop (a chat channel). Saved allow
+    /// rules are ignored (deny rules still apply), "always for this
+    /// workspace" answers count as allow-once and save nothing, and touching
+    /// a secret or repository-control file (judged on the resolved path)
+    /// needs an approval even where the mode would allow it.
+    #[must_use]
+    pub fn untrusted_origin(mut self) -> Self {
+        self.untrusted = true;
+        // Rules loaded before the flag was set may hold allow rules.
+        self.rules.retain(|rule| rule.effect == Effect::Deny);
+        self
     }
 
     /// Capture the work tree before each allowed mutating call (per-step
@@ -212,7 +227,13 @@ impl<'a> SqliteBroker<'a> {
     /// Returns [`StoreError`] if the rules cannot be read.
     pub fn load_rules(&mut self) -> Result<(), StoreError> {
         let rows = self.store.rules_for(&self.context.workspace_id)?;
-        self.rules = RuleSet::new(rows.iter().filter_map(row_to_rule).collect());
+        let untrusted = self.untrusted;
+        self.rules = RuleSet::new(
+            rows.iter()
+                .filter_map(row_to_rule)
+                .filter(|rule| !untrusted || rule.effect == Effect::Deny)
+                .collect(),
+        );
         Ok(())
     }
 
@@ -304,7 +325,8 @@ impl SqliteBroker<'_> {
         let resolved_request = with_resolved_path(request, evaluation.resolved_path.as_deref());
         let request = &resolved_request;
 
-        let reason = match tighten(evaluation.decision.clone(), floor) {
+        let decision = self.decide(&evaluation, floor);
+        let reason = match decision {
             Decision::Allow { reason } => {
                 decided("allow", &reason);
                 reason
@@ -394,6 +416,19 @@ impl SqliteBroker<'_> {
 }
 
 impl SqliteBroker<'_> {
+    /// The engine's decision under the profile floor. For channel tasks an
+    /// allowed touch of a secret or repository-control file (the engine's
+    /// `protected` fact, judged on resolved paths and on paths a command
+    /// mentions) becomes an approval.
+    fn decide(&self, evaluation: &Evaluation, floor: Option<&Floor>) -> Decision {
+        match tighten(evaluation.decision.clone(), floor) {
+            Decision::Allow { .. } if self.untrusted && evaluation.protected => Decision::Ask {
+                reason: "channel task touching a secret or repository-control file".into(),
+            },
+            decision => decision,
+        }
+    }
+
     /// Best-effort capture before an allowed mutating call. A failure is
     /// logged and never blocks the step.
     fn snapshot_before(
@@ -445,7 +480,10 @@ impl SqliteBroker<'_> {
         policy_request: &Request,
         evaluation: &Evaluation,
     ) {
-        let note = if self.persist_allow_rule(policy_request, evaluation) {
+        // Channel tasks never save rules: "always" counts as allow-once.
+        let note = if self.untrusted {
+            "approved once (no rule is saved for a channel task)"
+        } else if self.persist_allow_rule(policy_request, evaluation) {
             "approved for workspace by user"
         } else {
             "approved once by user (no narrow workspace rule possible)"
@@ -945,6 +983,68 @@ mod tests {
             },
         );
         assert_eq!(outcome.decision, "deny");
+    }
+
+    fn allow_writes(store: &Store) {
+        store
+            .insert_rule(&RuleRow {
+                id: "allow-writes".into(),
+                scope: "global".into(),
+                workspace_id: None,
+                effect: "allow".into(),
+                kind: "write_file".into(),
+                pattern: String::new(),
+            })
+            .expect("rule");
+    }
+
+    fn write_req() -> ToolRequest {
+        ToolRequest::Write {
+            path: "/work/project/a.txt".into(),
+            contents: "x".into(),
+        }
+    }
+
+    #[test]
+    fn untrusted_origin_ignores_saved_allow_rules_whatever_the_call_order() {
+        let store = Store::open_in_memory().expect("store");
+        allow_writes(&store);
+        // Trusted: the saved rule upgrades the ask.
+        let mut trusted = broker(&store, Mode::Manual);
+        trusted.load_rules().expect("load");
+        assert_eq!(trusted.handle("c1", &write_req()).decision, "allow");
+        // Untrusted, flag set after rules were loaded: still ignored.
+        let mut late = broker(&store, Mode::Manual);
+        late.load_rules().expect("load");
+        let mut late = late.untrusted_origin();
+        assert_eq!(late.handle("c2", &write_req()).decision, "ask");
+        // Untrusted, flag set first.
+        let mut early = broker(&store, Mode::Manual).untrusted_origin();
+        early.load_rules().expect("load");
+        assert_eq!(early.handle("c3", &write_req()).decision, "ask");
+    }
+
+    #[test]
+    fn untrusted_always_answer_saves_no_rule() {
+        let store = Store::open_in_memory().expect("store");
+        let mut broker = broker(&store, Mode::Manual)
+            .untrusted_origin()
+            .with_approver(Scripted(Approval::AlwaysForWorkspace));
+        assert_eq!(broker.handle("c1", &write_req()).decision, "allow");
+        assert_eq!(store.rules_for("ws_1").expect("rules").len(), 0);
+    }
+
+    #[test]
+    fn untrusted_reads_of_secret_files_ask() {
+        let store = Store::open_in_memory().expect("store");
+        let mut broker = broker(&store, Mode::Manual).untrusted_origin();
+        let secret = ToolRequest::Read {
+            path: "/work/project/.env".into(),
+        };
+        assert_eq!(broker.handle("c1", &secret).decision, "ask");
+        assert_eq!(broker.handle("c2", &read()).decision, "allow");
+        let mut trusted = super::tests::broker(&store, Mode::Manual);
+        assert_eq!(trusted.handle("c3", &secret).decision, "allow");
     }
 
     #[test]

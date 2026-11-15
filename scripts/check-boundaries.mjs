@@ -23,7 +23,8 @@ const failures = [];
 // kept apart so the LLM transport never learns about it and vice versa.
 const TRANSPORTS = {
   rusqlite: ["crates/core/src/store.rs", "crates/graph/src/index.rs"],
-  reqwest: ["crates/core/src/router/", "crates/core/src/upstream/github.rs"],
+  // The Telegram Bot API client is the channel gateway's one HTTP seam.
+  reqwest: ["crates/core/src/router/", "crates/core/src/upstream/github.rs", "crates/channels/src/telegram/api.rs"],
   eventsource_stream: "crates/core/src/router/",
   keyring: "crates/core/src/router/",
 };
@@ -77,6 +78,7 @@ const SEAMS = [
   ["Path sandbox", "crates/permission-engine/src/path.rs"],
   ["Event wire format", "packages/contracts/src/index.ts"],
   ["Upstream pin", "upstream.lock.json"],
+  ["Channel adapter", "crates/channels/src/channel.rs"],
 ];
 for (const [name, path] of SEAMS) {
   if (!existsSync(path)) failures.push(`seam "${name}" missing contract file: ${path}`);

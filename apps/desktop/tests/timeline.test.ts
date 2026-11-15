@@ -150,3 +150,16 @@ test("worktree, review and documented messages land on the task", () => {
   assert.equal(task.recordPath, "/vault/x.md");
   assert.equal(settleReview(task, "merged").review?.outcome, "merged");
 });
+
+test("channel approvals offer no 'always' button", () => {
+  const event = (options?: string[]): StreamMessage => ({
+    type: "event",
+    event: { v: 1, id: "t:1", task_id: "t", seq: 1, ts: "", kind: "approval_requested", data: { approval_id: "a1", call_id: "c1", summary: "s", ...(options ? { options } : {}) } },
+  });
+  const channel = applyMessage(newTask("t", "x"), event(["allow", "deny"]));
+  assert.equal(channel.approvals[0]?.canAlways, false);
+  const desktop = applyMessage(newTask("t", "x"), event(["allow", "deny", "always_for_workspace"]));
+  assert.equal(desktop.approvals[0]?.canAlways, true);
+  const legacy = applyMessage(newTask("t", "x"), event());
+  assert.equal(legacy.approvals[0]?.canAlways, true);
+});

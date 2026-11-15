@@ -39,6 +39,8 @@ export interface ApprovalItem {
   reason: string;
   /** Set once answered. */
   choice?: ApprovalChoice;
+  /** Whether "Always for this workspace" is offered (not for channel tasks). */
+  canAlways: boolean;
 }
 
 export type TaskStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -61,6 +63,8 @@ export interface TaskState {
   review?: ReviewState;
   /** Task record written to the vault. */
   recordPath?: string;
+  /** Chat channel the task came from, e.g. "Telegram · @alice". */
+  origin?: string;
 }
 
 export interface ReviewState {
@@ -99,6 +103,11 @@ export function newTask(id: string, title: string): TaskState {
   };
 }
 
+/** Task id a stream message belongs to. */
+export function messageTaskId(message: StreamMessage): string {
+  return message.type === "event" ? message.event.task_id : message.task_id;
+}
+
 export function pendingApprovals(task: TaskState): ApprovalItem[] {
   return task.approvals.filter((a) => a.choice === undefined);
 }
@@ -112,6 +121,12 @@ export function resolveApproval(
     ...task,
     approvals: task.approvals.map((a) => (a.approvalId === approvalId ? { ...a, choice } : a)),
   };
+}
+
+/** Older events carry no options: they offered every choice. */
+function offersAlways(data: unknown): boolean {
+  const options = typeof data === "object" && data !== null ? (data as Record<string, unknown>).options : undefined;
+  return !Array.isArray(options) || options.includes("always_for_workspace");
 }
 
 function field(data: unknown, key: string): string {
@@ -155,6 +170,7 @@ export function applyMessage(task: TaskState, message: StreamMessage): TaskState
           tool: message.tool,
           summary: message.summary,
           reason: message.reason,
+          canAlways: true,
         },
       ],
     };
@@ -265,6 +281,7 @@ export function applyMessage(task: TaskState, message: StreamMessage): TaskState
             tool: tool?.tool ?? "tool",
             summary: field(data, "summary"),
             reason: tool?.reason ?? "",
+            canAlways: offersAlways(data),
           },
         ],
       };

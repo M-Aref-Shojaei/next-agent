@@ -112,6 +112,8 @@ pub struct ChannelApprover {
     control: Arc<TaskControl>,
     events: Emitter,
     poll: Duration,
+    timeout: Option<Duration>,
+    options: Vec<Approval>,
 }
 
 impl ChannelApprover {
@@ -121,7 +123,25 @@ impl ChannelApprover {
             control,
             events,
             poll: Duration::from_millis(25),
+            timeout: None,
+            options: Approval::ALL.to_vec(),
         }
+    }
+
+    /// Offer only allow and deny (no "always for this workspace").
+    #[must_use]
+    pub fn without_always(mut self) -> Self {
+        self.options.retain(|o| *o != Approval::AlwaysForWorkspace);
+        self
+    }
+
+    /// Deny an approval nobody answered within `timeout` (resolved `by`
+    /// `timeout`). Used for channel tasks: no answer from the desktop or the
+    /// overlay means no.
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -137,19 +157,30 @@ impl Approver for ChannelApprover {
             approval_id: approval_id.clone(),
             call_id: call_id.to_string(),
             summary: format!("{} {} — {reason}", request.name(), describe(request)),
-            options: Approval::ALL
+            options: self
+                .options
                 .iter()
                 .map(|choice| choice.as_str().to_string())
                 .collect(),
         });
+        let deadline = self.timeout.map(|t| std::time::Instant::now() + t);
         let (choice, by) = loop {
             match receiver.recv_timeout(self.poll) {
+                // A choice that was not offered ("always" on a channel task,
+                // from an older client) is recorded as what it does: allow once.
+                Ok(choice) if !self.options.contains(&choice) => break (Approval::Allow, "user"),
                 Ok(choice) => break (choice, "user"),
-                Err(RecvTimeoutError::Timeout) if !self.control.is_cancelled() => {}
-                Err(RecvTimeoutError::Timeout) => {
+                Err(RecvTimeoutError::Timeout) if self.control.is_cancelled() => {
                     self.control.unregister(&approval_id);
                     break (Approval::Deny, "cancel");
                 }
+                Err(RecvTimeoutError::Timeout)
+                    if deadline.is_some_and(|d| std::time::Instant::now() >= d) =>
+                {
+                    self.control.unregister(&approval_id);
+                    break (Approval::Deny, "timeout");
+                }
+                Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break (Approval::Deny, "system"),
             }
         };
@@ -184,6 +215,12 @@ pub struct TaskOptions {
     /// Answers `Ask` decisions instead of the approval card (e.g. the
     /// background review's [`crate::learning::review::ReviewApprover`]).
     pub approver: Option<Box<dyn Approver + Send>>,
+    /// Deny approvals nobody answers within this time (channel tasks).
+    /// `None` waits until answered or cancelled.
+    pub approval_timeout: Option<Duration>,
+    /// The task comes from outside the desktop (a chat channel): see
+    /// [`SqliteBroker::untrusted_origin`]. Approvals offer no "always".
+    pub untrusted_origin: bool,
 }
 
 /// A running task. Dropping the handle does not cancel the task.
@@ -299,8 +336,18 @@ fn run_launch(
         .with_boxed_executor(tools);
     let mut broker = match options.approver {
         Some(approver) => broker.with_approver(approver),
-        None => broker.with_approver(ChannelApprover::new(Arc::clone(control), events.clone())),
+        None => {
+            let mut approver = ChannelApprover::new(Arc::clone(control), events.clone())
+                .with_timeout(options.approval_timeout);
+            if options.untrusted_origin {
+                approver = approver.without_always();
+            }
+            broker.with_approver(approver)
+        }
     };
+    if options.untrusted_origin {
+        broker = broker.untrusted_origin();
+    }
     if let Some(snapshots) = options.snapshots {
         broker = broker.with_snapshots(snapshots);
     }
@@ -381,6 +428,26 @@ mod tests {
         assert_eq!(approver.approve("c9", &request, "r"), Approval::Deny);
         assert_eq!(collector.events()[1].data()["by"], "cancel");
         assert_eq!(control.pending_approvals(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn unanswered_approval_times_out_as_deny() {
+        let control = TaskControl::new();
+        let collector = Collector::new();
+        let events = Emitter::new(TaskId::from_seed("ap3")).with_sink(collector.clone());
+        let mut approver = ChannelApprover::new(Arc::clone(&control), events)
+            .with_timeout(Some(Duration::from_millis(60)));
+        let request = ToolRequest::Write {
+            path: "/w/a".into(),
+            contents: "x".into(),
+        };
+        assert_eq!(approver.approve("c4", &request, "r"), Approval::Deny);
+        let resolved = collector.events()[1].data();
+        assert_eq!(resolved["choice"], "deny");
+        assert_eq!(resolved["by"], "timeout");
+        assert_eq!(control.pending_approvals(), Vec::<String>::new());
+        // A late answer finds nothing waiting.
+        assert!(control.respond("apr_c4", Approval::Allow).is_err());
     }
 
     #[test]

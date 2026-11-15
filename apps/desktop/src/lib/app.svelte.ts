@@ -6,6 +6,7 @@ import type { DiffAction } from "./diff.ts";
 import { cycleMode } from "./modes.ts";
 import {
   applyMessage,
+  messageTaskId,
   newTask,
   resolveApproval,
   settleReview,
@@ -68,6 +69,11 @@ class AppStore {
       });
     } catch {
       // Optional.
+    }
+    try {
+      await this.followChannelTasks();
+    } catch {
+      // Optional: channels are an extra way in.
     }
     try {
       this.workspaces = await api.workspaceList();
@@ -164,6 +170,25 @@ class AppStore {
     } catch (e) {
       this.error = String(e);
     }
+  }
+
+  /** Tasks started from a chat channel (not from this window). */
+  private channelTasks = new Set<string>();
+
+  /** Show channel tasks: they arrive as broadcast `task-started` (with an
+   * origin) and `task-stream` events instead of a direct Channel. */
+  private async followChannelTasks(): Promise<void> {
+    await api.onTaskStarted((started) => {
+      if (!started.origin || this.channelTasks.has(started.taskId)) return;
+      this.channelTasks.add(started.taskId);
+      const task = { ...newTask(started.taskId, started.title), status: "running" as const, origin: started.origin };
+      this.tasks = [task, ...this.tasks];
+      this.activeTaskId ??= started.taskId;
+    });
+    await api.onTaskStream((message) => {
+      const id = messageTaskId(message);
+      if (this.channelTasks.has(id)) this.apply(id, message);
+    });
   }
 
   private apply(taskId: string, message: StreamMessage): void {

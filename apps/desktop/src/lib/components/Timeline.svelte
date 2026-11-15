@@ -19,7 +19,12 @@
   {#if !task}
     <p class="muted empty">Open a workspace, then describe a task below. Without a router and model, a scripted demo agent runs it.</p>
   {:else}
-    <div class="user"><span class="sr-only">You: </span>{task.title}</div>
+    {#if task.origin}
+      <div class="origin" role="note">From {task.origin} · approvals happen here, never in the chat</div>
+      <div class="user channel"><span class="sr-only">{task.origin}: </span>{task.title}</div>
+    {:else}
+      <div class="user"><span class="sr-only">You: </span>{task.title}</div>
+    {/if}
     {#each task.items as item (item.id)}
       {#if item.kind === "message"}
         <div class="msg {item.role}">{item.text}</div>
@@ -40,6 +45,8 @@
   .empty { margin: auto; text-align: center; max-width: 360px; }
   .user { align-self: flex-end; background: var(--accent); color: #fff; padding: 6px 12px; border-radius: 12px; max-width: 80%; }
   .msg { max-width: 85%; white-space: pre-wrap; }
+  .origin { align-self: flex-end; font-size: 11px; color: var(--muted); }
+  .user.channel { background: var(--panel); color: inherit; border: 1px solid var(--accent); }
   .msg.plan { border-left: 3px solid var(--info); padding-left: 10px; }
   .notice { font-size: 12px; color: var(--muted); }
   .notice.ok { color: var(--ok); } .notice.error { color: var(--danger); }

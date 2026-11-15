@@ -340,6 +340,58 @@ pub const MIGRATIONS: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS cron_jobs_due ON cron_jobs(state, next_run_at)",
     // --- end memory-skills ---
+    // --- channels ---
+    // Channel accounts (Telegram bots …). `config` is non-secret JSON; bot
+    // tokens live in the OS keychain (`channel:<id>`), never here.
+    "CREATE TABLE IF NOT EXISTS channels (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        config TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    )",
+    // DM pairing requests waiting for the owner (at most 3 per channel,
+    // 1 h expiry; enforced in crates/channels/src/pairing.rs).
+    "CREATE TABLE IF NOT EXISTS channel_pairings (
+        channel_id TEXT NOT NULL,
+        sender_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        code TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        PRIMARY KEY (channel_id, sender_id)
+    )",
+    // Senders allowed to talk to a channel (approved pairings and manual
+    // entries; `*` = anyone, required for the open DM policy).
+    "CREATE TABLE IF NOT EXISTS channel_allow (
+        channel_id TEXT NOT NULL,
+        sender_id TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'manual',
+        added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        PRIMARY KEY (channel_id, sender_id)
+    )",
+    // Idempotency keys: inbound updates already handled and outbound chunks
+    // already sent (value = sent message id). Pruned after 30 days.
+    "CREATE TABLE IF NOT EXISTS channel_idempotency (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+    )",
+    "CREATE INDEX IF NOT EXISTS channel_idempotency_by_age ON channel_idempotency(created_at)",
+    "CREATE TABLE IF NOT EXISTS channel_activity (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        channel_id TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        peer TEXT NOT NULL DEFAULT '',
+        text TEXT NOT NULL DEFAULT '',
+        task_id TEXT
+    )",
+    "CREATE INDEX IF NOT EXISTS channel_activity_by_channel ON channel_activity(channel_id, id DESC)",
+    // --- end channels ---
 ];
 
 /// Handle to the metadata database.
@@ -3090,3 +3142,434 @@ mod memory_skills_tests {
 }
 
 // --- end memory-skills -----------------------------------------------------------
+
+// --- channels -------------------------------------------------------------------
+// Storage for the channel gateway (`crates/channels`). No secrets: bot tokens
+// are in the OS keychain.
+
+/// Row in `channels`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelRow {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    /// Non-secret JSON configuration.
+    pub config: String,
+}
+
+/// Row in `channel_pairings`. Times are Unix seconds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelPairingRow {
+    pub channel_id: String,
+    pub sender_id: String,
+    pub chat_id: String,
+    pub label: String,
+    pub code: String,
+    pub created_at: u64,
+    pub last_seen_at: u64,
+}
+
+/// Row in `channel_allow`. `added_at` is filled on reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelAllowRow {
+    pub channel_id: String,
+    pub sender_id: String,
+    pub label: String,
+    pub source: String,
+    pub added_at: String,
+}
+
+/// Row in `channel_activity`. `ts` is filled on reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelActivityRow {
+    pub ts: String,
+    pub channel_id: String,
+    pub direction: String,
+    pub kind: String,
+    pub peer: String,
+    pub text: String,
+    pub task_id: Option<String>,
+}
+
+/// Activity rows kept per channel (older ones are pruned on insert).
+pub const CHANNEL_ACTIVITY_KEPT: i64 = 2_000;
+/// Idempotency keys older than this many seconds are pruned.
+pub const CHANNEL_IDEMPOTENCY_TTL_SECS: i64 = 30 * 86_400;
+
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+impl Store {
+    /// Insert or replace a channel account.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn channel_upsert(&self, row: &ChannelRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO channels (id, kind, name, config) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, name = excluded.name,
+                config = excluded.config",
+            rusqlite::params![row.id, row.kind, row.name, row.config],
+        )?;
+        Ok(())
+    }
+
+    /// Every channel account, oldest first.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the read fails.
+    pub fn channel_rows(&self) -> Result<Vec<ChannelRow>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, kind, name, config FROM channels ORDER BY created_at, id")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ChannelRow {
+                id: r.get(0)?,
+                kind: r.get(1)?,
+                name: r.get(2)?,
+                config: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Delete a channel and its pairings, allow-list and activity.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn channel_delete(&self, id: &str) -> Result<bool, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let removed = tx.execute("DELETE FROM channels WHERE id = ?1", [id])?;
+        for table in ["channel_pairings", "channel_allow", "channel_activity"] {
+            tx.execute(&format!("DELETE FROM {table} WHERE channel_id = ?1"), [id])?;
+        }
+        tx.commit()?;
+        Ok(removed > 0)
+    }
+
+    /// Pending pairing requests of a channel, oldest first.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the read fails.
+    pub fn channel_pairings(&self, channel_id: &str) -> Result<Vec<ChannelPairingRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT channel_id, sender_id, chat_id, label, code, created_at, last_seen_at
+             FROM channel_pairings WHERE channel_id = ?1 ORDER BY created_at, sender_id",
+        )?;
+        let rows = stmt.query_map([channel_id], |r| {
+            Ok(ChannelPairingRow {
+                channel_id: r.get(0)?,
+                sender_id: r.get(1)?,
+                chat_id: r.get(2)?,
+                label: r.get(3)?,
+                code: r.get(4)?,
+                created_at: r.get::<_, i64>(5)?.max(0) as u64,
+                last_seen_at: r.get::<_, i64>(6)?.max(0) as u64,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Replace a channel's pending pairing requests in one transaction.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn channel_pairings_replace(
+        &self,
+        channel_id: &str,
+        rows: &[ChannelPairingRow],
+    ) -> Result<(), StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM channel_pairings WHERE channel_id = ?1",
+            [channel_id],
+        )?;
+        for row in rows {
+            tx.execute(
+                "INSERT INTO channel_pairings
+                 (channel_id, sender_id, chat_id, label, code, created_at, last_seen_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    channel_id,
+                    row.sender_id,
+                    row.chat_id,
+                    row.label,
+                    row.code,
+                    row.created_at as i64,
+                    row.last_seen_at as i64
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A channel's allow-list, oldest first.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the read fails.
+    pub fn channel_allow_list(&self, channel_id: &str) -> Result<Vec<ChannelAllowRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT channel_id, sender_id, label, source, added_at FROM channel_allow
+             WHERE channel_id = ?1 ORDER BY added_at, sender_id",
+        )?;
+        let rows = stmt.query_map([channel_id], |r| {
+            Ok(ChannelAllowRow {
+                channel_id: r.get(0)?,
+                sender_id: r.get(1)?,
+                label: r.get(2)?,
+                source: r.get(3)?,
+                added_at: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Add (or relabel) a sender on a channel's allow-list.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn channel_allow_add(&self, row: &ChannelAllowRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO channel_allow (channel_id, sender_id, label, source)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(channel_id, sender_id) DO UPDATE SET label = excluded.label,
+                source = excluded.source",
+            rusqlite::params![row.channel_id, row.sender_id, row.label, row.source],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a sender from a channel's allow-list.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn channel_allow_remove(
+        &self,
+        channel_id: &str,
+        sender_id: &str,
+    ) -> Result<bool, StoreError> {
+        Ok(self.conn.execute(
+            "DELETE FROM channel_allow WHERE channel_id = ?1 AND sender_id = ?2",
+            [channel_id, sender_id],
+        )? > 0)
+    }
+
+    /// Record an idempotency key; `false` if it already existed. Prunes
+    /// keys older than [`CHANNEL_IDEMPOTENCY_TTL_SECS`].
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn channel_claim(&self, key: &str, value: &str) -> Result<bool, StoreError> {
+        self.conn.execute(
+            "DELETE FROM channel_idempotency
+             WHERE created_at < CAST(strftime('%s','now') AS INTEGER) - ?1",
+            [CHANNEL_IDEMPOTENCY_TTL_SECS],
+        )?;
+        Ok(self.conn.execute(
+            "INSERT OR IGNORE INTO channel_idempotency (key, value) VALUES (?1, ?2)",
+            [key, value],
+        )? == 1)
+    }
+
+    /// Forget an idempotency key (the claimed send failed).
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn channel_release(&self, key: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM channel_idempotency WHERE key = ?1", [key])?;
+        Ok(())
+    }
+
+    /// The value recorded with an idempotency key.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the read fails.
+    pub fn channel_claimed(&self, key: &str) -> Result<Option<String>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM channel_idempotency WHERE key = ?1")?;
+        let mut rows = stmt.query([key])?;
+        Ok(match rows.next()? {
+            Some(row) => Some(row.get(0)?),
+            None => None,
+        })
+    }
+
+    /// Append to a channel's activity log, keeping the newest
+    /// [`CHANNEL_ACTIVITY_KEPT`] rows.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the write fails.
+    pub fn channel_activity_add(&self, row: &ChannelActivityRow) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO channel_activity (channel_id, direction, kind, peer, text, task_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                row.channel_id,
+                row.direction,
+                row.kind,
+                row.peer,
+                row.text,
+                row.task_id
+            ],
+        )?;
+        self.conn.execute(
+            "DELETE FROM channel_activity WHERE channel_id = ?1 AND id NOT IN
+             (SELECT id FROM channel_activity WHERE channel_id = ?1 ORDER BY id DESC LIMIT ?2)",
+            rusqlite::params![row.channel_id, CHANNEL_ACTIVITY_KEPT],
+        )?;
+        Ok(())
+    }
+
+    /// The newest `limit` activity rows of a channel, newest first.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the read fails.
+    pub fn channel_activity(
+        &self,
+        channel_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ChannelActivityRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, channel_id, direction, kind, peer, text, task_id FROM channel_activity
+             WHERE channel_id = ?1 ORDER BY id DESC LIMIT ?2",
+        )?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(rusqlite::params![channel_id, limit], |r| {
+            Ok(ChannelActivityRow {
+                ts: r.get(0)?,
+                channel_id: r.get(1)?,
+                direction: r.get(2)?,
+                kind: r.get(3)?,
+                peer: r.get(4)?,
+                text: r.get(5)?,
+                task_id: r.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+#[cfg(test)]
+mod channel_tests {
+    use super::*;
+
+    fn pairing(sender: &str, code: &str) -> ChannelPairingRow {
+        ChannelPairingRow {
+            channel_id: "ch_1".into(),
+            sender_id: sender.into(),
+            chat_id: sender.into(),
+            label: format!("@{sender}"),
+            code: code.into(),
+            created_at: 10,
+            last_seen_at: 11,
+        }
+    }
+
+    #[test]
+    fn channels_round_trip_and_delete_cascades() {
+        let store = Store::open_in_memory().expect("store");
+        let row = ChannelRow {
+            id: "ch_1".into(),
+            kind: "telegram".into(),
+            name: "Bot".into(),
+            config: "{}".into(),
+        };
+        store.channel_upsert(&row).expect("upsert");
+        store
+            .channel_upsert(&ChannelRow {
+                name: "Bot 2".into(),
+                ..row.clone()
+            })
+            .expect("update");
+        assert_eq!(store.channel_rows().expect("rows")[0].name, "Bot 2");
+        store
+            .channel_pairings_replace("ch_1", &[pairing("a", "AAAA")])
+            .expect("pair");
+        store
+            .channel_allow_add(&ChannelAllowRow {
+                channel_id: "ch_1".into(),
+                sender_id: "a".into(),
+                label: "@a".into(),
+                source: "pairing".into(),
+                added_at: String::new(),
+            })
+            .expect("allow");
+        assert!(store.channel_delete("ch_1").expect("delete"));
+        assert_eq!(store.channel_rows().expect("rows").len(), 0);
+        assert_eq!(store.channel_pairings("ch_1").expect("p").len(), 0);
+        assert_eq!(store.channel_allow_list("ch_1").expect("a").len(), 0);
+    }
+
+    #[test]
+    fn pairings_replace_atomically() {
+        let store = Store::open_in_memory().expect("store");
+        store
+            .channel_pairings_replace("ch_1", &[pairing("a", "AAAA"), pairing("b", "BBBB")])
+            .expect("two");
+        store
+            .channel_pairings_replace("ch_1", &[pairing("b", "BBBB")])
+            .expect("one");
+        let rows = store.channel_pairings("ch_1").expect("rows");
+        assert_eq!(rows, [pairing("b", "BBBB")]);
+    }
+
+    #[test]
+    fn allow_list_add_relabel_remove() {
+        let store = Store::open_in_memory().expect("store");
+        let mut row = ChannelAllowRow {
+            channel_id: "ch_1".into(),
+            sender_id: "42".into(),
+            label: "@a".into(),
+            source: "manual".into(),
+            added_at: String::new(),
+        };
+        store.channel_allow_add(&row).expect("add");
+        row.label = "@b".into();
+        store.channel_allow_add(&row).expect("relabel");
+        let list = store.channel_allow_list("ch_1").expect("list");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].label, "@b");
+        assert_ne!(list[0].added_at.len(), 0);
+        assert!(store.channel_allow_remove("ch_1", "42").expect("rm"));
+        assert!(!store.channel_allow_remove("ch_1", "42").expect("rm again"));
+    }
+
+    #[test]
+    fn claims_are_idempotent() {
+        let store = Store::open_in_memory().expect("store");
+        assert!(store.channel_claim("in:ch_1:1", "").expect("first"));
+        assert!(!store.channel_claim("in:ch_1:1", "").expect("second"));
+        assert!(store.channel_claim("out:ch_1:1:0", "m9").expect("out"));
+        assert_eq!(
+            store.channel_claimed("out:ch_1:1:0").expect("get"),
+            Some("m9".into())
+        );
+        assert_eq!(store.channel_claimed("missing").expect("none"), None);
+    }
+
+    #[test]
+    fn activity_is_newest_first_and_bounded() {
+        let store = Store::open_in_memory().expect("store");
+        for n in 0..5 {
+            store
+                .channel_activity_add(&ChannelActivityRow {
+                    ts: String::new(),
+                    channel_id: "ch_1".into(),
+                    direction: "in".into(),
+                    kind: "message".into(),
+                    peer: "42".into(),
+                    text: format!("m{n}"),
+                    task_id: None,
+                })
+                .expect("add");
+        }
+        let rows = store.channel_activity("ch_1", 2).expect("rows");
+        assert_eq!(
+            rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            ["m4", "m3"]
+        );
+        assert_eq!(store.channel_activity("other", 10).expect("none").len(), 0);
+    }
+}
+// --- end channels ---------------------------------------------------------------
