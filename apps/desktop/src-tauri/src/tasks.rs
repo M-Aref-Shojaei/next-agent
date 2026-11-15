@@ -24,6 +24,9 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// Characters of a prompt kept as a task title.
+pub(crate) const TITLE_CHARS: usize = 60;
+
 /// Smallest known context window across the chat role's targets (0 = unknown,
 /// so compaction runs only on a provider overflow).
 pub(crate) fn context_window(gateway: &next_agent_core::router::Gateway) -> u64 {
@@ -483,7 +486,7 @@ impl AppService {
             .map_or_else(|| workspace_root.clone(), |wt| wt.root.clone());
 
         let name = mode_name(mode);
-        let title: String = request.prompt.chars().take(60).collect();
+        let title: String = request.prompt.chars().take(TITLE_CHARS).collect();
         self.store()?
             .create_task(id.as_str(), &workspace.id, &title, &request.prompt, name)
             .map_err(|e| e.to_string())?;

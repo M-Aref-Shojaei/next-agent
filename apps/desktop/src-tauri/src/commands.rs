@@ -83,7 +83,7 @@ pub fn task_start(
             cwd,
         },
     );
-    let title: String = prompt.chars().take(60).collect();
+    let title: String = prompt.chars().take(crate::tasks::TITLE_CHARS).collect();
     let request = TaskRequest {
         workspace_id,
         prompt,
