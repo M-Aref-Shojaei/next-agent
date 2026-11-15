@@ -68,7 +68,7 @@ export function buildLaunch(actions: ViewActions): ViewHost {
       const on = path === Launch.folder;
       const row = h(
         "button",
-        { class: on ? "picker-model on" : "picker-model", style: "--accent:#818CF8", title: path },
+        { class: on ? "picker-model on" : "picker-model", style: "--accent:var(--color-accent-text)", title: path }, // Next Agent: design-system token (ADR-0012)
         h("span", { class: "picker-model-name", text: projectName(path) }),
         on ? svg(ICONS.check, 11, { stroke: 2.2 }) : null,
       );

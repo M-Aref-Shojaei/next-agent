@@ -51,7 +51,7 @@ interface Row {
 function makeRow(): Row {
   const chevron = svg(ICONS.chevronRight, 9, { stroke: 2.4 });
   const check = svg(ICONS.check, 8, { stroke: 2.2 });
-  check.style.color = "#454850"; // the completed tick is dimmer than the chevron
+  check.style.color = "var(--color-text-disabled)"; // Next Agent: design-system token (ADR-0012); the completed tick is dimmer than the chevron
   check.style.position = "absolute";
   chevron.style.position = "absolute";
   const shimmer = h("span", { class: "tick-text shimmer" });

@@ -659,7 +659,7 @@ function buildQuestion(actions: ViewActions): ViewHost {
       row.append(
         h("button", {
           class: "link-btn",
-          style: "color:#8e939c",
+          style: "color:var(--color-text-secondary)", // Next Agent: design-system token (ADR-0012)
           text: tl("Answer in terminal"),
           onclick: () => actions.answerInTerminal(),
         }),
@@ -780,7 +780,7 @@ function buildSettings(actions: ViewActions): ViewHost {
       h("div", { class: "grow" }),
       h("button", {
         class: "link-btn",
-        style: "color:#8e939c;font-size:11.5px",
+        style: "color:var(--color-text-secondary);font-size:11.5px", // Next Agent: design-system token (ADR-0012)
         text: tl("Settings…"),
         onclick: () => actions.openSettingsWindow(),
       }),

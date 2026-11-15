@@ -201,7 +201,8 @@ export async function startHub(root: HTMLElement, opts: HubOptions) {
   const side = h("nav", { class: "hub-side" });
   const logo = h("canvas", {});
   side.append(h("div", { class: "hub-brand" }, logo, h("span", { text: "Next Agent" })));
-  liveMochi(logo as HTMLCanvasElement);
+  // Next Agent: the sidebar's orb is the brand mark, so it takes the brand token's colour (tokens.css).
+  liveMochi(logo as HTMLCanvasElement, (typeof getComputedStyle === "function" && getComputedStyle(document.documentElement).getPropertyValue("--color-brand").trim()) || undefined);
 
   // Settings search field
   const searchInput = h("input", {

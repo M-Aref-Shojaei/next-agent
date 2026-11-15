@@ -2,6 +2,26 @@
   "$comment": "Files allowed to keep raw colours/font stacks until restyled on lib/ds (ADR-0012). One entry per file; max = current count, may only go down. Remove an entry when its file is clean. Target: empty.",
   "entries": [
     {
+      "path": "apps/desktop/coucou/src/core/pills.ts",
+      "max": 22,
+      "reason": "Coucou identity colours (per pill, agent or forge): data, not styling. The hex strings are persisted in preferences, alpha-suffixed (color + 'b3') and drawn on canvas, so they cannot be CSS variables."
+    },
+    {
+      "path": "apps/desktop/coucou/src/hub/hero.ts",
+      "max": 2,
+      "reason": "Coucou identity colours (per pill, agent or forge): data, not styling. The hex strings are persisted in preferences, alpha-suffixed (color + 'b3') and drawn on canvas, so they cannot be CSS variables."
+    },
+    {
+      "path": "apps/desktop/coucou/src/island/agents.ts",
+      "max": 11,
+      "reason": "Coucou identity colours (per pill, agent or forge): data, not styling. The hex strings are persisted in preferences, alpha-suffixed (color + 'b3') and drawn on canvas, so they cannot be CSS variables."
+    },
+    {
+      "path": "apps/desktop/coucou/src/views/integrations.ts",
+      "max": 2,
+      "reason": "Coucou identity colours (per pill, agent or forge): data, not styling. The hex strings are persisted in preferences, alpha-suffixed (color + 'b3') and drawn on canvas, so they cannot be CSS variables."
+    },
+    {
       "path": "apps/desktop/src/lib/boards/library.ts",
       "max": 14,
       "reason": "Excalidraw scene data colours (stickies, library, templates); move to a board palette token map"
@@ -30,11 +50,6 @@
       "path": "apps/desktop/src/lib/components/DiffViewer.svelte",
       "max": 4,
       "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
-    },
-    {
-      "path": "apps/desktop/src/lib/components/IslandMascot.svelte",
-      "max": 13,
-      "reason": "Island orb tone gradients; move to --mascot-* tokens (brand gradient is already --brand-gradient)"
     },
     {
       "path": "apps/desktop/src/lib/components/ModeBadge.svelte",
@@ -117,9 +132,9 @@
       "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
     },
     {
-      "path": "apps/desktop/coucou/**",
+      "path": "apps/desktop/coucou/src/settings/**",
       "pending": true,
-      "reason": "Vendored Coucou UI (ADR-0011) keeps its own style.css/settings.css/hub.css; not scanned yet. Pending: restyle on lib/ds tokens and move its settings into Next Agent Settings (ADR-0012)."
+      "reason": "Coucou's settings window (settings.css and its TypeScript) is not scanned yet. Pending: move it into Next Agent Settings (ADR-0012). The rest of apps/desktop/coucou/src is scanned."
     }
   ]
 }

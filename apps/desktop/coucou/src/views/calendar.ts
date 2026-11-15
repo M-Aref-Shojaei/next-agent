@@ -58,7 +58,7 @@ export function calendarDetail(data: Record<string, unknown>, close: () => void,
       for (const date of monthDays(month)) {
         const key = dayKey(date), count = onDay(date).length;
         const button = h("button", { class: "link-btn cal-day", "data-day": key, "aria-label": `${dateText(date)} · ${count}`,
-          style: count ? "background:#C9956A25;color:#C9956A" : undefined,
+          style: count ? "background:color-mix(in srgb, var(--color-warn-text) 15%, transparent);color:var(--color-warn-text)" : undefined, // Next Agent: design-system token (ADR-0012)
           text: `${date.getDate()}${count ? " •" : ""}`, onclick: () => { selectedDay = date; render(); } });
         button.disabled = date.getMonth() !== month.getMonth() || key < firstDay || key > lastDay;
         grid.append(button);

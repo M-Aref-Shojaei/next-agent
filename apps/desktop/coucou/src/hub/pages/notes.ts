@@ -31,7 +31,7 @@ export async function notesPage(page: HTMLElement, ctx: HubContext) {
     page.append(glowCard(
       "#3B9EFF",
       h("div", { style: "font:700 15px var(--font)", text: t("One download, then offline") }),
-      h("div", { class: "hub-note", style: "color:#b7bbc2", text: t("Next Agent writes your calls on this computer with Parakeet, and tells the voices apart with a second small model. Both are downloaded once (about {0} MB), then everything works offline.", { 0: ctx.status.models.downloadMb }) }),
+      h("div", { class: "hub-note", style: "color:var(--color-text-secondary)", text: t("Next Agent writes your calls on this computer with Parakeet, and tells the voices apart with a second small model. Both are downloaded once (about {0} MB), then everything works offline.", { 0: ctx.status.models.downloadMb }) }), // Next Agent: design-system token (ADR-0012)
       modelsControl(ctx, () => ctx.navigate("notes")),
     ));
   }
@@ -66,7 +66,7 @@ export async function notesPage(page: HTMLElement, ctx: HubContext) {
         drawList();
       });
     }, "primary");
-    b.prepend(h("span", { class: "hub-rec", style: "background:#170c04;box-shadow:none;margin-inline-end:8px" }));
+    b.prepend(h("span", { class: "hub-rec", style: "background:var(--color-on-accent);box-shadow:none;margin-inline-end:8px" })); // Next Agent: design-system token (ADR-0012)
     return b;
   }
 
@@ -102,7 +102,7 @@ export async function notesPage(page: HTMLElement, ctx: HubContext) {
       if (n.status === "recording") item.querySelector(".m")!.prepend(h("span", { class: "hub-rec", style: "margin-inline-end:6px" }));
       listEl.append(item);
     }
-    listEl.append(h("div", { style: "flex:1" }), h("div", { class: "hub-note", style: "padding:10px;border-radius:10px;background:rgba(255,255,255,0.04)", text: t("Everything stays on this computer. Tell the people in the call that you are recording.") }));
+    listEl.append(h("div", { style: "flex:1" }), h("div", { class: "hub-note", style: "padding:10px;border-radius:10px;background:var(--color-fill-1)", text: t("Everything stays on this computer. Tell the people in the call that you are recording.") })); // Next Agent: design-system token (ADR-0012)
   }
 
   function drawDetail() {
