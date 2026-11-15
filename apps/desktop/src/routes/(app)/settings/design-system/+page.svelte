@@ -74,6 +74,7 @@
   let banner = $state(true);
   let confirmOpen = $state(false);
   let dangerOpen = $state(false);
+  let largeOpen = $state(false);
   let progress = $state(42);
 
   function fakeLoad() {
@@ -422,6 +423,7 @@
       <div class="demo">
         <Button onclick={() => (confirmOpen = true)}>Open confirm dialog</Button>
         <Button variant="danger" onclick={() => (dangerOpen = true)}>Open danger dialog</Button>
+        <Button onclick={() => (largeOpen = true)}>Open large dialog</Button>
         <Tooltip text="Tooltips explain icons; never hide required information in them.">
           {#snippet children(t)}<IconButton label="Help" aria-describedby={t.describedby}><Icon name="info" /></IconButton>{/snippet}
         </Tooltip>
@@ -446,6 +448,13 @@
   title="Delete this board?"
   description="The board and its 12 stickies are removed. This can't be undone."
   confirmLabel="Delete board"
+/>
+<Dialog
+  bind:open={largeOpen}
+  size="lg"
+  title="Review the change"
+  description="size=lg gives a body that needs room (a diff, a table) 680px."
+  confirmLabel="Back up and write"
 />
 
 <style>

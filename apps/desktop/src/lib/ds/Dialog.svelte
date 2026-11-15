@@ -10,6 +10,8 @@
     cancelLabel = "Cancel",
     /** "danger" paints the confirm button red and focuses Cancel first. */
     tone = "default",
+    /** "lg" for a body that needs room (a diff, a table). */
+    size = "md",
     /** Shows a spinner on the confirm button while the action runs. */
     busy = false,
     /** Hide the confirm button (an informational dialog with one "Close"). */
@@ -25,6 +27,7 @@
     confirmLabel?: string;
     cancelLabel?: string;
     tone?: "default" | "danger";
+    size?: "md" | "lg";
     busy?: boolean;
     hideConfirm?: boolean;
     /** Return a promise to keep the dialog open (busy) until it settles; throw to keep it open. */
@@ -64,7 +67,7 @@
 
 <dialog
   bind:this={dialog}
-  class="ds-dialog"
+  class="ds-dialog {size}"
   aria-labelledby="{uid}-title"
   aria-describedby={description ? `${uid}-desc` : undefined}
   oncancel={(e) => { e.preventDefault(); cancel(); }}
@@ -104,6 +107,7 @@
     box-shadow: var(--shadow-xl);
     overflow: auto;
   }
+  .ds-dialog.lg { width: min(680px, calc(100vw - 2 * var(--space-4))); }
   .ds-dialog[open] { animation: pop var(--duration-normal) var(--ease-out); }
   .ds-dialog::backdrop { background: var(--color-scrim); }
   .body { display: grid; gap: var(--space-2); padding: var(--space-5) var(--space-5) var(--space-4); }
