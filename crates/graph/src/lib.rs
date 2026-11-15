@@ -16,6 +16,7 @@ pub mod inline;
 pub mod layout;
 pub mod model;
 pub mod parse;
+pub mod query;
 pub mod watch;
 
 pub use index::{Backlink, Index, IndexError, IndexStats, JournalEntry, SearchHit};
@@ -26,4 +27,5 @@ pub use layout::{
 };
 pub use model::{BlockNode, PageView};
 pub use parse::{Block, Document};
+pub use query::{GraphData, GraphEdge, GraphNode, PageListItem, QueryEnv};
 pub use watch::GraphWatcher;

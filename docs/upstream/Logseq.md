@@ -6,7 +6,7 @@ status: in progress
 
 # Logseq — what we build in
 
-> **Status:** steps 1–2 (parser/writer, index) are built in `crates/graph`, pinned to tag 0.10.9 @ c67b8b5. See [[Notes Engine]].
+> **Status:** steps 1–2 (parser/writer, index) are built in `crates/graph`; steps 3–7 (outliner, backlinks and journals, queries, graph view, Mermaid) are the Notes UI in `apps/desktop/src/lib/notes` and `routes/notes`, pinned to tag 0.10.9 @ c67b8b5. See [[Notes Engine]].
 
 - Repo: https://github.com/logseq/logseq
 - Licence: **AGPL-3.0**. It is compatible with our licence (see [[ADR-0009 Built-in Upstreams by Extraction, AGPL-3.0]]).

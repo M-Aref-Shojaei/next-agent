@@ -1,5 +1,6 @@
 // In-memory stand-in for the Rust commands, used outside Tauri.
 import type { Api, BoardDoc, Workspace } from "./api.ts";
+import { mockGraphApi } from "./notes/mock-graph.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 import type { WatchView } from "./upstreams.ts";
 import {
@@ -128,6 +129,7 @@ async function runDemo(
 }
 
 export const mockApi: Api = {
+  ...mockGraphApi, // notes-ui
   async workspaceOpen(path) {
     const trimmed = path.trim();
     if (!trimmed) throw "workspace path is empty";

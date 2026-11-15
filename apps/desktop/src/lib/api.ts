@@ -6,6 +6,18 @@ import type { DiffAction } from "./diff.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 import { mockApi } from "./mock-api.ts";
 import type {
+  Backlink,
+  Backlinks,
+  BlockNode,
+  GraphData,
+  BlockRef,
+  GraphInfo,
+  JournalEntry,
+  PageListItem,
+  PageView,
+  SearchHit,
+} from "./notes/types.ts";
+import type {
   Combo,
   ConnectionInput,
   ConnectionTest,
@@ -147,6 +159,24 @@ export interface Api {
   boardSketch(name: string): Promise<BoardSketchData>;
   /** `data` is base64 for png, text for svg. Returns the vault-relative path. */
   boardExport(name: string, ext: "png" | "svg", data: string): Promise<string>;
+  // --- notes-ui --- Notes (Logseq graph in the vault): see src-tauri/src/notes.rs.
+  graphOpen(path: string, create?: boolean): Promise<GraphInfo>;
+  graphSearch(q: string, limit?: number): Promise<SearchHit[]>;
+  graphPage(name: string): Promise<PageView>;
+  graphBacklinks(name: string): Promise<Backlinks>;
+  graphJournals(limit?: number): Promise<JournalEntry[]>;
+  graphSavePage(name: string, tree: BlockNode[]): Promise<PageView>;
+  graphPages(): Promise<PageListItem[]>;
+  graphGraph(): Promise<GraphData>;
+  /** `{{query …}}` text (with or without the macro braces); `today` is `yyyyMMdd`. */
+  graphQuery(text: string, today: number): Promise<Backlink[]>;
+  /** Journal page name of a `yyyyMMdd` day, in the graph's title format. */
+  graphJournalName(day: number): Promise<string>;
+  /** The block with `id:: uuid`, or null. */
+  graphBlock(uuid: string): Promise<BlockRef | null>;
+  /** Graph-relative files the watcher re-indexed (also fired after our own saves). */
+  onGraphChanged(callback: (files: string[]) => void): Promise<() => void>;
+  // --- end notes-ui ---
 }
 
 const tauriApi: Api = {
@@ -181,6 +211,20 @@ const tauriApi: Api = {
   boardDelete: (name) => invoke("board_delete", { name }),
   boardSketch: (name) => invoke("board_sketch", { name }),
   boardExport: (name, ext, data) => invoke("board_export", { name, ext, data }),
+  // --- notes-ui ---
+  graphOpen: (path, create) => invoke("graph_open", { path, create: create ?? null }),
+  graphSearch: (q, limit) => invoke("graph_search", { q, limit: limit ?? null }),
+  graphPage: (name) => invoke("graph_page", { name }),
+  graphBacklinks: (name) => invoke("graph_backlinks", { name }),
+  graphJournals: (limit) => invoke("graph_journals", { limit: limit ?? null }),
+  graphSavePage: (name, tree) => invoke("graph_save_page", { name, tree }),
+  graphPages: () => invoke("graph_pages"),
+  graphGraph: () => invoke("graph_graph"),
+  graphQuery: (text, today) => invoke("graph_query", { text, today }),
+  graphBlock: (uuid) => invoke("graph_block", { uuid }),
+  graphJournalName: (day) => invoke("graph_journal_name", { day }),
+  onGraphChanged: (callback) => listen<string[]>("graph-changed", (e) => callback(e.payload)),
+  // --- end notes-ui ---
   onRouterHealth: (callback) =>
     listen<RouterHealthReport | null>("router-health", (event) => {
       if (event.payload) callback(event.payload);
