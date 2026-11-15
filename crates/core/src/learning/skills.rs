@@ -631,6 +631,9 @@ fn no_symlinks(base: &Path, rel: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Length of a [`stamp`] (`%Y%m%d%H%M%S`), the suffix of an archived skill.
+const ARCHIVE_STAMP_LEN: usize = 14;
+
 fn stamp(secs: i64) -> String {
     let zoned = jiff::Timestamp::from_second(secs).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
     zoned.strftime("%Y%m%d%H%M%S").to_string()
@@ -1646,8 +1649,9 @@ pub fn restore(root: &Path, name: &str) -> Result<PathBuf, String> {
         archived(root)
             .into_iter()
             .filter(|n| {
-                n.strip_prefix(&prefix)
-                    .is_some_and(|s| s.len() == 14 && s.chars().all(|c| c.is_ascii_digit()))
+                n.strip_prefix(&prefix).is_some_and(|s| {
+                    s.len() == ARCHIVE_STAMP_LEN && s.chars().all(|c| c.is_ascii_digit())
+                })
             })
             .max()
             .map(|n| archive.join(n))
