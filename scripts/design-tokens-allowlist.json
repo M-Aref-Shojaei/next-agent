@@ -1,0 +1,125 @@
+{
+  "$comment": "Files allowed to keep raw colours/font stacks until restyled on lib/ds (ADR-0012). One entry per file; max = current count, may only go down. Remove an entry when its file is clean. Target: empty.",
+  "entries": [
+    {
+      "path": "apps/desktop/src/lib/boards/library.ts",
+      "max": 14,
+      "reason": "Excalidraw scene data colours (stickies, library, templates); move to a board palette token map"
+    },
+    {
+      "path": "apps/desktop/src/lib/boards/stickies.ts",
+      "max": 6,
+      "reason": "Excalidraw scene data colours (stickies, library, templates); move to a board palette token map"
+    },
+    {
+      "path": "apps/desktop/src/lib/boards/templates.ts",
+      "max": 5,
+      "reason": "Excalidraw scene data colours (stickies, library, templates); move to a board palette token map"
+    },
+    {
+      "path": "apps/desktop/src/lib/components/ApprovalCard.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/components/DesignFrame.svelte",
+      "max": 3,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/components/DiffViewer.svelte",
+      "max": 4,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/components/IslandMascot.svelte",
+      "max": 13,
+      "reason": "Island orb tone gradients; move to --mascot-* tokens (brand gradient is already --brand-gradient)"
+    },
+    {
+      "path": "apps/desktop/src/lib/components/ModeBadge.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/components/Sidebar.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/components/StatusBar.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/components/Timeline.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/design-mock.ts",
+      "max": 2,
+      "reason": "Mock design document CSS for the browser dev build"
+    },
+    {
+      "path": "apps/desktop/src/lib/notes/Block.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/notes/BlockBody.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/notes/GraphView.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/lib/notes/SearchPalette.svelte",
+      "max": 2,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/routes/(app)/+layout.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/routes/(app)/boards/+page.svelte",
+      "max": 2,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/routes/(app)/design/+page.svelte",
+      "max": 8,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/routes/(app)/settings/+page.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/routes/(app)/settings/learning/+page.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/routes/(app)/settings/upstreams/+page.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/src/routes/(app)/usage/+page.svelte",
+      "max": 1,
+      "reason": "Pre-ADR-0012 page/component styles; restyle on lib/ds"
+    },
+    {
+      "path": "apps/desktop/coucou/**",
+      "pending": true,
+      "reason": "Vendored Coucou UI (ADR-0011) keeps its own style.css/settings.css/hub.css; not scanned yet. Pending: restyle on lib/ds tokens and move its settings into Next Agent Settings (ADR-0012)."
+    }
+  ]
+}

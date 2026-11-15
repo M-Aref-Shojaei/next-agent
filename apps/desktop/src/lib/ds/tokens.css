@@ -1,0 +1,337 @@
+/* Next Agent design tokens (docs/design/Design System.md, ADR-0012).
+ *
+ * The ONLY file under apps/desktop/src allowed to hold raw colour values and
+ * font stacks (scripts/check-design-tokens.mjs). Everything else uses
+ * var(--token). Themes: light by default, dark from prefers-color-scheme, and
+ * either forced with <html data-theme="light|dark">.
+ *
+ * Accent: interactive blue-indigo. The brand red lives only in the brand
+ * gradient (the island orb), because red already means "danger" here.
+ */
+
+/* ---------- Theme-independent scales ---------- */
+:root {
+  /* Type */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 26px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.45;
+  --line-height-relaxed: 1.6;
+  --letter-spacing-caps: 0.06em;
+
+  /* Spacing: --space-N = N × 4px */
+  --space-0: 0;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radii */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-full: 999px;
+
+  /* Borders */
+  --border-width: 1px;
+  --border-width-strong: 2px;
+
+  /* Control heights (buttons, fields, segmented controls) */
+  --control-height-sm: 24px;
+  --control-height-md: 30px;
+  --control-height-lg: 36px;
+
+  /* Motion */
+  --duration-instant: 60ms;
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Layers */
+  --z-base: 0;
+  --z-raised: 1;
+  --z-sticky: 10;
+  --z-dropdown: 100;
+  --z-overlay: 200;
+  --z-modal: 300;
+  --z-popover: 400;
+  --z-toast: 500;
+  --z-tooltip: 600;
+
+  /* Layout */
+  --content-max-width: 880px;
+  --settings-nav-width: 200px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0.01ms;
+    --duration-fast: 0.01ms;
+    --duration-normal: 0.01ms;
+    --duration-slow: 0.01ms;
+  }
+}
+
+/* ---------- Light (default) ---------- */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg: #f7f7f8;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f0f1f3;
+  --color-surface-raised: #ffffff;
+  --color-surface-overlay: #ffffff;
+  --color-surface-hover: #eceef2;
+  --color-surface-active: #e2e5ea;
+  --color-surface-inverse: #1b1d21;
+
+  --color-text: #1b1d21;
+  --color-text-secondary: #5c616b;
+  --color-text-tertiary: #80858f;
+  --color-text-disabled: #a6abb3;
+  --color-text-inverse: #f5f6f8;
+
+  --color-border: #dcdee3;
+  --color-border-subtle: #e9eaee;
+  --color-border-strong: #b9bdc6;
+
+  --color-accent: #3b5bdb;
+  --color-accent-hover: #3250c7;
+  --color-accent-active: #2a44ad;
+  --color-accent-subtle: #ebeffd;
+  --color-accent-text: #3250c7;
+  --color-on-accent: #ffffff;
+
+  --color-info: #1c7ed6;
+  --color-info-subtle: #e8f2fc;
+  --color-info-border: #b5d4f4;
+  --color-info-text: #155f9f;
+  --color-on-info: #ffffff;
+
+  --color-ok: #2b8a3e;
+  --color-ok-subtle: #e7f5eb;
+  --color-ok-border: #b4dcbd;
+  --color-ok-text: #226b31;
+  --color-on-ok: #ffffff;
+
+  --color-warn: #d9780a;
+  --color-warn-subtle: #fdf2e3;
+  --color-warn-border: #f2cf9f;
+  --color-warn-text: #8f4b00;
+  --color-on-warn: #1f1300;
+
+  --color-danger: #d6293a;
+  --color-danger-subtle: #fcebed;
+  --color-danger-border: #f2b7be;
+  --color-danger-text: #ad1d2c;
+  --color-on-danger: #ffffff;
+
+  --color-neutral: #80858f;
+  --color-neutral-subtle: #eef0f2;
+  --color-neutral-border: #d6d9de;
+  --color-neutral-text: #4a4f58;
+
+  --color-control-thumb: #ffffff;
+  --color-focus: #3b5bdb;
+  --color-scrim: rgb(15 17 21 / 0.42);
+  --color-selection: rgb(59 91 219 / 0.22);
+
+  /* Brand: the red island orb (IslandMascot.svelte, tone "rest"). */
+  --color-brand: #ff5f6d;
+  --color-brand-2: #c0263f;
+  --brand-gradient:
+    radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.55), transparent 42%),
+    conic-gradient(from 210deg, var(--color-brand), var(--color-brand-2), var(--color-brand));
+
+  --shadow-sm: 0 1px 2px rgb(16 18 24 / 0.06);
+  --shadow-md: 0 2px 6px rgb(16 18 24 / 0.08), 0 1px 2px rgb(16 18 24 / 0.06);
+  --shadow-lg: 0 8px 24px rgb(16 18 24 / 0.12), 0 2px 6px rgb(16 18 24 / 0.06);
+  --shadow-xl: 0 18px 48px rgb(16 18 24 / 0.18), 0 4px 12px rgb(16 18 24 / 0.08);
+}
+
+/* ---------- Dark ---------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --color-bg: #14161a;
+    --color-surface: #1b1e23;
+    --color-surface-sunken: #17191d;
+    --color-surface-raised: #22262c;
+    --color-surface-overlay: #252930;
+    --color-surface-hover: #262a31;
+    --color-surface-active: #2e333b;
+    --color-surface-inverse: #e6e8ec;
+
+    --color-text: #e6e8ec;
+    --color-text-secondary: #9aa1ac;
+    --color-text-tertiary: #7b828d;
+    --color-text-disabled: #5c626c;
+    --color-text-inverse: #15171b;
+
+    --color-border: #2c3038;
+    --color-border-subtle: #24282e;
+    --color-border-strong: #424853;
+
+    --color-accent: #7c93f5;
+    --color-accent-hover: #93a6f7;
+    --color-accent-active: #a9b8f9;
+    --color-accent-subtle: #1f2640;
+    --color-accent-text: #9aacf8;
+    --color-on-accent: #0c1024;
+
+    --color-info: #5aa9f0;
+    --color-info-subtle: #13263a;
+    --color-info-border: #20476b;
+    --color-info-text: #8cc4f5;
+    --color-on-info: #08131f;
+
+    --color-ok: #6cc47f;
+    --color-ok-subtle: #14281b;
+    --color-ok-border: #24502f;
+    --color-ok-text: #95d8a4;
+    --color-on-ok: #07140b;
+
+    --color-warn: #f0a23b;
+    --color-warn-subtle: #32230e;
+    --color-warn-border: #5e4115;
+    --color-warn-text: #f5c27e;
+    --color-on-warn: #1f1300;
+
+    --color-danger: #ff6b78;
+    --color-danger-subtle: #3a1519;
+    --color-danger-border: #6a2730;
+    --color-danger-text: #ff9ca5;
+    --color-on-danger: #22060a;
+
+    --color-neutral: #7b828d;
+    --color-neutral-subtle: #23272d;
+    --color-neutral-border: #353a42;
+    --color-neutral-text: #b3b9c2;
+
+    --color-control-thumb: #e6e8ec;
+    --color-focus: #8ea2f7;
+    --color-scrim: rgb(0 0 0 / 0.6);
+    --color-selection: rgb(124 147 245 / 0.3);
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 2px 8px rgb(0 0 0 / 0.4), 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-lg: 0 10px 28px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
+    --shadow-xl: 0 20px 56px rgb(0 0 0 / 0.6), 0 4px 12px rgb(0 0 0 / 0.35);
+  }
+}
+
+/* Forced dark: the same values as the media query above. Keep both in sync. */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: #14161a;
+  --color-surface: #1b1e23;
+  --color-surface-sunken: #17191d;
+  --color-surface-raised: #22262c;
+  --color-surface-overlay: #252930;
+  --color-surface-hover: #262a31;
+  --color-surface-active: #2e333b;
+  --color-surface-inverse: #e6e8ec;
+
+  --color-text: #e6e8ec;
+  --color-text-secondary: #9aa1ac;
+  --color-text-tertiary: #7b828d;
+  --color-text-disabled: #5c626c;
+  --color-text-inverse: #15171b;
+
+  --color-border: #2c3038;
+  --color-border-subtle: #24282e;
+  --color-border-strong: #424853;
+
+  --color-accent: #7c93f5;
+  --color-accent-hover: #93a6f7;
+  --color-accent-active: #a9b8f9;
+  --color-accent-subtle: #1f2640;
+  --color-accent-text: #9aacf8;
+  --color-on-accent: #0c1024;
+
+  --color-info: #5aa9f0;
+  --color-info-subtle: #13263a;
+  --color-info-border: #20476b;
+  --color-info-text: #8cc4f5;
+  --color-on-info: #08131f;
+
+  --color-ok: #6cc47f;
+  --color-ok-subtle: #14281b;
+  --color-ok-border: #24502f;
+  --color-ok-text: #95d8a4;
+  --color-on-ok: #07140b;
+
+  --color-warn: #f0a23b;
+  --color-warn-subtle: #32230e;
+  --color-warn-border: #5e4115;
+  --color-warn-text: #f5c27e;
+  --color-on-warn: #1f1300;
+
+  --color-danger: #ff6b78;
+  --color-danger-subtle: #3a1519;
+  --color-danger-border: #6a2730;
+  --color-danger-text: #ff9ca5;
+  --color-on-danger: #22060a;
+
+  --color-neutral: #7b828d;
+  --color-neutral-subtle: #23272d;
+  --color-neutral-border: #353a42;
+  --color-neutral-text: #b3b9c2;
+
+  --color-control-thumb: #e6e8ec;
+  --color-focus: #8ea2f7;
+  --color-scrim: rgb(0 0 0 / 0.6);
+  --color-selection: rgb(124 147 245 / 0.3);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 0.4), 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 10px 28px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
+  --shadow-xl: 0 20px 56px rgb(0 0 0 / 0.6), 0 4px 12px rgb(0 0 0 / 0.35);
+}
+
+/* ---------- Derived tokens and legacy aliases ----------
+ * Declared on every theme root so they re-resolve where a theme is forced. */
+:root,
+[data-theme] {
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-focus);
+  --focus-ring-inset: inset 0 0 0 2px var(--color-focus);
+
+  /* Legacy names (pre-ADR-0012). Do not use in new code; later tasks remove them. */
+  --bg: var(--color-bg);
+  --panel: var(--color-surface);
+  --sidebar: var(--color-surface-sunken);
+  --border: var(--color-border);
+  --text: var(--color-text);
+  --muted: var(--color-text-secondary);
+  --accent: var(--color-accent);
+  --info: var(--color-info);
+  --warn: var(--color-warn);
+  --danger: var(--color-danger);
+  --ok: var(--color-ok);
+  --focus: var(--color-focus);
+}
