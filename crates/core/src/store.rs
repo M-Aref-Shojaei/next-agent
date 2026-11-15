@@ -694,16 +694,7 @@ impl Store {
              WHERE scope = 'global' OR workspace_id = ?1
              ORDER BY created_at ASC, id ASC",
         )?;
-        let rows = statement.query_map(rusqlite::params![workspace_id], |row| {
-            Ok(RuleRow {
-                id: row.get(0)?,
-                scope: row.get(1)?,
-                workspace_id: row.get(2)?,
-                effect: row.get(3)?,
-                kind: row.get(4)?,
-                pattern: row.get(5)?,
-            })
-        })?;
+        let rows = statement.query_map(rusqlite::params![workspace_id], rule_from_row)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
@@ -1177,19 +1168,7 @@ impl Store {
             "SELECT task_id, seq, call_id, tool, work_tree, git_dir, tree, created_at, undone_at
              FROM agent_step_snapshots WHERE task_id = ?1 ORDER BY seq ASC",
         )?;
-        let rows = statement.query_map(rusqlite::params![task_id], |row| {
-            Ok(StepSnapshotRow {
-                task_id: row.get(0)?,
-                seq: row.get(1)?,
-                call_id: row.get(2)?,
-                tool: row.get(3)?,
-                work_tree: row.get(4)?,
-                git_dir: row.get(5)?,
-                tree: row.get(6)?,
-                created_at: row.get(7)?,
-                undone_at: row.get(8)?,
-            })
-        })?;
+        let rows = statement.query_map(rusqlite::params![task_id], step_snapshot_from_row)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
@@ -2270,6 +2249,31 @@ fn sticky_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StickyRow> {
         combo: row.get(1)?,
         model: row.get(2)?,
         window: row.get(3)?,
+    })
+}
+
+fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RuleRow> {
+    Ok(RuleRow {
+        id: row.get(0)?,
+        scope: row.get(1)?,
+        workspace_id: row.get(2)?,
+        effect: row.get(3)?,
+        kind: row.get(4)?,
+        pattern: row.get(5)?,
+    })
+}
+
+fn step_snapshot_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StepSnapshotRow> {
+    Ok(StepSnapshotRow {
+        task_id: row.get(0)?,
+        seq: row.get(1)?,
+        call_id: row.get(2)?,
+        tool: row.get(3)?,
+        work_tree: row.get(4)?,
+        git_dir: row.get(5)?,
+        tree: row.get(6)?,
+        created_at: row.get(7)?,
+        undone_at: row.get(8)?,
     })
 }
 
