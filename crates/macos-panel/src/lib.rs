@@ -37,7 +37,7 @@ pub use placement::{
 
 #[cfg(target_os = "macos")]
 pub use mac::{
-    adopt, cursor_in_panel, display_asleep, order_front, place, place_frame, release, screens,
+    adopt, cursor_in_panel, display_asleep, notch_at, order_front, place, place_frame, release, screens,
     set_ignores_mouse, set_key, Placed, ScreenEntry, PANEL_LEVEL,
 };
 

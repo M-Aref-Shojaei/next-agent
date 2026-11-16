@@ -63,6 +63,12 @@ async function main() {
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
   await onEvent<boolean>("pointer-inside", (inside) => island.setPointerInside(inside));
   await onEvent<null>("closed-hover", () => island.wakeFromClosed());
+  // Next Agent: the island is sized from the screen's real notch (Mac); Rust
+  // measures it on every placement. Listen first, then ask: no change is missed.
+  const setNotch = (n: { width: number; height: number } | null | undefined) =>
+    island.setNotch(n ? { w: n.width, h: n.height } : null);
+  await onEvent<{ width: number; height: number } | null>("island-notch", setNotch);
+  setNotch(await Bridge.islandNotch());
 
   /** Pause has to reach Rust too, or the pollers keep calling out. */
   const setPaused = (on: boolean) => {

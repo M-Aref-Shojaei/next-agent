@@ -118,18 +118,51 @@ export function chatPromptHeight(messageCount: number): number {
   return Math.min(300, 240 + messageCount * 40);
 }
 
+// Next Agent: the measured notch of a Mac screen that has one (safe-area inset
+// and auxiliary top areas, read in crates/macos-panel). Upstream sizes the Mac
+// island from it (islandSize(nw:nh:)); the PC constants above only stand in
+// where there is no notch.
+export interface Notch {
+  w: number;
+  h: number;
+}
+
+/** Room on each side of the notch in the compact island (Mac: nw + 160). */
+export const COMPACT_EAR = 80;
+/** The Claude plan pill in the compact island, and its gap to the notch. */
+const COMPACT_PLAN_W = 58;
+const COMPACT_PLAN_GAP = 6;
+/** Where the plan pill sits from the right edge, with and without the mini grid. */
+export const COMPACT_PLAN_RIGHT_WITH_GRID = 58;
+export const COMPACT_PLAN_RIGHT_ALONE = 20;
+
+/**
+ * How far the compact island reaches out on each side of the notch: upstream's
+ * 80 pt, or more when the plan pill (not in the Mac app) sits beside the mini
+ * grid and still has to clear the notch.
+ */
+export function compactEar(planPill: boolean, miniGrid: boolean): number {
+  if (!planPill) return COMPACT_EAR;
+  const right = miniGrid ? COMPACT_PLAN_RIGHT_WITH_GRID : COMPACT_PLAN_RIGHT_ALONE;
+  return Math.max(COMPACT_EAR, right + COMPACT_PLAN_W + COMPACT_PLAN_GAP);
+}
+
 export function islandSize(
   mode: IslandMode,
   view: IslandViewName,
   chatCount = 0,
+  notch: Notch | null = null,
+  ear = COMPACT_EAR,
 ): { w: number; h: number } {
   switch (mode) {
     case "hidden":
       // No notch to hide inside on a PC: the island retracts to zero height and
       // slides into the top edge of the screen instead of sitting there as a bar.
-      return { w: NOTCH_W, h: 0 };
+      // On a notch it folds into it: the notch's width, nothing drawn.
+      return { w: notch ? notch.w : NOTCH_W, h: 0 };
     case "compact":
-      return { w: COMPACT_W, h: NOTCH_H };
+      // Next Agent: sized from the real notch, so nothing lands under the camera.
+      return notch ? { w: notch.w + 2 * ear, h: notch.h } : { w: COMPACT_W, h: NOTCH_H };
     case "expanded": {
       const h = view === "prompt" ? chatPromptHeight(chatCount) : VIEW_LAYOUTS[view].height;
       return { w: EXPANDED_W, h };

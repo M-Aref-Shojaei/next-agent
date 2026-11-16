@@ -296,6 +296,24 @@ pub fn screens() -> Vec<ScreenEntry> {
         .collect()
 }
 
+/// The notch of the screen whose top-left corner is at (`x`, `y_top`), in the
+/// logical points Tauri reports for a monitor (global, y down from the top of
+/// the menu-bar screen): its width and height, or `None` for a screen without
+/// a notch or one that cannot be found. No unsafe: `AppKit`'s safe bindings only.
+/// Main thread only.
+#[must_use]
+pub fn notch_at(x: f64, y_top: f64) -> Option<(f64, f64)> {
+    let mtm = MainThreadMarker::new()?;
+    let top = primary_screen_height(mtm);
+    let screen = NSScreen::screens(mtm).iter().find(|s| {
+        let f = s.frame();
+        // Tauri rounds a monitor's origin to whole points.
+        (f.origin.x - x).abs() <= 1.0 && (top - (f.origin.y + f.size.height) - y_top).abs() <= 1.0
+    })?;
+    let g = screen_geometry(&screen);
+    g.has_notch.then_some((g.width, g.height))
+}
+
 /// Where the panel went.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Placed {

@@ -988,6 +988,7 @@ pub fn invoke_handler(
 
 coucou_commands![
             boot,
+            island::island_notch,
             mail::mail_refresh,
             mail::mail_more,
             mail::mail_search,

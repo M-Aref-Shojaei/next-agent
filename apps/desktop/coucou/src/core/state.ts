@@ -1,7 +1,7 @@
 // Ported from Coucou (MIT, © 2026 Louis Raillé): windows/src/core/state.ts @ 0d7fe58884d99f275f3238e8dbe29ddee69fa9e8
 // App state — mirror of AppState.swift (the parts the island needs).
 
-import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
+import type { BotEmoteName, BotStateName, IslandMode, IslandViewName, Notch } from "./layout";
 import type { EyeShape } from "../mochi/engine";
 import {
   DEFAULT_MAIN_PILL, HOST_OS, availablePills, orderPills, pillDefinition, sanitizeDeclared,
@@ -217,6 +217,8 @@ export const DIFF_TTL_MS = 3_600_000;
 
 class AppState {
   mode: IslandMode = "hidden";
+  // Next Agent: the notch of the screen the island is on (Mac), measured in Rust; null without one.
+  notch: Notch | null = null;
   view: IslandViewName = "overview";
 
   tasks: AgentTask[] = [];
