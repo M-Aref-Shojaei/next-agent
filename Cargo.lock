@@ -3343,9 +3343,11 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "coucou",
+ "dirs 7.0.0",
  "next-agent-channels",
  "next-agent-core",
  "next-agent-design",
+ "next-agent-diagnostics",
  "next-agent-graph",
  "next-agent-permission-engine",
  "next-agent-process-manager",

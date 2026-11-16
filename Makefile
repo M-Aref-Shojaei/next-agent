@@ -9,6 +9,7 @@ check:
 	node scripts/check-boundaries.mjs
 	node scripts/check-no-coucou-assets.mjs
 	node scripts/check-design-tokens.mjs
+	node scripts/check-log-fields.mjs
 	node scripts/gen-capabilities.mjs --check
 	node scripts/gen-topology.mjs --check
 

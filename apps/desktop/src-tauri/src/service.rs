@@ -22,6 +22,8 @@ const VAULT_KEY: &str = "vault.path";
 const SETTING_KEYS: &[(&str, &str)] = &[
     ("router.url", "router.base_url"),
     ("router.model", "router.default_model"),
+    // Settings → Diagnostics (diagnostics.rs): error, warn, info or debug.
+    ("logging.level", "logging.level"),
 ];
 const DEFAULT_ROUTER_URL: &str = "http://127.0.0.1:20128/v1";
 
@@ -268,7 +270,9 @@ impl AppService {
         self.store()?
             .set_setting(stored, &encoded)
             .map_err(|e| e.to_string())?;
-        self.router_generation.send_modify(|g| *g += 1);
+        if key.starts_with("router.") {
+            self.router_generation.send_modify(|g| *g += 1);
+        }
         Ok(())
     }
 

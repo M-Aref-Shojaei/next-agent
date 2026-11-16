@@ -7,6 +7,9 @@
 //  4. upstream.lock.json is valid and every entry names an existing adapter
 //  5. crates/permission-engine stays pure: no filesystem, process, network or
 //     environment access (facts come in through `FsFacts`)
+//  6. only crates/diagnostics writes under the logs folder (ADR-0013): no
+//     other Rust code names the `logs` folder or a `next-agent-*.jsonl` log
+//     file; the app gets the folder from `next_agent_diagnostics::logs_dir`
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -124,8 +127,18 @@ for (const file of walk("crates/permission-engine/src")) {
   if (match) failures.push(`${file.replaceAll("\\", "/")} uses ${match[0]}; the permission engine must stay I/O-free`);
 }
 
+// 6. the diagnostics log has one writer
+const LOGS_OWNER = "crates/diagnostics/";
+const LOGS_PATTERN = /"logs(?:[/\\][^"]*)?"|next-agent-[^"\s]*\.jsonl/;
+for (const file of ["crates", "apps", "services"].flatMap((root) => walk(root))) {
+  const rel = file.replaceAll("\\", "/");
+  if (rel.startsWith(LOGS_OWNER)) continue;
+  const match = LOGS_PATTERN.exec(readFileSync(file, "utf8"));
+  if (match) failures.push(`${rel} names the logs folder (${match[0]}); only ${LOGS_OWNER} writes there (use next_agent_diagnostics::logs_dir)`);
+}
+
 if (failures.length) {
   console.error(`Boundary check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
-console.log("Boundary check passed (5 seams, transports isolated, permission engine I/O-free).");
+console.log("Boundary check passed (5 seams, transports isolated, permission engine I/O-free, one log writer).");

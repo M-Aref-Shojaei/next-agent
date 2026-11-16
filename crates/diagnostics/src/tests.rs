@@ -173,7 +173,7 @@ fn canary_ui_events_go_through_the_same_rules() {
     let (_dir, _subscriber, handle) = start(Level::DEBUG);
     let fields = json!({
         "prompt": PROMPT,
-        "message": PROMPT,
+        "message": format!("TypeError at {HOME_PATH} for {EMAIL}"),
         "event": "fake",
         "error": format!("{SK_ANT} {EMAIL} {HOME_PATH}"),
         "page": PROMPT,
@@ -197,8 +197,12 @@ fn canary_ui_events_go_through_the_same_rules() {
     assert_eq!(entry["fields"]["duration_ms"], 812);
     assert_eq!(entry["fields"]["ok"], false);
     assert_eq!(entry["fields"]["page"], fields::INVALID);
-    // prompt, message, event, window (object) and count (array).
-    assert_eq!(entry["dropped_fields"], 5);
+    assert_eq!(
+        entry["message"],
+        "TypeError at ~/…/*.md (depth 3) for [redacted]"
+    );
+    // prompt, event, window (object) and count (array).
+    assert_eq!(entry["dropped_fields"], 4);
 }
 
 #[test]
@@ -418,6 +422,14 @@ fn init_installs_once() {
     // second must report that a subscriber is already installed.
     let _ = init(config.clone());
     assert!(matches!(init(config), Err(InitError::AlreadyInstalled)));
+}
+
+#[test]
+fn export_file_names_are_dated() {
+    let name = export_file_name();
+    assert!(name.starts_with("next-agent-diagnostics-20"), "{name}");
+    assert!(name.ends_with("Z.jsonl"), "{name}");
+    assert!(!name.contains(':'), "{name}");
 }
 
 #[test]

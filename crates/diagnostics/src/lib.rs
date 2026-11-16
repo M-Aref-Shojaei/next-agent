@@ -43,6 +43,15 @@ pub fn logs_dir(app_data: &Path) -> PathBuf {
     app_data.join(LOGS_DIR)
 }
 
+/// A file name for an export made now:
+/// `next-agent-diagnostics-2026-11-15T163401Z.jsonl` (UTC).
+#[must_use]
+pub fn export_file_name() -> String {
+    let (ts, _) = time::stamp(SystemTime::now());
+    let compact: String = ts[..19].chars().filter(|c| *c != ':').collect();
+    format!("next-agent-diagnostics-{compact}Z.jsonl")
+}
+
 /// How to start the log.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -326,8 +335,9 @@ impl Handle {
     }
 
     /// Log an event from outside `tracing` (the UI's `diag_log`), through the
-    /// same allowlist and redaction, with target `ui`. Returns whether it
-    /// was written (the level may filter it out).
+    /// same allowlist and redaction, with target `ui`. A string `message`
+    /// field becomes the entry's (redacted) message. Returns whether it was
+    /// written (the level may filter it out).
     ///
     /// # Errors
     /// When `event` is not a `snake_case` name.
@@ -344,11 +354,13 @@ impl Handle {
             return Ok(false);
         }
         let mut collect = layer::Collect::default();
+        let mut message = None;
         for (name, value) in fields {
-            if name == "message" || name == "event" {
-                collect.dropped += 1;
-            } else {
-                collect.put(name, value.clone());
+            match (name.as_str(), value) {
+                // A UI error's text (`ui_error`): free text, redacted.
+                ("message", Value::String(text)) => message = Some(redact(text)),
+                ("message" | "event", _) => collect.dropped += 1,
+                _ => collect.put(name, value.clone()),
             }
         }
         self.inner.emit(LogEntry {
@@ -356,7 +368,7 @@ impl Handle {
             level: layer::level_name(level).into(),
             target: "ui".into(),
             event: event.into(),
-            message: None,
+            message: message.filter(|m| !m.is_empty()),
             fields: collect.fields,
             span: Map::new(),
             dropped_fields: collect.dropped,
