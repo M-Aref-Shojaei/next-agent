@@ -55,7 +55,7 @@
   }
 
   function fail(e: unknown) {
-    log.warn("ui_error", { kind: "learning", error: String(e) });
+    log.warn("ui_error", { kind: "learning" });
     message = String(e);
   }
 

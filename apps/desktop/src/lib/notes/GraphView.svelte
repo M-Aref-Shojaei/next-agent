@@ -226,7 +226,7 @@
       problem = "";
       rebuild();
     } catch (e) {
-      log.warn("ui_error", { kind: "graph", error: String(e) });
+      log.warn("ui_error", { kind: "graph" });
       problem = String(e instanceof Error ? e.message : e);
     }
   }

@@ -4,6 +4,8 @@
 // MailAgent's shapes; the wording is the Mac's (MailViews.swift, MailHubPages.swift).
 
 import { invoke } from "@tauri-apps/api/core";
+// Next Agent: the shared diagnostics log (routes/coucou/+layout.svelte connects it to diag_log).
+import { log } from "../../../src/lib/log";
 import { IS_TAURI } from "./bridge";
 import { t } from "../i18n/i18n";
 
@@ -132,8 +134,10 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   if (!IS_TAURI) return null;
   try {
     return await invoke<T>(cmd, args);
-  } catch (err) {
-    console.error(`[next-agent] ${cmd} failed`, err);
+  } catch {
+    // Next Agent: into the shared diagnostics log (ADR-0013), by command name only:
+    // an overlay error can carry a provider's reply or a mail detail.
+    log.error("overlay_command_failed", { command: cmd });
     return null;
   }
 }

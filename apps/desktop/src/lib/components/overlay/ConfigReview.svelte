@@ -56,7 +56,7 @@
       review = null;
       ondone(note);
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_config", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_config" });
       error = current.failed(err);
       throw err; // keeps the dialog open, its confirm button enabled again
     }

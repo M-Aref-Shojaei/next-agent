@@ -28,7 +28,7 @@
         }
       } catch (e) {
         // Mermaid errors can quote the diagram, so only the error's type is logged.
-        log.warn("ui_error", { kind: "mermaid", error: e instanceof Error ? e.name : "unknown" });
+        log.warn("ui_error", { kind: "mermaid", code: e instanceof Error ? e.name : "unknown" });
         if (live) {
           svg = "";
           error = String(e instanceof Error ? e.message : e).split("\n")[0] ?? "";

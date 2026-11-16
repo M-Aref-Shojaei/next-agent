@@ -63,6 +63,7 @@ flowchart LR
   next_agent_desktop --> next_agent_design
   next_agent_desktop --> next_agent_diagnostics
   ts_desktop --> ts_contracts
+  ts_desktop ==>|"IPC: invoke / Channel"| next_agent_desktop
   ts_policy <-.->|"rule parity (check-policy-parity)"| next_agent_permission_engine
   ts_contracts <-.->|"event envelope v1"| next_agent_core
   ts_vault <-.->|"shared vault fixtures"| next_agent_core
@@ -112,10 +113,10 @@ flowchart LR
 | macos-panel | Rust crate | `crates/macos-panel` | — | — | — |
 | channels | Rust crate | `crates/channels` | core, permission-engine | desktop backend (Tauri) | — |
 | diagnostics | Rust crate | `crates/diagnostics` | — | desktop backend (Tauri) | — |
-| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph, coucou backend (Tauri), channels, design, diagnostics | — | — |
+| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph, coucou backend (Tauri), channels, design, diagnostics | desktop UI | — |
 | coucou backend (Tauri) | Rust crate | `apps/desktop/coucou/src-tauri` | — | desktop backend (Tauri) | — |
 | coucou-hook backend (Tauri) | Rust crate | `apps/desktop/coucou/hook` | — | — | — |
-| desktop UI | TS package | `apps/desktop` | contracts | — | — |
+| desktop UI | TS package | `apps/desktop` | contracts, desktop backend (Tauri) | — | — |
 | contracts | TS package | `packages/contracts` | — | desktop UI | core |
 | design-instrument | TS package | `packages/design-instrument` | — | — | — |
 | policy | TS package | `packages/policy` | — | — | permission-engine |

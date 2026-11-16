@@ -63,7 +63,7 @@
   }
 
   function showLoadError(e: unknown) {
-    log.warn("ui_error", { kind: "channels", error: String(e) });
+    log.warn("ui_error", { kind: "channels" });
     message = String(e);
   }
 
@@ -112,7 +112,7 @@
       edit(fresh);
       message = `Saved ${saved.config.name}.`;
     } catch (e) {
-      log.warn("ui_error", { kind: "channels", error: String(e) });
+      log.warn("ui_error", { kind: "channels" });
       message = String(e);
     } finally {
       busy = false;
@@ -124,7 +124,7 @@
     try {
       testResult = await api.channelTest(selectedId, token.trim() || undefined);
     } catch (e) {
-      log.warn("ui_error", { kind: "channels", error: String(e) });
+      log.warn("ui_error", { kind: "channels" });
       testResult = String(e);
     }
   }
@@ -135,7 +135,7 @@
       await work();
       if (done) message = done;
     } catch (e) {
-      log.warn("ui_error", { kind: "channels", error: String(e) });
+      log.warn("ui_error", { kind: "channels" });
       message = String(e);
     }
   }
@@ -225,7 +225,7 @@
           }),
         );
       } catch (e) {
-        log.warn("ui_error", { kind: "channels", error: String(e) });
+        log.warn("ui_error", { kind: "channels" });
         message = String(e);
       }
     })();

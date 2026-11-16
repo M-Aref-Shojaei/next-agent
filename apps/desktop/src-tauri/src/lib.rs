@@ -15,6 +15,9 @@ pub mod tasks;
 pub mod upstreams;
 pub mod wire;
 
+#[cfg(test)]
+mod log_canary_tests;
+
 use next_agent_process_manager::{
     HealthMonitor, HealthProbe, HealthReport, HealthStatus, MonitorConfig,
 };

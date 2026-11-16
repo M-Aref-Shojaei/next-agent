@@ -1,6 +1,7 @@
 //! The diagnostics log in the desktop app (ADR-0013,
 //! docs/architecture/Logging.md): started first thing in `run`, and the five
-//! `diag_*` commands for Settings → Diagnostics (main window only).
+//! `diag_*` commands for Settings → Diagnostics (main window only; `diag_log`
+//! also for the overlay windows).
 #![allow(clippy::needless_pass_by_value, clippy::missing_errors_doc)] // Tauri commands take owned args.
 
 use crate::service::AppService;
@@ -133,10 +134,13 @@ pub fn diag_export(
     Ok(summary)
 }
 
-/// An event from the UI (`lib/log.ts`). At most 20 a second; fields go
-/// through the same allowlist and redaction as Rust events.
+/// An event from the UI (`lib/log.ts`): the main window or an overlay
+/// window (the one Next Agent command their capabilities grant). At most 20
+/// a second across all windows; fields go through the same allowlist and
+/// redaction as Rust events, and `window` is the calling window's label.
 #[tauri::command]
 pub fn diag_log(
+    window: tauri::Window,
     diagnostics: State<Diagnostics>,
     level: String,
     event: String,
@@ -146,9 +150,11 @@ pub fn diag_log(
     if !diagnostics.limiter.allow(Instant::now()) {
         return Ok(());
     }
+    let mut fields = fields.unwrap_or_default();
+    fields.insert("window".into(), window.label().into());
     diagnostics
         .handle()?
-        .record(level, &event, &fields.unwrap_or_default())
+        .record(level, &event, &fields)
         .map(|_| ())
 }
 

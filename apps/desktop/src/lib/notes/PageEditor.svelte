@@ -48,7 +48,7 @@
         outliner.reloadIfIdle(page.blocks);
       }
     } catch (e) {
-      log.warn("ui_error", { kind: "notes", error: String(e) });
+      log.warn("ui_error", { kind: "notes" });
       problem = String(e instanceof Error ? e.message : e);
     }
   }

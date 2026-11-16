@@ -3336,6 +3336,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
@@ -3352,6 +3353,7 @@ dependencies = [
  "next-agent-graph",
  "next-agent-permission-engine",
  "next-agent-process-manager",
+ "regex",
  "serde",
  "serde_json",
  "tauri",
@@ -3386,6 +3388,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

@@ -178,7 +178,7 @@ const logEntries: LogEntry[] = [
   sample(20, "info", "router", "provider_call", { provider: "anthropic", model: "claude-sonnet-4-5", status: 200, duration_ms: 812, tokens_in: 1200, tokens_out: 300 }),
   sample(95, "warn", "router", "provider_call_failed", { provider: "openai", model: "gpt-4.1", status: 529, duration_ms: 1330, attempt: 2 }),
   sample(240, "info", "tasks", "task_finished", { task_id: "t_01JMOCK", mode: "agent", ok: true, duration_ms: 41200 }),
-  sample(300, "error", "ui", "command_failed", { command: "board_save", duration_ms: 14, error: "revision conflict" }),
+  sample(300, "error", "ui", "command_failed", { command: "gateway_combo_save", duration_ms: 14, error: "unknown role `x`" }),
   sample(600, "info", "app", "app_started", { version: "0.1.0", os: "macos", arch: "aarch64" }),
 ];
 

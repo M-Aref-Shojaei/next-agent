@@ -50,7 +50,7 @@
       apiFeedback = { tone: "ok", text: "Saved. It never touches disk." };
       await refreshClaude();
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_chat", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_chat" });
       apiFeedback = { tone: "danger", text: `Could not save: ${String(err)}` };
     }
   }
@@ -61,7 +61,7 @@
       apiFeedback = { tone: "ok", text: "Key removed." };
       await refreshClaude();
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_chat", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_chat" });
       apiFeedback = { tone: "danger", text: `Could not remove: ${String(err)}` };
     }
   }
@@ -97,7 +97,7 @@
       if (request !== generation) return;
       models = received;
     } catch (error) {
-      log.warn("ui_error", { kind: "overlay_chat", error: String(error) });
+      log.warn("ui_error", { kind: "overlay_chat" });
       if (request !== generation) return;
       modelLoadError = errorText(error);
     } finally {
@@ -112,7 +112,7 @@
       await overlay.saveSettings({ ...$state.snapshot(store.settings), model: next } as typeof store.settings);
       store.settings = { ...store.settings, model: next };
     } catch (error) {
-      log.warn("ui_error", { kind: "overlay_chat", error: String(error) });
+      log.warn("ui_error", { kind: "overlay_chat" });
       modelSaveError = errorText(error);
     } finally {
       savingModel = false;
@@ -202,7 +202,7 @@
         await store.set(change);
       }
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_chat", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_chat" });
       localStatus = { ...localStatus, [id]: errorText(err) };
     }
     connecting = { ...connecting, [id]: false };

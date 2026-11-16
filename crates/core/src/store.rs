@@ -470,7 +470,9 @@ impl Store {
                 "migration_applied"
             );
         }
-        tracing::info!(target: "store", version = SCHEMA_VERSION, "db_opened");
+        // Every connection opens the store (the app, each task, usage):
+        // debug, so `info` keeps the migration above and the errors only.
+        tracing::debug!(target: "store", version = SCHEMA_VERSION, "db_opened");
         Ok(store)
     }
 

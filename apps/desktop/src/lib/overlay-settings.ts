@@ -52,8 +52,9 @@ function inTauri(): boolean {
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
   try {
     return inTauri() ? await invoke<T>(cmd, args) : ((await overlayMock(cmd, args)) as T);
-  } catch (err) {
-    log.error("overlay_command_failed", { command: cmd, error: String(err) });
+  } catch {
+    // The command only: an overlay error can carry a provider's reply or a pairing detail.
+    log.error("overlay_command_failed", { command: cmd });
     return null;
   }
 }

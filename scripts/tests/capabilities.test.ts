@@ -32,11 +32,12 @@ test("each window has exactly one capability", () => {
   for (const label of ["main", ...Object.keys(WINDOWS)]) assert.equal(forWindow(label).length, 1, label);
 });
 
-test("no overlay window may call any of Next Agent's commands", () => {
+test("of Next Agent's commands, an overlay window may call exactly diag_log", () => {
   const ours = new Set<string>(NEXT_AGENT.map(allow));
   for (const label of Object.keys(WINDOWS)) {
     const granted = forWindow(label)[0].permissions;
-    assert.deepEqual(granted.filter((p) => ours.has(p)), [], label);
+    // The shared diagnostics log, and nothing else of Next Agent's.
+    assert.deepEqual(granted.filter((p) => ours.has(p)), [allow("diag_log")], label);
     // The ones that matter most, by name.
     for (const cmd of ["rule_delete", "setting_set", "vault_set", "gateway_connection_save", "gateway_settings_set", "approval_respond", "task_start"]) {
       assert.ok(!granted.includes(allow(cmd)), `${label}: ${cmd}`);

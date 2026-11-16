@@ -51,7 +51,7 @@
   let generation = 0;
 
   const fail = (e: unknown) => {
-    log.warn("ui_error", { kind: "boards", error: String(e) });
+    log.warn("ui_error", { kind: "boards" });
     problem = errorText(e);
   };
 
@@ -231,7 +231,7 @@
       scheduleSave();
     } catch (err) {
       // Mermaid errors can quote the diagram, so only the error's type is logged.
-      log.warn("ui_error", { kind: "boards", error: err instanceof Error ? err.name : "unknown" });
+      log.warn("ui_error", { kind: "boards", code: err instanceof Error ? err.name : "unknown" });
       problem = `Mermaid import failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
       busy = false;

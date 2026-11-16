@@ -67,7 +67,7 @@
     try {
       await overlay.flowClear(everything);
     } catch (cause) {
-      log.warn("ui_error", { kind: "overlay_dictation", error: String(cause) });
+      log.warn("ui_error", { kind: "overlay_dictation" });
       eraseError = cause instanceof Error ? cause.message : String(cause);
       throw cause;
     } finally {
@@ -100,7 +100,7 @@
       await overlay.flowSetStyles(next);
       styles = next;
     } catch (cause) {
-      log.warn("ui_error", { kind: "overlay_dictation", error: String(cause) });
+      log.warn("ui_error", { kind: "overlay_dictation" });
       stylesError = cause instanceof Error ? cause.message : String(cause);
       // Shows the actual selection again when the store rejects it.
       styles = [...styles];

@@ -27,7 +27,7 @@
         older = rest.slice(0, count).map((e) => e.name);
         problem = "";
       } catch (e) {
-        log.warn("ui_error", { kind: "journals", error: String(e) });
+        log.warn("ui_error", { kind: "journals" });
         if (live) problem = String(e instanceof Error ? e.message : e);
       }
     })();

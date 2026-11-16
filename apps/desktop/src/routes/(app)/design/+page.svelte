@@ -54,7 +54,7 @@
   let problem = $state("");
   let notices = $state<string[]>([]);
   const fail = (e: unknown) => {
-    log.warn("ui_error", { kind: "design", error: String(e) });
+    log.warn("ui_error", { kind: "design" });
     problem = errorText(e);
   };
 
@@ -342,7 +342,7 @@
       try {
         source = await api.designSource(ws.id, msg.location);
       } catch (e) {
-        log.warn("ui_error", { kind: "design", error: String(e) });
+        log.warn("ui_error", { kind: "design" });
         source = null;
         editNote = String(e);
       }

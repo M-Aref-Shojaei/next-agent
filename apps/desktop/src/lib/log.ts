@@ -138,21 +138,39 @@ export function errorMessage(e: unknown): string {
   return redact(String(e instanceof Error ? e.message : e));
 }
 
+/**
+ * Commands whose Rust errors hold only constants, ids, setting keys, model and
+ * provider names, and system errors. Other areas' errors can name people's work
+ * (a page, board, skill, channel or file name, a path, a merge's output), so
+ * their failures are logged by command and timing only and the message stays
+ * in the UI. A new command's errors are not logged until it is listed here.
+ */
+const SAFE_ERROR_COMMANDS =
+  /^(?:gateway_[a-z_]+|usage_summary|router_health|upstream_watch_[a-z_]+|audit_verify|rules_list|rule_delete|approval_respond|task_cancel|task_undoable|setting_get|setting_set|workspace_list)$/;
+
+/** The error text `command_failed` may carry for `command`, or nothing. */
+export function commandError(command: string, e: unknown): string | undefined {
+  return SAFE_ERROR_COMMANDS.test(command) ? errorMessage(e) : undefined;
+}
+
 let installed = false;
 
 /** Window errors and unhandled rejections become `ui_error` events. Runs once. */
 export function installGlobalHandlers(
   target: Pick<Window, "addEventListener" | "location"> | undefined = typeof window === "undefined" ? undefined : window,
 ): void {
-  if (installed || !target) return;
+  if (installed || typeof target?.addEventListener !== "function") return;
   installed = true;
   const page = () => target.location?.pathname ?? "";
   target.addEventListener("error", (event) => {
     const e = event as ErrorEvent;
     log.error("ui_error", { kind: "error", error: errorMessage(e.error ?? e.message), page: page() });
   });
+  // A rejection that is not an Error is a Rust command's error string, which can
+  // name people's work (see commandError): only that it happened is logged.
   target.addEventListener("unhandledrejection", (event) => {
-    log.error("ui_error", { kind: "unhandled_rejection", error: errorMessage((event as PromiseRejectionEvent).reason), page: page() });
+    const reason: unknown = (event as PromiseRejectionEvent).reason;
+    log.error("ui_error", { kind: "unhandled_rejection", error: reason instanceof Error ? errorMessage(reason) : undefined, page: page() });
   });
 }
 

@@ -12,6 +12,8 @@ path = "src/lib.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# The preview proxy's refusals, as fields only (ADR-0013). MIT.
+tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

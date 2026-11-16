@@ -355,11 +355,7 @@ impl MemoryStore {
             ));
         }
         self.write(target, &entries)?;
-        let kind = match target {
-            Target::Memory => "memory",
-            Target::User => "user",
-        };
-        tracing::info!(kind, bytes = text.len(), "memory_saved");
+        tracing::info!(kind = target.as_str(), bytes = text.len(), "memory_saved");
         Ok(entries.len())
     }
 
@@ -534,6 +530,14 @@ impl MemoryStore {
         }
         if working != entries {
             self.write(target, &working).map_err(fail)?;
+            // The agent's own writes (the tool), as the editor's above: the
+            // file and the size, never an entry.
+            tracing::info!(
+                kind = target.as_str(),
+                count = ops.len(),
+                bytes = total,
+                "memory_saved"
+            );
         }
         if batch {
             message = format!("Applied {} operation(s).", ops.len());

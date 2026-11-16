@@ -33,7 +33,7 @@
     try {
       drawLink(await overlay.phoneLinkSetEnabled(next));
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_phone" });
       // It could not start: the switch goes back off and says why.
       linkOn = false;
       link = null;
@@ -45,7 +45,7 @@
     try {
       pairing = newCode ? await overlay.phoneLinkNewPairing() : await overlay.phoneLinkPairing();
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_phone" });
       showError(String(err));
     }
   }
@@ -55,7 +55,7 @@
     try {
       pairing = await overlay.phoneLinkPairing();
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_phone" });
       showError(String(err));
     }
   }
@@ -121,7 +121,7 @@
     try {
       await flag.write(next);
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_phone" });
       flags = { ...flags, [flag.id]: false };
       flagNotes = { ...flagNotes, [flag.id]: String(err) };
     }
@@ -140,7 +140,7 @@
     try {
       ticked = (await overlay.phoneServicesSet(next)).services;
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_phone" });
       ticked = [...ticked];
       servicesNote = String(err);
     }
@@ -166,7 +166,7 @@
     try {
       await drawChat(await overlay.phoneChatSetEnabled(next));
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_phone" });
       chatOn = false;
       providers = null;
       chatNote = String(err);
@@ -184,7 +184,7 @@
     try {
       allowed = (await overlay.phoneChatSetModels(toggleModel(allowed, id, on))).models;
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_phone" });
       chatNote = String(err);
     }
   }
@@ -206,7 +206,7 @@
       showRelay(await overlay.phoneRelaySet(enabled, relayUrl));
       void refreshPairing();
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_phone" });
       relayNote = String(err);
       if (relay) relay = { ...relay, enabled: false };
     }
@@ -219,7 +219,7 @@
       showRelay(next);
       void refreshPairing();
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_phone" });
       relayNote = String(err);
     }
   }

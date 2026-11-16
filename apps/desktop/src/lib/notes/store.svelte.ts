@@ -92,7 +92,7 @@ class NotesStore {
   }
 
   private fail(e: unknown): void {
-    log.warn("ui_error", { kind: "notes", error: String(e) });
+    log.warn("ui_error", { kind: "notes" });
     this.message = String(e instanceof Error ? e.message : e);
     this.phase = "error";
   }
