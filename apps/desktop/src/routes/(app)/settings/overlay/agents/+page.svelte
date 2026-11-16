@@ -5,6 +5,7 @@
   // diff and where the dated backup goes, and confirmed it; the write then
   // carries that preview's fingerprint, so a file that changed since is not
   // written over.
+  import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import { Banner, Button, Checkbox, SettingsRow, SettingsSection, StatusDot, Switch } from "$lib/ds/index.ts";
   import ConfigReview, { type Review } from "$lib/components/overlay/ConfigReview.svelte";
@@ -70,6 +71,7 @@
     try {
       preview = await change.preview(install);
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_agents", error: String(err) });
       // An unreadable or invalid settings.json stops here rather than being
       // treated as empty and written over.
       note(block, "danger", errorText(err), true);
@@ -144,6 +146,7 @@
     try {
       plan = await overlay.agentHooksPreview(agent.id, install);
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_agents", error: String(err) });
       // An unreadable or unexpected config stops here rather than being treated as empty and written over.
       note(agent.id, "danger", errorText(err), true);
       return;
@@ -176,6 +179,7 @@
     try {
       agy = await overlay.agyApprovalsSetEnabled(enabled);
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_agents", error: String(err) });
       agy = agy ? { ...agy, enabled: !enabled } : agy;
       agyNote = errorText(err);
     }

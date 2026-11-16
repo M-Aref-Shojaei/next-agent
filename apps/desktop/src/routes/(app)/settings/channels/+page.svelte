@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
   import { app } from "$lib/app.svelte.ts";
@@ -61,6 +62,11 @@
     if (selectedId && !channels.some((c) => c.config.id === selectedId)) selectedId = null;
   }
 
+  function showLoadError(e: unknown) {
+    log.warn("ui_error", { kind: "channels", error: String(e) });
+    message = String(e);
+  }
+
   async function loadDetails() {
     if (!selectedId) {
       pairings = [];
@@ -82,7 +88,7 @@
     groupsText = info.config.groups.join(", ");
     token = "";
     testResult = null;
-    void loadDetails().catch((e) => (message = String(e)));
+    void loadDetails().catch(showLoadError);
   }
 
   function add() {
@@ -106,6 +112,7 @@
       edit(fresh);
       message = `Saved ${saved.config.name}.`;
     } catch (e) {
+      log.warn("ui_error", { kind: "channels", error: String(e) });
       message = String(e);
     } finally {
       busy = false;
@@ -117,6 +124,7 @@
     try {
       testResult = await api.channelTest(selectedId, token.trim() || undefined);
     } catch (e) {
+      log.warn("ui_error", { kind: "channels", error: String(e) });
       testResult = String(e);
     }
   }
@@ -127,6 +135,7 @@
       await work();
       if (done) message = done;
     } catch (e) {
+      log.warn("ui_error", { kind: "channels", error: String(e) });
       message = String(e);
     }
   }
@@ -212,10 +221,11 @@
         );
         keep(
           await api.onChannelChange((id) => {
-            if (id === selectedId) void loadDetails().catch((e) => (message = String(e)));
+            if (id === selectedId) void loadDetails().catch(showLoadError);
           }),
         );
       } catch (e) {
+        log.warn("ui_error", { kind: "channels", error: String(e) });
         message = String(e);
       }
     })();

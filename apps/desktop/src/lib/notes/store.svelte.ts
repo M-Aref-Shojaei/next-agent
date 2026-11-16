@@ -1,6 +1,7 @@
 // Notes session: opens the graph in the vault, keeps the page list and a change counter
 // that components watch to refresh when files change (our own saves included).
 import { api } from "../api.ts";
+import { log } from "../log.ts";
 import { dayNumber, type PageListItem } from "./types.ts";
 
 export type Phase = "loading" | "choose" | "setup" | "ready" | "error";
@@ -91,6 +92,7 @@ class NotesStore {
   }
 
   private fail(e: unknown): void {
+    log.warn("ui_error", { kind: "notes", error: String(e) });
     this.message = String(e instanceof Error ? e.message : e);
     this.phase = "error";
   }

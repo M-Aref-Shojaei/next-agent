@@ -1,5 +1,6 @@
 // App-wide reactive state (Svelte 5 runes). Logic lives in pure modules
 // (timeline.ts, modes.ts, shortcuts.ts); this class only wires them to the API.
+import { log } from "./log.ts";
 import type { ModeName } from "@next-agent/contracts";
 import { goto } from "$app/navigation";
 import { api, type RouterHealthReport, type Workspace } from "./api.ts";
@@ -84,6 +85,7 @@ class AppStore {
       this.workspaces = await api.workspaceList();
       this.activeWorkspaceId ??= this.workspaces[0]?.id ?? null;
     } catch (e) {
+      log.warn("ui_error", { kind: "app", error: String(e) });
       this.error = String(e);
     }
   }
@@ -96,6 +98,7 @@ class AppStore {
       this.error = null;
       return true;
     } catch (e) {
+      log.warn("ui_error", { kind: "app", error: String(e) });
       this.error = String(e);
       return false;
     }
@@ -130,6 +133,7 @@ class AppStore {
       this.profiles = list.profiles;
       if (list.warnings.length) this.error = `Agent profiles: ${list.warnings.join("; ")}`;
     } catch (e) {
+      log.warn("ui_error", { kind: "app", error: String(e) });
       this.error = String(e);
     }
   }
@@ -152,6 +156,7 @@ class AppStore {
       );
       this.error = null;
     } catch (e) {
+      log.warn("ui_error", { kind: "app", error: String(e) });
       this.error = String(e);
     }
   }
@@ -184,6 +189,7 @@ class AppStore {
       this.error = null;
       return id;
     } catch (e) {
+      log.warn("ui_error", { kind: "app", error: String(e) });
       this.error = String(e);
       return null;
     }
@@ -217,6 +223,7 @@ class AppStore {
       await api.approvalRespond(taskId, approvalId, choice);
       this.tasks = this.tasks.map((t) => (t.id === taskId ? resolveApproval(t, approvalId, choice) : t));
     } catch (e) {
+      log.warn("ui_error", { kind: "app", error: String(e) });
       this.error = String(e);
     }
   }
@@ -239,6 +246,7 @@ class AppStore {
       });
       this.error = null;
     } catch (e) {
+      log.warn("ui_error", { kind: "app", error: String(e) });
       this.error = String(e);
     }
   }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
   import {
@@ -69,6 +70,7 @@
   onMount(() => void load().catch(fail));
 
   function fail(e: unknown) {
+    log.warn("ui_error", { kind: "providers", error: String(e) });
     message = String(e);
     failed = true;
   }
@@ -121,6 +123,7 @@
     try {
       tests = { ...tests, [conn.id]: await api.gatewayConnectionTest(conn.id) };
     } catch (e) {
+      log.warn("ui_error", { kind: "providers", error: String(e) });
       tests = { ...tests, [conn.id]: { ok: false, detail: String(e), models: [] } };
     }
   }

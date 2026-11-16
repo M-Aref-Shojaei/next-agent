@@ -22,6 +22,7 @@
 </script>
 
 <script lang="ts">
+  import { log } from "../../log.ts";
   import { Banner, Dialog } from "$lib/ds/index.ts";
   import { diffLines } from "$lib/overlay-settings.ts";
 
@@ -55,6 +56,7 @@
       review = null;
       ondone(note);
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_config", error: String(err) });
       error = current.failed(err);
       throw err; // keeps the dialog open, its confirm button enabled again
     }

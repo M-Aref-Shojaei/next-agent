@@ -4,6 +4,10 @@
   // loads its entry module as it is. Their styles are Coucou's, written on
   // Next Agent's design tokens (ADR-0012), which load here.
   import "$lib/ds/tokens.css";
+  import { installGlobalHandlers } from "$lib/log.ts";
+
+  // Window errors and unhandled rejections in Coucou's windows, as in the main window.
+  installGlobalHandlers();
 
   let { children } = $props();
 

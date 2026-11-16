@@ -13,6 +13,7 @@
 // main window is granted exactly these overlay commands, and no others.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { log } from "./log.ts";
 import { overlayMock } from "./mock-api.ts";
 import type {
   AgentHookPlan,
@@ -52,7 +53,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   try {
     return inTauri() ? await invoke<T>(cmd, args) : ((await overlayMock(cmd, args)) as T);
   } catch (err) {
-    console.error(`[next-agent] ${cmd} failed`, err);
+    log.error("overlay_command_failed", { command: cmd, error: String(err) });
     return null;
   }
 }
@@ -68,7 +69,7 @@ export async function onOverlayEvent<T>(name: string, handler: (payload: T) => v
   try {
     return await listen<T>(name, (e) => handler(e.payload));
   } catch (err) {
-    console.error(`[next-agent] listen ${name} failed`, err);
+    log.error("overlay_listen_failed", { error: String(err) });
     return () => {};
   }
 }

@@ -1,4 +1,5 @@
 // Shared state of the upstream watch, for Settings → Upstreams and its badge.
+import { log } from "./log.ts";
 import { api } from "./api.ts";
 import type { WatchView } from "./upstreams.ts";
 
@@ -19,6 +20,7 @@ class UpstreamStore {
       this.view = await api.upstreamWatchStatus();
       await api.onUpstreamWatch((view) => (this.view = view));
     } catch (e) {
+      log.warn("ui_error", { kind: "upstreams", error: String(e) });
       this.error = String(e);
       // Try again on the next visit.
       this.#started = false;
@@ -31,6 +33,7 @@ class UpstreamStore {
     try {
       this.view = await api.upstreamWatchCheck();
     } catch (e) {
+      log.warn("ui_error", { kind: "upstreams", error: String(e) });
       this.error = String(e);
       if (this.view) this.view = { ...this.view, checking: false };
     }
@@ -40,6 +43,7 @@ class UpstreamStore {
     try {
       this.view = await api.upstreamWatchMarkSeen();
     } catch (e) {
+      log.warn("ui_error", { kind: "upstreams", error: String(e) });
       this.error = String(e);
     }
   }
@@ -48,6 +52,7 @@ class UpstreamStore {
     try {
       await api.upstreamOpen(url);
     } catch (e) {
+      log.warn("ui_error", { kind: "upstreams", error: String(e) });
       this.error = String(e);
     }
   }

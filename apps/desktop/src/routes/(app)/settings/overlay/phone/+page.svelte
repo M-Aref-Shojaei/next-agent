@@ -3,6 +3,7 @@
   // settings/phone.ts). Off until the user turns it on; each thing the phone
   // may see or do has its own switch, off by default, and Rust re-reads them
   // for every connection. Only this window (the main one) may change them.
+  import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import { Banner, Button, Checkbox, SettingsRow, SettingsSection, Switch, TextField } from "$lib/ds/index.ts";
   import { errorText, overlay, relayStateText } from "$lib/overlay-settings.ts";
@@ -32,6 +33,7 @@
     try {
       drawLink(await overlay.phoneLinkSetEnabled(next));
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
       // It could not start: the switch goes back off and says why.
       linkOn = false;
       link = null;
@@ -43,6 +45,7 @@
     try {
       pairing = newCode ? await overlay.phoneLinkNewPairing() : await overlay.phoneLinkPairing();
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
       showError(String(err));
     }
   }
@@ -52,6 +55,7 @@
     try {
       pairing = await overlay.phoneLinkPairing();
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
       showError(String(err));
     }
   }
@@ -117,6 +121,7 @@
     try {
       await flag.write(next);
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
       flags = { ...flags, [flag.id]: false };
       flagNotes = { ...flagNotes, [flag.id]: String(err) };
     }
@@ -135,6 +140,7 @@
     try {
       ticked = (await overlay.phoneServicesSet(next)).services;
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
       ticked = [...ticked];
       servicesNote = String(err);
     }
@@ -160,6 +166,7 @@
     try {
       await drawChat(await overlay.phoneChatSetEnabled(next));
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
       chatOn = false;
       providers = null;
       chatNote = String(err);
@@ -177,6 +184,7 @@
     try {
       allowed = (await overlay.phoneChatSetModels(toggleModel(allowed, id, on))).models;
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
       chatNote = String(err);
     }
   }
@@ -198,6 +206,7 @@
       showRelay(await overlay.phoneRelaySet(enabled, relayUrl));
       void refreshPairing();
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
       relayNote = String(err);
       if (relay) relay = { ...relay, enabled: false };
     }
@@ -210,6 +219,7 @@
       showRelay(next);
       void refreshPairing();
     } catch (err) {
+      log.warn("ui_error", { kind: "overlay_phone", error: String(err) });
       relayNote = String(err);
     }
   }

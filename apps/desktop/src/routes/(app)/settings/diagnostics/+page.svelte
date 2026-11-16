@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import { api, type LogEntry, type LogLevel } from "$lib/api.ts";
   import { errorText } from "$lib/errors.ts";
@@ -44,6 +45,7 @@
         limit: 200,
       });
     } catch (e) {
+      log.warn("ui_error", { kind: "diagnostics", error: String(e) });
       message = errorText(e);
     }
   }
@@ -53,6 +55,7 @@
       await api.diagSetLevel(next);
       level = next;
     } catch (e) {
+      log.warn("ui_error", { kind: "diagnostics", error: String(e) });
       message = errorText(e);
     }
   }
@@ -61,6 +64,7 @@
     try {
       await api.diagOpenFolder();
     } catch (e) {
+      log.warn("ui_error", { kind: "diagnostics", error: String(e) });
       message = errorText(e);
     }
   }
@@ -70,6 +74,7 @@
     try {
       exported = await api.diagExport();
     } catch (e) {
+      log.warn("ui_error", { kind: "diagnostics", error: String(e) });
       message = errorText(e);
     } finally {
       exporting = false;

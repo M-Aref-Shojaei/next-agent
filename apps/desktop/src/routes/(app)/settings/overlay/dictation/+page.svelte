@@ -3,6 +3,7 @@
   // the key, the pill, the microphone, the voice model, the window, the
   // history) and its styles (hub/pages/styles.ts). The Notetaker's summaries
   // have their own page.
+  import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import {
     Banner, Button, Dialog, IconButton, Icon, SegmentedControl, Select, SettingsRow, SettingsSection, Switch,
@@ -66,6 +67,7 @@
     try {
       await overlay.flowClear(everything);
     } catch (cause) {
+      log.warn("ui_error", { kind: "overlay_dictation", error: String(cause) });
       eraseError = cause instanceof Error ? cause.message : String(cause);
       throw cause;
     } finally {
@@ -98,6 +100,7 @@
       await overlay.flowSetStyles(next);
       styles = next;
     } catch (cause) {
+      log.warn("ui_error", { kind: "overlay_dictation", error: String(cause) });
       stylesError = cause instanceof Error ? cause.message : String(cause);
       // Shows the actual selection again when the store rejects it.
       styles = [...styles];

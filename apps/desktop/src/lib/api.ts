@@ -302,6 +302,31 @@ function channel<T>(on: (m: T) => void): Channel<T> {
 const SLOW_COMMAND_MS = 2000;
 
 /**
+ * Commands that are slow by design (agent tasks, design generation, catalogue
+ * refreshes, exports, graph opening). Going over SLOW_COMMAND_MS is expected for
+ * them, so it is not logged as `slow_command`. Their failures still are.
+ */
+export const LONG_RUNNING_COMMANDS: ReadonlySet<string> = new Set([
+  "task_start",
+  "design_generate",
+  "design_iterate",
+  "design_convert",
+  "design_implement",
+  "gateway_catalog_refresh",
+  "gateway_connection_test",
+  "upstream_watch_check",
+  "curator_run",
+  "cron_run_now",
+  "board_export",
+  "graph_open",
+]);
+
+/** True when a slow run of `command` should be logged as `slow_command`. */
+export function isSlowCommand(command: string, duration_ms: number): boolean {
+  return duration_ms > SLOW_COMMAND_MS && !LONG_RUNNING_COMMANDS.has(command);
+}
+
+/**
  * The one place the UI calls Rust. A failed command logs `command_failed` and a
  * slow one `slow_command`, with the command name and timing only: never the
  * arguments, which hold people's work. The diagnostics commands are not logged,
@@ -313,7 +338,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   try {
     const result = await invoke<T>(command, args);
     const duration_ms = Math.round(performance.now() - started);
-    if (watched && duration_ms > SLOW_COMMAND_MS) log.warn("slow_command", { command, duration_ms });
+    if (watched && isSlowCommand(command, duration_ms)) log.warn("slow_command", { command, duration_ms });
     return result;
   } catch (e) {
     if (watched) log.error("command_failed", { command, duration_ms: Math.round(performance.now() - started), error: errorMessage(e) });

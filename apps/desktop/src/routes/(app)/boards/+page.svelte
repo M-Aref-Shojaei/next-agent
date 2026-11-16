@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { log } from "$lib/log.ts";
   import { onMount, tick } from "svelte";
   import { api, type BoardDoc, type BoardMeta } from "$lib/api.ts";
   import { errorText } from "$lib/errors.ts";
@@ -49,7 +50,10 @@
   /** Bumped whenever a canvas unmounts, so a late onReady from a dead canvas is ignored. */
   let generation = 0;
 
-  const fail = (e: unknown) => (problem = errorText(e));
+  const fail = (e: unknown) => {
+    log.warn("ui_error", { kind: "boards", error: String(e) });
+    problem = errorText(e);
+  };
 
   async function loadEngine(): Promise<Engine> {
     engine ??= await import("$lib/boards/excalidraw.ts");
@@ -226,7 +230,9 @@
       mermaidOpen = false;
       scheduleSave();
     } catch (err) {
-      fail(`Mermaid import failed: ${err instanceof Error ? err.message : String(err)}`);
+      // Mermaid errors can quote the diagram, so only the error's type is logged.
+      log.warn("ui_error", { kind: "boards", error: err instanceof Error ? err.name : "unknown" });
+      problem = `Mermaid import failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
       busy = false;
     }

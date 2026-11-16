@@ -1,6 +1,7 @@
 <script lang="ts">
   // Settings → Memory and skills: curated memory, the skill library, the
   // background review and cron jobs (ported from Hermes Agent, MIT).
+  import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
   import { app } from "$lib/app.svelte.ts";
@@ -54,6 +55,7 @@
   }
 
   function fail(e: unknown) {
+    log.warn("ui_error", { kind: "learning", error: String(e) });
     message = String(e);
   }
 

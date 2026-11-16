@@ -2,6 +2,7 @@
   // Behaviour follows Logseq (AGPL-3.0): the page graph (frontend/extensions/graph.cljs) —
   // pages as nodes sized by links, journals dimmed, click a node to open the page.
   // Layout by d3-force (ISC), drawn on a canvas.
+  import { log } from "../log.ts";
   import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
@@ -225,6 +226,7 @@
       problem = "";
       rebuild();
     } catch (e) {
+      log.warn("ui_error", { kind: "graph", error: String(e) });
       problem = String(e instanceof Error ? e.message : e);
     }
   }

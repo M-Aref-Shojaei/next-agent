@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Banner, currentTheme, watchTheme } from "$lib/ds/index.ts";
+  import { log } from "$lib/log.ts";
   // Mermaid (MIT) is loaded on first use. `securityLevel: "strict"` makes it sanitise the
   // diagram text and the SVG; the CSP (`default-src 'self'`) keeps anything remote out.
   let { code }: { code: string } = $props();
@@ -26,6 +27,8 @@
           error = "";
         }
       } catch (e) {
+        // Mermaid errors can quote the diagram, so only the error's type is logged.
+        log.warn("ui_error", { kind: "mermaid", error: e instanceof Error ? e.name : "unknown" });
         if (live) {
           svg = "";
           error = String(e instanceof Error ? e.message : e).split("\n")[0] ?? "";

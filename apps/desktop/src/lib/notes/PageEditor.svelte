@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { log } from "../log.ts";
   import { onDestroy, untrack } from "svelte";
   import { api } from "$lib/api.ts";
   import { Badge, Banner, Button } from "$lib/ds/index.ts";
@@ -47,6 +48,7 @@
         outliner.reloadIfIdle(page.blocks);
       }
     } catch (e) {
+      log.warn("ui_error", { kind: "notes", error: String(e) });
       problem = String(e instanceof Error ? e.message : e);
     }
   }

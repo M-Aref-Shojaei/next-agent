@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { log } from "../log.ts";
   import { api } from "$lib/api.ts";
   import { Banner, Button } from "$lib/ds/index.ts";
   import { useNotes } from "./ctx.ts";
@@ -26,6 +27,7 @@
         older = rest.slice(0, count).map((e) => e.name);
         problem = "";
       } catch (e) {
+        log.warn("ui_error", { kind: "journals", error: String(e) });
         if (live) problem = String(e instanceof Error ? e.message : e);
       }
     })();
