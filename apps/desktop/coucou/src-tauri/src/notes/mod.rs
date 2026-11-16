@@ -289,7 +289,8 @@ fn start_inner(app: &AppHandle, taker: &Arc<NoteTaker>) -> Result<String, String
         sink.lock().unwrap().push(s)
     })
     .map_err(|err| {
-        crate::log::line(format!("notes: microphone: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::fail("notes_microphone_failed", &err);
         let _ = std::fs::remove_dir_all(&dir);
         t("Next Agent can't hear you: the microphone is not allowed or not available.")
     })?;
@@ -301,7 +302,8 @@ fn start_inner(app: &AppHandle, taker: &Arc<NoteTaker>) -> Result<String, String
             match audio::Capture::start(audio::Source::System, move |s| sink.lock().unwrap().push(s)) {
                 Ok(capture) => (Some(capture), Some(channel)),
                 Err(err) => {
-                    crate::log::line(format!("notes: system sound unavailable: {err}"));
+                    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                    crate::log::fail("notes_system_sound_unavailable", &err);
                     let _ = std::fs::remove_file(dir.join("system.wav"));
                     (None, None)
                 }
@@ -324,7 +326,8 @@ fn start_inner(app: &AppHandle, taker: &Arc<NoteTaker>) -> Result<String, String
     spawn_live(app.clone(), taker.clone(), id.clone(), mic_channel, system_channel, stop_live);
     pill::update(app, |s| s.note_started_at = Some(note.start));
     let _ = app.emit_to(crate::HUB_LABEL, "notes-changed", &id);
-    crate::log::line("notes: recording");
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    crate::log::line("notes_recording", "recording");
     Ok(id)
 }
 
@@ -348,7 +351,8 @@ fn spawn_live(
             // voice model busy for hours, then takes as long again to write:
             // it stops by itself after a long silence, or a very long call.
             if let Some(why) = auto_stop(started.elapsed(), last_words.elapsed()) {
-                crate::log::line(format!("notes: stopped by itself ({why:?})"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::info!(target: "overlay", reason = format!("{why:?}"), "notes_auto_stopped");
                 // `stop` here is the live loop's flag: the module's function.
                 crate::notes::stop(&app);
                 let text = match why {
@@ -466,7 +470,8 @@ fn process(app: &AppHandle, id: &str) {
     let _ = app.emit_to(crate::HUB_LABEL, "notes-changed", id);
     let result = transcript(app, &taker, id);
     if let Err(err) = &result {
-        crate::log::line(format!("notes: transcript failed: {err}"));
+        // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+        crate::log::fail("notes_transcript_failed", "the transcript could not be made");
         taker.change(app, id, |n| {
             n.status = Status::Failed;
             n.error = Some(err.clone());
@@ -527,7 +532,8 @@ fn transcript(app: &AppHandle, taker: &Arc<NoteTaker>, id: &str) -> Result<(), S
     });
     let _ = std::fs::remove_file(&mic_path);
     let _ = std::fs::remove_file(&system_path);
-    crate::log::line(format!("notes: transcript of {count} lines"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", count = count as u64, "notes_transcript");
     Ok(())
 }
 

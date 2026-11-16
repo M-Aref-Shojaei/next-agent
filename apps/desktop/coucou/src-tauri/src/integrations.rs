@@ -20,7 +20,6 @@ use tokio::sync::Notify;
 
 use crate::github::{self, CiState, ContributionDay, GitHubActivity, GitHubPr, GitHubPulse, GitHubRepoCi, ReviewState};
 use crate::island::WINDOW_LABEL;
-use crate::log;
 use crate::secrets;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -790,17 +789,20 @@ async fn github_graphql(token: &str, query: &str, what: &str) -> Option<Value> {
         .send()
         .await;
     let Ok(response) = response else {
-        log::line(format!("github {what}: no connection"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::warn!(target: "overlay", kind = what, reason = "no connection", "github_request_failed");
         return None;
     };
     if !response.status().is_success() {
-        log::line(format!("github {what} HTTP {}", response.status().as_u16()));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::warn!(target: "overlay", kind = what, status = response.status().as_u16(), "github_request_failed");
         return None;
     }
     let root: Value = response.json().await.ok()?;
     let errors = github::graphql_error_count(&root);
     if errors > 0 {
-        log::line(format!("github {what} GraphQL errors: {errors}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::warn!(target: "overlay", kind = what, count = errors as u64, reason = "GraphQL errors", "github_request_failed");
     }
     root.get("data").filter(|d| d.is_object())?;
     Some(root)
@@ -1170,7 +1172,8 @@ async fn poll_n8n(app: AppHandle) {
         };
         if !response.status().is_success() {
             // Only the status: a self-hosted base URL can carry credentials.
-            log::line(format!("n8n list HTTP {}", response.status()));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::warn!(target: "overlay", status = response.status().as_u16(), reason = "list", "n8n_request_failed");
             continue;
         }
         let Ok(json) = response.json::<Value>().await else { continue };
@@ -1221,7 +1224,8 @@ async fn poll_n8n(app: AppHandle) {
         break;
     }
 
-    log::line(format!("n8n execution {id} {status} · {name}"));
+    // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+    tracing::info!(target: "overlay", kind = %status, "n8n_execution");
     emit(&app, IntegrationUpdate {
         id: "integration_n8n",
         data: json!({ "workflow": name, "status": status }),

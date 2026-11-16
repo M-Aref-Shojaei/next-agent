@@ -238,10 +238,11 @@ fn save_lock() -> MutexGuard<'static, ()> {
     SAVE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// One line in next-agent.log. Tests must never write to the real one.
+/// One line in the diagnostics log. Tests must never write to it.
 fn note(message: String) {
     #[cfg(not(test))]
-    crate::log::line(message);
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    crate::log::line("settings_file_issue", message);
     #[cfg(test)]
     eprintln!("{message}");
 }

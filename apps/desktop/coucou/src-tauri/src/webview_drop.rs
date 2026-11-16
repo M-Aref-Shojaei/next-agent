@@ -36,7 +36,8 @@ pub fn install(app: &AppHandle) {
         let core = match webview.controller().CoreWebView2() {
             Ok(core) => core,
             Err(err) => {
-                crate::log::line(format!("file drop: no webview: {err}"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                crate::log::fail("file_drop_failed", &err);
                 return;
             }
         };
@@ -63,10 +64,12 @@ pub fn install(app: &AppHandle) {
         }));
         let mut token = 0i64;
         if let Err(err) = core.add_WebMessageReceived(&handler, &mut token) {
-            crate::log::line(format!("file drop: cannot listen: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("file_drop_failed", &err);
         }
     });
     if let Err(err) = result {
-        crate::log::line(format!("file drop: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::fail("file_drop_failed", &err);
     }
 }

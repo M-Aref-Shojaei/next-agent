@@ -110,7 +110,8 @@ pub fn focus(session: &str) -> bool {
     match crate::platform::no_console(&mut cmd).spawn() {
         Ok(_) => true,
         Err(e) => {
-            crate::log::line(format!("herdr focus failed: {e}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("herdr_focus_failed", &e);
             false
         }
     }

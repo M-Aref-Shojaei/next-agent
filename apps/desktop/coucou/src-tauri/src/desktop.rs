@@ -289,7 +289,8 @@ pub fn setup(app: &AppHandle) {
             None => mode = DesktopMode::Off,
         }
     }
-    crate::log::line(format!("desktop Next Agent: {}", mode.as_str()));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = mode.as_str(), "desktop_mode");
     let desktop = Arc::new(Desktop::new(mode));
     app.manage(desktop.clone());
     // Nothing takes the mouse until he is out.
@@ -340,7 +341,8 @@ fn create_window(app: &AppHandle, _mode: DesktopMode) -> Option<WebviewWindow> {
             Some(win)
         }
         Err(err) => {
-            crate::log::line(format!("desktop Next Agent window failed: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("desktop_window_failed", &err);
             None
         }
     }
@@ -564,7 +566,8 @@ fn remember(app: &AppHandle, change: impl FnOnce(&mut settings::DesktopMochiPref
         s.clone()
     };
     if let Err(err) = settings::save(&snapshot) {
-        crate::log::line(format!("could not save settings: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::fail("settings_save_failed", &err);
     }
 }
 
@@ -825,7 +828,8 @@ pub async fn desktop_mochi_fly_out(app: AppHandle, anywhere: Option<bool>) -> bo
     }
     refresh_layer_display(&app, &d);
     let Some(target) = target_spot(&app, &d, anywhere.unwrap_or(false)) else {
-        crate::log::line("desktop Next Agent: his spot is on a display that is gone — he stays home");
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::line("desktop_position_reset", "the saved spot is on a display that is gone, back home");
         remember(&app, |p| p.on_desktop = false);
         return false;
     };

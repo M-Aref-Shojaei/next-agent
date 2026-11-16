@@ -87,7 +87,8 @@ fn publish_notch(app: &AppHandle, notch: Option<NotchInfo>) {
     if previous == Some(notch) {
         return;
     }
-    crate::log::line(format!("island notch: {notch:?}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = ?notch, "island_notch");
     let _ = app.emit_to(WINDOW_LABEL, "island-notch", notch);
 }
 
@@ -517,10 +518,8 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: Option<(f64, f64)>
     // the resize. If the physical inner size differs from what was requested, retry once.
     if let Ok(got) = win.inner_size() {
         if got.width != pw || got.height != ph {
-            crate::log::line(format!(
-                "window size mismatch: wanted {pw}x{ph}, got {}x{} (scale {scale}, monitor {}x{})",
-                got.width, got.height, ms.width, ms.height
-            ));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::line("island_size_mismatch", format!("wanted {pw}x{ph}, got {}x{} (scale {scale}, monitor {}x{})", got.width, got.height, ms.width, ms.height));
             let _ = win.set_size(PhysicalSize::new(pw, ph));
             let _ = win.set_position(PhysicalPosition::new(x, y));
         }
@@ -593,7 +592,8 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                         let first = last_screen.is_none();
                         last_screen = now;
                         if !first {
-                            crate::log::line("display layout changed — repositioning".to_string());
+                            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                            crate::log::line("island_display_changed", "display layout changed, repositioning");
                             let _ = app.emit_to(WINDOW_LABEL, "screen-changed", ());
                         }
                     }

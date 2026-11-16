@@ -28,11 +28,13 @@ pub fn set_low(win: &WebviewWindow, low: bool) {
             COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
         };
         if let Err(err) = core.SetMemoryUsageTargetLevel(level) {
-            crate::log::line(format!("webview memory {label}: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::warn!(target: "overlay", window = %label, error = %err, "webview_memory");
         }
     });
     if let Err(err) = result {
-        crate::log::line(format!("webview memory: with_webview failed: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::warn!(target: "overlay", error = %err, kind = "with_webview_failed", "webview_memory");
     }
 }
 

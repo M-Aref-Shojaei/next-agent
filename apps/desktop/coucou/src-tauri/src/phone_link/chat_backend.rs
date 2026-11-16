@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use super::chat::{BoxFuture, ChatBackend, ChatConfig, ChatFail, ModelOption};
 use crate::chat::Chat;
 use crate::settings::Settings;
-use crate::{chat, claude, log, openai_compat, secrets, Shared};
+use crate::{chat, claude, openai_compat, secrets, Shared};
 
 /// Most models the user can allow, and the longest model name taken.
 pub const MAX_ALLOWED: usize = 50;
@@ -66,7 +66,8 @@ impl ChatBackend for AppChat {
                 Err(err) => {
                     let kind = classify(is_local(provider), &err);
                     // The kind only: the text may echo a key.
-                    log::line(format!("phone link: chat via {provider} failed ({kind:?})"));
+                    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                    tracing::warn!(target: "overlay", provider = %provider, kind = ?kind, "phone_chat_failed");
                     Err(kind)
                 }
             }

@@ -112,8 +112,9 @@ impl Brain {
             let turn = tauri::async_runtime::block_on(async {
                 match crate::claude::voice_turn(FAST_MODEL, &system, &self.messages, &tools).await {
                     Ok(v) => Ok(v),
-                    Err(err) if !chat_model.is_empty() => {
-                        crate::log::line(format!("voice: {err}; the chat's model instead"));
+                    Err(_) if !chat_model.is_empty() => {
+                        // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+                        crate::log::fail("voice_model_fallback", "the fast model failed, the chat model is used");
                         crate::claude::voice_turn(&chat_model, &system, &self.messages, &tools).await
                     }
                     Err(err) => Err(err),
@@ -121,8 +122,9 @@ impl Brain {
             });
             let turn = match turn {
                 Ok(t) => t,
-                Err(err) => {
-                    crate::log::line(format!("voice: Claude turn failed: {err}"));
+                Err(_) => {
+                    // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+                    crate::log::fail("voice_turn_failed", "the Claude turn failed");
                     if self.messages.last().is_some_and(|m| m["content"].is_string()) {
                         self.messages.pop();
                     }

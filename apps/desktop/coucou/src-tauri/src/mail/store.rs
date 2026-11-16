@@ -146,7 +146,8 @@ impl Store {
                 std::fs::rename(&tmp, dir.join(name))
             });
         if let Err(e) = result {
-            crate::log::line(format!("[mail] could not save {name}: {e}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("mail_store_failed", &e);
         }
     }
 }

@@ -322,7 +322,8 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
 /// Hands an action to the island.
 pub fn dispatch<R: Runtime>(app: &AppHandle<R>, action: &str) {
-    crate::log::line(format!("shortcut {action}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = %action, "shortcut");
     if action == "wardrobeToggle" {
         let _ = app.emit_to(WINDOW_LABEL, "open-wardrobe", ());
     } else {
@@ -334,7 +335,8 @@ pub fn dispatch<R: Runtime>(app: &AppHandle<R>, action: &str) {
 fn release<R: Runtime>(app: &AppHandle<R>) {
     if let Some(gs) = app.try_state::<GlobalShortcut<R>>() {
         if let Err(err) = gs.unregister_all() {
-            crate::log::line(format!("shortcuts: unregister failed: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("shortcut_unregister_failed", &err);
         }
     }
     if let Some(registry) = app.try_state::<Registry>() {
@@ -376,7 +378,8 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, stored: &Bindings) {
                         Status::Active
                     }
                     Some(Err(err)) => {
-                        crate::log::line(format!("shortcuts: {} not registered: {err}", def.id));
+                        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                        tracing::warn!(target: "overlay", kind = %def.id, error = %err, "shortcut_register_failed");
                         Status::InUse
                     }
                     None => Status::Unsupported,
@@ -540,18 +543,21 @@ mod wayland {
             let mut portal = registry.portal.lock().unwrap();
             match event {
                 Event::Bound { gen, shortcuts } if gen == current => {
-                    crate::log::line("shortcuts: registered with the desktop portal");
+                    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                    crate::log::line("shortcuts_portal", "registered with the desktop portal");
                     mark_bound(&mut report, shortcuts.as_deref());
                     *portal = Some(PortalState::Active);
                 }
                 Event::Changed { gen, shortcuts } if gen == current => mark_changed(&mut report, &shortcuts),
                 Event::Failed { gen, reason } if gen == current => {
-                    crate::log::line(format!("shortcuts: the desktop portal didn't take them: {reason}"));
+                    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                    tracing::warn!(target: "overlay", kind = "refused", reason = %reason, "shortcuts_portal");
                     mark_failed(&mut report);
                     *portal = None;
                 }
                 Event::Unavailable(reason) => {
-                    crate::log::line(format!("shortcuts: no portal, commands instead ({reason})"));
+                    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                    tracing::warn!(target: "overlay", kind = "no_portal", reason = %reason, "shortcuts_portal");
                     *link = Link::Gone;
                     mark_failed(&mut report);
                     *portal = None;

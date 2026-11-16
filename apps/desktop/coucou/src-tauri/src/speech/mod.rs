@@ -192,10 +192,12 @@ pub fn download(app: AppHandle) {
         }
         match result {
             Ok(()) => {
-                crate::log::line("speech models downloaded");
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                crate::log::line("speech_models_downloaded", "speech models downloaded");
                 preload();
             }
-            Err(err) => crate::log::line(format!("speech models download failed: {err}")),
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            Err(err) => crate::log::fail("speech_models_download_failed", &err),
         }
         emit_status(&app);
     });
@@ -306,8 +308,10 @@ pub fn recognizer() -> Option<Arc<OfflineRecognizer>> {
     let started = Instant::now();
     let r = OfflineRecognizer::create(&config).map(Arc::new);
     match &r {
-        Some(_) => crate::log::line(format!("Parakeet loaded in {:?}", started.elapsed())),
-        None => crate::log::line("Parakeet could not be loaded"),
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        Some(_) => tracing::info!(target: "overlay", kind = "parakeet", duration_ms = started.elapsed().as_millis() as u64, "speech_model_loaded"),
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        None => crate::log::fail("speech_model_load_failed", "Parakeet could not be loaded"),
     }
     *recognizer_slot().lock().unwrap() = r.clone();
     r
@@ -438,7 +442,8 @@ pub fn diarize(samples: &[f32]) -> Vec<Turn> {
     // Higher than the default 0.5: a voice is not split in two over a call.
     config.clustering.threshold = 0.7;
     let Some(d) = OfflineSpeakerDiarization::create(&config) else {
-        crate::log::line("diarizer could not be loaded");
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::fail("speech_model_load_failed", "the diarizer could not be loaded");
         return Vec::new();
     };
     let Some(result) = d.process(samples) else { return Vec::new() };

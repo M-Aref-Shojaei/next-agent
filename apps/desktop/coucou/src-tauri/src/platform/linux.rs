@@ -519,7 +519,8 @@ pub fn make_non_activating(win: &WebviewWindow) {
         } else {
             "compositor has no layer-shell"
         };
-        crate::log::line(format!("island is a regular window ({why})"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::info!(target: "overlay", window = "island", kind = "regular_window", reason = %why, "overlay_window");
         gw.set_accept_focus(false);
         if !gw.is_realized() {
             // On X11 a Dock is kept above everything and is the only kind of
@@ -570,7 +571,8 @@ pub fn make_non_activating(win: &WebviewWindow) {
         gtk::glib::Propagation::Proceed
     });
     LAYER_SURFACE.store(true, Ordering::Relaxed);
-    crate::log::line("island is a layer-shell overlay");
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", window = "island", kind = "layer_shell", "overlay_window");
 }
 
 thread_local! {
@@ -771,7 +773,8 @@ pub fn prepare_desktop_window(win: &WebviewWindow, mode: super::DesktopMode) -> 
     match mode {
         super::DesktopMode::Layer => {
             if gw.is_realized() {
-                crate::log::line("desktop Next Agent: window already shown, no layer surface");
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::info!(target: "overlay", window = "desktop_agent", kind = "already_shown", "overlay_window");
                 return false;
             }
             gw.set_titlebar(None::<&gtk::Widget>);

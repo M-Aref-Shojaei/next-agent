@@ -71,7 +71,8 @@ pub fn sync(app: &AppHandle) {
             std::thread::Builder::new().name("coucou-voice".into()).spawn(move || run(app2, stop2)).ok();
             *running = Some(Running { stop });
             speech::preload();
-            crate::log::line("voice: « OK Next Agent » listening");
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "listening", "voice_wake");
         }
         (false, true) => {
             if let Some(r) = running.take() {
@@ -81,7 +82,8 @@ pub fn sync(app: &AppHandle) {
             if !dictation && !crate::notes::is_recording(app) {
                 speech::unload();
             }
-            crate::log::line("voice: « OK Next Agent » off");
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "off", "voice_wake");
         }
         _ => {}
     }
@@ -122,7 +124,8 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
     let mut capture = match capture {
         Ok(c) => c,
         Err(err) => {
-            crate::log::line(format!("voice: microphone: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("voice_microphone_failed", &err);
             *RUNNING.lock().unwrap() = None;
             return;
         }
@@ -178,7 +181,8 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             let question = match &mut mode {
                 Mode::Wake => match wake::after_wake(&heard) {
                     Some(rest) => {
-                        crate::log::line("voice: « OK Next Agent » heard");
+                        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                        tracing::info!(target: "overlay", kind = "heard", "voice_wake");
                         hide_at = None;
                         if crate::flow::text::word_count(&rest) >= 2 {
                             Some(rest)
@@ -334,7 +338,8 @@ fn elevenlabs(text: &str, gender: &str) -> Option<Vec<u8>> {
             .await
             .ok()?;
         if !response.status().is_success() {
-            crate::log::line(format!("voice: ElevenLabs {}", response.status()));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::warn!(target: "overlay", provider = "elevenlabs", status = response.status().as_u16(), "voice_request_failed");
             return None;
         }
         Some(response.bytes().await.ok()?.to_vec())

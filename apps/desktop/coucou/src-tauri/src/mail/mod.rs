@@ -181,7 +181,8 @@ pub async fn poll(app: &AppHandle) {
             triage(app, &all).await;
         }
         Err(RunError::NotRunning) if pill => emit_card(app, false),
-        Err(e) => crate::log::line(format!("[mail] Outlook: {e}")),
+        // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+        Err(_) => crate::log::fail("mail_outlook_failed", "the Outlook request failed"),
     }
 }
 

@@ -38,7 +38,6 @@ use tokio::sync::mpsc;
 
 use crate::agy_approvals;
 use crate::island::WINDOW_LABEL;
-use crate::log;
 use crate::session_window;
 
 /// Slightly under next-agent-hook's own 110 s wait, so we always answer first.
@@ -65,7 +64,8 @@ static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_CON
 /// refuses it when all are taken.
 fn serve(app: &AppHandle, relay: impl Relay + Send + 'static) {
     let Ok(slot) = SLOTS.try_acquire() else {
-        log::line("too many relay connections at once; one refused");
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::warn!(target: "overlay", decision = "refused", reason = "too many connections at once", "relay_connection");
         return;
     };
     let app = app.clone();
@@ -108,7 +108,8 @@ pub fn start(app: AppHandle) {
         let mut server = match ServerOptions::new().first_pipe_instance(true).create(&name) {
             Ok(s) => s,
             Err(err) => {
-                log::line(format!("cannot open the relay pipe: {err}"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::warn!(target: "overlay", decision = "failed", error = %err, reason = "cannot open the pipe", "relay_connection");
                 return;
             }
         };
@@ -125,7 +126,8 @@ pub fn start(app: AppHandle) {
             let next = match ServerOptions::new().create(&name) {
                 Ok(s) => s,
                 Err(err) => {
-                    log::line(format!("cannot reopen the relay pipe: {err}"));
+                    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                    tracing::warn!(target: "overlay", decision = "failed", error = %err, reason = "cannot reopen the pipe", "relay_connection");
                     return;
                 }
             };
@@ -133,7 +135,8 @@ pub fn start(app: AppHandle) {
             // Next Agent: relay limits (security review): only a relay run by this same user (the SID check
             // next-agent-hook does the other way round), and not too many at once.
             if !connected_client_is_us(&connected) {
-                log::line("refused a relay connection from another user");
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::warn!(target: "overlay", decision = "refused", reason = "another user", "relay_connection");
                 continue;
             }
             serve(&app, connected);
@@ -156,7 +159,8 @@ pub fn start(app: AppHandle) {
 
     tauri::async_runtime::spawn(async move {
         let Some(path) = crate::platform::relay_socket_path() else {
-            log::line("no private runtime directory ($XDG_RUNTIME_DIR) — Claude Code hooks are inactive");
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::warn!(target: "overlay", decision = "failed", reason = "no private runtime directory", "relay_connection");
             return;
         };
         // A socket file left behind by a crash answers nothing and can go. One
@@ -164,7 +168,8 @@ pub fn start(app: AppHandle) {
         // first_pipe_instance on Windows, we refuse to serve on top of it.
         if path.exists() {
             if std::os::unix::net::UnixStream::connect(&path).is_ok() {
-                log::line("another Next Agent already serves the relay socket");
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::warn!(target: "overlay", decision = "failed", reason = "another instance serves the socket", "relay_connection");
                 return;
             }
             let _ = std::fs::remove_file(&path);
@@ -172,7 +177,8 @@ pub fn start(app: AppHandle) {
         let listener = match UnixListener::bind(&path) {
             Ok(l) => l,
             Err(err) => {
-                log::line(format!("cannot open the relay socket: {err}"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::warn!(target: "overlay", decision = "failed", error = %err, reason = "cannot open the socket", "relay_connection");
                 return;
             }
         };
@@ -199,7 +205,8 @@ pub fn start(app: AppHandle) {
             // passes, because the socket is 0600 inside our 0700 runtime
             // directory, so only this user could have connected.
             if is_other_user(stream.peer_cred().map(|c| c.uid()), uid) {
-                log::line("refused a relay connection from another user");
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::warn!(target: "overlay", decision = "refused", reason = "another user", "relay_connection");
                 continue;
             }
             // Next Agent: relay limits (security review): not too many at once.
@@ -252,7 +259,8 @@ impl Relay for tokio::net::UnixStream {
 async fn handle(app: AppHandle, mut pipe: impl Relay) {
     // Next Agent: relay limits (security review): the line must arrive within READ_TIMEOUT.
     let Ok(Some(buf)) = tokio::time::timeout(READ_TIMEOUT, read_line(&mut pipe)).await else {
-        log::line("dropped a relay connection that sent no complete line in time");
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::warn!(target: "overlay", decision = "refused", reason = "no complete line in time", "relay_connection");
         return;
     };
     let line = match buf.iter().position(|b| *b == b'\n') {
@@ -284,7 +292,8 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
     if event != "PermissionRequest" {
         // The status line relay calls in with every Claude Code update: not log-worthy.
         if event != "StatusLine" {
-            log::line(format!("hook {event}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = %event, "hook_event");
         }
         let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
         pipe.finish();
@@ -299,7 +308,8 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
     }
     crate::recap::note_request(&app, &id, &payload);
     payload["request_id"] = json!(id);
-    log::line(format!("hook PermissionRequest id={id}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "PermissionRequest", approval_id = %id, "hook_event");
     let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
 
     // Answered in the terminal (or the app) instead: Claude Code ends the relay,
@@ -308,7 +318,8 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
     let decision = tokio::select! {
         d = wait_for_decision(&id, &mut rx) => d,
         () = client_gone(&mut pipe) => {
-            log::line(format!("hook id={id} answered elsewhere"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "answered_elsewhere", approval_id = %id, "hook_event");
             crate::recap::forget_request(&app, &id);
             None
         }
@@ -341,7 +352,8 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
 async fn agy_pre_tool(app: AppHandle, mut pipe: impl Relay, payload: Value) {
     let enabled = app.state::<crate::Shared>().settings.lock().unwrap().agy_approvals_enabled;
     let gate = agy_approvals::gate(&payload, enabled, &crate::platform::home_dir());
-    log::line("hook PreToolUse");
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "PreToolUse", "hook_event");
     let _ = app.emit_to(WINDOW_LABEL, "hook", payload.clone());
     let Some(gate) = gate else {
         reply_line(&mut pipe, "ask").await;
@@ -357,7 +369,8 @@ async fn agy_pre_tool(app: AppHandle, mut pipe: impl Relay, payload: Value) {
     card["hook_event_name"] = json!("PermissionRequest");
     card["request_id"] = json!(id);
     card["tool_input"]["command"] = json!(gate.command);
-    log::line(format!("hook Antigravity command waits for the island id={id}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "agy_waits_for_island", approval_id = %id, "hook_event");
     let _ = app.emit_to(WINDOW_LABEL, "hook", card);
 
     // The relay hung up (Antigravity stopped waiting, or the turn was cancelled): the
@@ -377,7 +390,8 @@ async fn agy_pre_tool(app: AppHandle, mut pipe: impl Relay, payload: Value) {
                     Ok(Some(Reply::Decision(d))) => Some(d),
                     Ok(Some(_)) | Ok(None) => None,
                     Err(_) => {
-                        log::line(format!("hook id={id} timed out — Antigravity asks"));
+                        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                        tracing::info!(target: "overlay", kind = "agy_timed_out", approval_id = %id, "hook_event");
                         None
                     }
                 },
@@ -399,7 +413,8 @@ async fn agy_pre_tool(app: AppHandle, mut pipe: impl Relay, payload: Value) {
         Some("deny") => "deny",
         _ => "ask",
     };
-    log::line(format!("hook id={id} answered {word}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "answered", decision = word, approval_id = %id, "hook_event");
     if word == "ask" {
         crate::recap::forget_request(&app, &id);
         let _ = app.emit_to(WINDOW_LABEL, "approval-expired", &id);
@@ -410,7 +425,8 @@ async fn agy_pre_tool(app: AppHandle, mut pipe: impl Relay, payload: Value) {
 
 /// The relay left before an answer: forget the request, take the card down.
 fn agy_settled(app: &AppHandle, id: &str, why: &str) {
-    log::line(format!("hook id={id} {why}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "settled", reason = why, approval_id = %id, "hook_event");
     app.state::<Pending>().0.lock().unwrap().remove(id);
     crate::recap::forget_request(app, id);
     let _ = app.emit_to(WINDOW_LABEL, "approval-expired", id);
@@ -463,31 +479,37 @@ async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<S
         Ok(Some(Reply::Ack)) => {}
         // A click that beats the ack is still a click.
         Ok(Some(Reply::Decision(d))) => {
-            log::line(format!("hook id={id} answered {}", loggable(&d)));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "answered", decision = loggable(&d), approval_id = %id, "hook_event");
             return Some(d);
         }
         Ok(Some(Reply::Decline)) => {
-            log::line(format!("hook id={id} not shown — terminal takes over"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "not_shown", approval_id = %id, "hook_event");
             return None;
         }
         Ok(None) => return None,
         Err(_) => {
-            log::line(format!("hook id={id} island never acknowledged — terminal takes over"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "not_acknowledged", approval_id = %id, "hook_event");
             return None;
         }
     }
 
     match tokio::time::timeout(DECISION_TIMEOUT, rx.recv()).await {
         Ok(Some(Reply::Decision(d))) => {
-            log::line(format!("hook id={id} answered {}", loggable(&d)));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "answered", decision = loggable(&d), approval_id = %id, "hook_event");
             Some(d)
         }
         Ok(Some(Reply::Decline)) => {
-            log::line(format!("hook id={id} released without a decision"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "released", approval_id = %id, "hook_event");
             None
         }
         _ => {
-            log::line(format!("hook id={id} timed out — terminal takes over"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "timed_out", approval_id = %id, "hook_event");
             None
         }
     }
@@ -495,7 +517,7 @@ async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<S
 
 /// The log says a question was answered, never with what.
 fn loggable(decision: &str) -> &str {
-    if decision.starts_with('{') { "a question" } else { decision }
+    if decision.starts_with('{') { "question" } else { decision }
 }
 
 fn send(app: &AppHandle, request_id: &str, reply: Reply, keep: bool) {
@@ -508,7 +530,8 @@ fn send(app: &AppHandle, request_id: &str, reply: Reply, keep: bool) {
         Some(tx) => {
             let _ = tx.try_send(reply);
         }
-        None => log::line(format!("reply for id={request_id} — no pending request")),
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        None => tracing::warn!(target: "overlay", kind = "no_pending_request", approval_id = %request_id, "hook_event"),
     }
 }
 
@@ -543,7 +566,8 @@ pub fn acknowledge(app: &AppHandle, request_id: &str) {
 
 /// Nobody can act on this one — paused, or another card already holds the view.
 pub fn decline(app: &AppHandle, request_id: &str) {
-    log::line(format!("decline id={request_id}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "decline", approval_id = %request_id, "hook_event");
     send(app, request_id, Reply::Decline, false);
 }
 
@@ -554,7 +578,8 @@ pub fn answer(app: &AppHandle, request_id: &str, decision: &str) {
         "allow" | "always" => "allow",
         _ => "deny",
     };
-    log::line(format!("decision id={request_id} {word}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "decision", decision = word, approval_id = %request_id, "hook_event");
     send(app, request_id, Reply::Decision(word.to_string()), false);
 }
 
@@ -582,7 +607,8 @@ impl Relay for tokio::io::DuplexStream {}
 /// maps each question's text to the chosen label, which is the shape
 /// AskUserQuestion takes them in.
 pub fn answer_question(app: &AppHandle, request_id: &str, answers: &HashMap<String, serde_json::Value>) {
-    log::line(format!("decision id={request_id} answered a question"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "question_answered", approval_id = %request_id, "hook_event");
     // One line: the relay reads up to the first newline.
     let line = json!({ "answers": answers }).to_string();
     send(app, request_id, Reply::Decision(line), false);
