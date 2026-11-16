@@ -738,15 +738,22 @@ pub fn tick(store: &Store, now: i64) -> Result<Vec<DueRun>, String> {
             continue;
         }
         let Ok(tz) = zone(job.timezone.as_deref()) else {
-            let _ = store.cron_claim(&job.id, slot, None, "error", false);
-            let _ = store.cron_record_run(&job.id, now, "error", Some("unknown time zone"), None);
+            claim(store, &job.id, slot, None, "error", false);
+            record_run(
+                store,
+                &job.id,
+                now,
+                "error",
+                Some("unknown time zone"),
+                None,
+            );
             continue;
         };
         let schedule = match parse_schedule(&job.schedule, job.created_at, &tz) {
             Ok(schedule) => schedule,
             Err(error) => {
-                let _ = store.cron_claim(&job.id, slot, None, "error", false);
-                let _ = store.cron_record_run(&job.id, now, "error", Some(&error), None);
+                claim(store, &job.id, slot, None, "error", false);
+                record_run(store, &job.id, now, "error", Some(&error), None);
                 continue;
             }
         };
@@ -775,10 +782,7 @@ pub fn tick(store: &Store, now: i64) -> Result<Vec<DueRun>, String> {
             "scheduled"
         };
         // The claim: whoever moves next_run_at off this slot owns the run.
-        if !store
-            .cron_claim(&job.id, slot, next, state, runs)
-            .unwrap_or(false)
-        {
+        if !claim(store, &job.id, slot, next, state, runs) {
             continue;
         }
         if runs {
@@ -793,10 +797,37 @@ pub fn tick(store: &Store, now: i64) -> Result<Vec<DueRun>, String> {
             });
         } else {
             let note = format!("missed by {lateness}s (catch-up window {window}s)");
-            let _ = store.cron_record_run(&job.id, now, "missed", Some(&note), None);
+            record_run(store, &job.id, now, "missed", Some(&note), None);
         }
     }
     Ok(due)
+}
+
+/// Move a job off `slot`; `true` only if this caller now owns the slot. A
+/// database error is logged and counts as not owned, so the run is skipped
+/// (at most once).
+fn claim(store: &Store, id: &str, slot: i64, next: Option<i64>, state: &str, runs: bool) -> bool {
+    store
+        .cron_claim(id, slot, next, state, runs)
+        .unwrap_or_else(|error| {
+            tracing::warn!(cron_id = %id, kind = "cron_claim", %error, "cron slot could not be claimed; skipping it");
+            false
+        })
+}
+
+/// Record a run (and the task it started, if any); a database error is
+/// logged, never returned, so recording cannot change what ran.
+pub fn record_run(
+    store: &Store,
+    id: &str,
+    at: i64,
+    status: &str,
+    error: Option<&str>,
+    task: Option<&str>,
+) {
+    if let Err(write) = store.cron_record_run(id, at, status, error, task) {
+        tracing::warn!(cron_id = %id, kind = "cron_record_run", status, error = %write, "cron run could not be recorded");
+    }
 }
 
 /// Skills named by a job.

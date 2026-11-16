@@ -5,9 +5,10 @@
 use next_agent_channels::channel::{BoxFuture, ConnectedHook};
 use next_agent_channels::pairing::PairingOutcome;
 use next_agent_channels::{
-    BotIdentity, Capabilities, Channel, ChannelConfig, ChannelError, ChannelJob, ChannelState,
-    ChatKind, Delivery, DmPolicy, GroupPolicy, Handled, Hub, Inbound, MemoryState, MessageRef,
-    Outbound, StopToken, TaskOutcome, TaskProgress, TaskRunner,
+    Activity, AllowEntry, BotIdentity, Capabilities, Channel, ChannelConfig, ChannelError,
+    ChannelJob, ChannelState, ChatKind, Delivery, DmPolicy, GroupPolicy, Handled, Hub, Inbound,
+    MemoryState, MessageRef, Outbound, PairingRequest, StopToken, TaskOutcome, TaskProgress,
+    TaskRunner,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -710,4 +711,87 @@ async fn a_failed_delivery_can_be_retried() {
     rig.channel.down.store(false, Ordering::SeqCst);
     assert_eq!(rig.hub.deliver(&delivery).await, Ok(1));
     assert_eq!(rig.hub.deliver(&delivery).await, Ok(0));
+}
+
+/// Memory state whose pending-pairing reads can be made to fail.
+#[derive(Default)]
+struct FlakyPairings {
+    inner: MemoryState,
+    fail_reads: std::sync::atomic::AtomicBool,
+    writes: AtomicU64,
+}
+
+impl ChannelState for FlakyPairings {
+    fn pairings(&self, channel_id: &str) -> Result<Vec<PairingRequest>, String> {
+        if self.fail_reads.load(Ordering::SeqCst) {
+            return Err("database is locked".into());
+        }
+        self.inner.pairings(channel_id)
+    }
+    fn set_pairings(&self, channel_id: &str, pending: &[PairingRequest]) -> Result<(), String> {
+        self.writes.fetch_add(1, Ordering::SeqCst);
+        self.inner.set_pairings(channel_id, pending)
+    }
+    fn allow_list(&self, channel_id: &str) -> Result<Vec<AllowEntry>, String> {
+        self.inner.allow_list(channel_id)
+    }
+    fn allow_add(&self, channel_id: &str, entry: &AllowEntry) -> Result<(), String> {
+        self.inner.allow_add(channel_id, entry)
+    }
+    fn allow_remove(&self, channel_id: &str, sender_id: &str) -> Result<bool, String> {
+        self.inner.allow_remove(channel_id, sender_id)
+    }
+    fn claim(&self, key: &str, value: &str) -> Result<bool, String> {
+        self.inner.claim(key, value)
+    }
+    fn claimed(&self, key: &str) -> Result<Option<String>, String> {
+        self.inner.claimed(key)
+    }
+    fn release(&self, key: &str) -> Result<(), String> {
+        self.inner.release(key)
+    }
+    fn log(&self, entry: &Activity) -> Result<(), String> {
+        self.inner.log(entry)
+    }
+    fn activity(&self, channel_id: &str, limit: usize) -> Result<Vec<Activity>, String> {
+        self.inner.activity(channel_id, limit)
+    }
+}
+
+/// A pending-list read error refuses the new request and writes nothing, so
+/// other senders' pending codes survive.
+#[tokio::test]
+async fn pairing_read_errors_refuse_without_overwriting_pending_codes() {
+    let state = Arc::new(FlakyPairings::default());
+    let hub = Hub::build(
+        state.clone() as Arc<dyn ChannelState>,
+        Arc::new(FakeRunner::default()) as Arc<dyn TaskRunner>,
+        Arc::new(|| 1_000),
+        Duration::ZERO,
+    );
+    let channel = FakeChannel::new(config());
+    hub.register(channel.clone());
+    let Handled::Pairing(PairingOutcome::Issued(code)) = hub.handle("ch_1", dm(1, "a", "x")).await
+    else {
+        panic!("first sender gets a code")
+    };
+    let sent = channel.sent().len();
+    let writes = state.writes.load(Ordering::SeqCst);
+
+    state.fail_reads.store(true, Ordering::SeqCst);
+    assert_eq!(
+        hub.handle("ch_1", dm(2, "b", "x")).await,
+        Handled::Pairing(PairingOutcome::Unavailable)
+    );
+    assert_eq!(
+        state.writes.load(Ordering::SeqCst),
+        writes,
+        "nothing written"
+    );
+    assert_eq!(channel.sent().len(), sent, "the sender is not answered");
+
+    state.fail_reads.store(false, Ordering::SeqCst);
+    let pending = hub.pending_pairings("ch_1").expect("pending");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].code, code, "the other pending code survives");
 }

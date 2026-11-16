@@ -63,10 +63,24 @@ pub const SETTINGS_KEY: &str = "gateway.settings";
 /// Cooldowns up to this long are waited out before moving on (5xx).
 const SHORT_COOLDOWN: Duration = Duration::from_secs(5);
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-/// Output ceiling assumed when the price table has no `max_output` for a model.
+/// Output ceiling assumed when the price table has no `max_output` for a
+/// model on an OpenAI-compatible (or unknown) provider.
 const FALLBACK_OUTPUT_TOKENS: u32 = 16_384;
 /// HTTP status returned when a budget refuses a request.
 const BUDGET_BLOCKED_STATUS: u16 = 402;
+
+/// Output ceiling a request to `model` on `account` is built with: the price
+/// table's `max_output`, else the provider kind's default. The cost estimate
+/// uses the same value, so the two agree.
+fn output_ceiling(pricing: &Pricing, account: &Connection, model: &str) -> u32 {
+    pricing
+        .max_output(&account.provider, model)
+        .unwrap_or(match account.kind {
+            ProviderKind::OpenAi => FALLBACK_OUTPUT_TOKENS,
+            ProviderKind::Anthropic => anthropic::DEFAULT_MAX_OUTPUT,
+            ProviderKind::Gemini => gemini::DEFAULT_MAX_OUTPUT,
+        })
+}
 
 /// User-editable gateway settings.
 #[allow(clippy::struct_excessive_bools)] // Independent on/off switches.
@@ -555,6 +569,9 @@ enum Outcome {
     },
     /// The account has no key; try the next one without penalty.
     NoKey(String),
+    /// The local keychain could not be read: a config problem on this
+    /// machine, not a provider failure, so the breaker is left alone.
+    KeyUnavailable(LlmError),
     /// Connection failure or a stream that broke before any content.
     Transport(LlmError),
     /// Broke after content reached the caller: cannot fall back.
@@ -836,6 +853,10 @@ impl Gateway {
                             "no API key stored for {name}; add one in Settings → Providers"
                         )));
                     }
+                    Outcome::KeyUnavailable(error) => {
+                        tracing::warn!(target: "router", provider = %account.provider, kind = "keychain", error = %error, "API key could not be read");
+                        last_error = Some(error);
+                    }
                     Outcome::Http { status, error } => {
                         tracing::warn!(target: "router", provider = %target.label(), status, "attempt failed");
                         match status {
@@ -899,10 +920,13 @@ impl Gateway {
     /// The provider name prices are filed under for a target (a connection
     /// id or name in the target resolves to its provider).
     fn price_provider(&self, target: &Target) -> String {
-        self.config
-            .accounts(&target.provider)
-            .first()
+        self.price_account(target)
             .map_or_else(|| target.provider.clone(), |c| c.provider.clone())
+    }
+
+    /// The account a target's prices (and output ceiling) follow.
+    fn price_account(&self, target: &Target) -> Option<&Connection> {
+        self.config.accounts(&target.provider).into_iter().next()
     }
 
     /// Breaker score of the provider behind a target address (1 = healthy).
@@ -920,7 +944,9 @@ impl Gateway {
             Outcome::Http { status, .. } if *status >= 500 => {
                 breakers.failure(provider);
             }
-            Outcome::Http { status: 429, .. } | Outcome::NoKey(_) => breakers.release(provider),
+            Outcome::Http { status: 429, .. } | Outcome::NoKey(_) | Outcome::KeyUnavailable(_) => {
+                breakers.release(provider);
+            }
             // Any answer, even a request-scoped 4xx, shows the provider is up.
             Outcome::Done(_) | Outcome::Empty(_) | Outcome::Http { .. } => {
                 breakers.success(provider);
@@ -1051,14 +1077,18 @@ impl Gateway {
         targets
             .iter()
             .map(|t| {
-                let provider = self.price_provider(t);
+                let account = self.price_account(t);
+                let provider = account.map_or_else(|| t.provider.clone(), |c| c.provider.clone());
                 let output = requested.unwrap_or_else(|| {
-                    i64::from(
-                        self.config
-                            .pricing
-                            .max_output(&provider, &t.model)
-                            .unwrap_or(FALLBACK_OUTPUT_TOKENS),
-                    )
+                    i64::from(account.map_or_else(
+                        || {
+                            self.config
+                                .pricing
+                                .max_output(&provider, &t.model)
+                                .unwrap_or(FALLBACK_OUTPUT_TOKENS)
+                        },
+                        |c| output_ceiling(&self.config.pricing, c, &t.model),
+                    ))
                 });
                 let usage = Usage {
                     prompt,
@@ -1360,26 +1390,21 @@ impl Gateway {
         let mut base = openai.clone();
         base["model"] = json!(model);
         base["stream"] = json!(true);
-        let max_output = pricing.max_output(&account.provider, model);
+        let ceiling = output_ceiling(pricing, account, model);
         match account.kind {
             ProviderKind::OpenAi => {
                 base["stream_options"] = json!({"include_usage": true});
-                reasoning::apply_openai(
-                    &mut base,
-                    &account.provider,
-                    max_output.unwrap_or(FALLBACK_OUTPUT_TOKENS),
-                );
+                reasoning::apply_openai(&mut base, &account.provider, ceiling);
                 (base, Format::OpenAi, gemini::NameMap::new())
             }
             ProviderKind::Anthropic => {
-                let ceiling = max_output.unwrap_or(anthropic::DEFAULT_MAX_OUTPUT);
                 let mut body = anthropic::request(&base, model, ceiling);
                 reasoning::apply_anthropic(&mut body, &base, ceiling);
                 (body, Format::Anthropic, gemini::NameMap::new())
             }
             ProviderKind::Gemini => {
                 let (mut body, names) = gemini::request(&base);
-                reasoning::apply_gemini(&mut body, &base, model, max_output.unwrap_or(65_536));
+                reasoning::apply_gemini(&mut body, &base, model, ceiling);
                 (body, Format::Gemini, names)
             }
         }
@@ -1428,7 +1453,12 @@ impl Gateway {
         let started = Instant::now();
         let key = match self.keys.get(&account.id) {
             Ok(key) => key.filter(|k| !k.is_empty()),
-            Err(error) => return Outcome::Transport(LlmError::Config(error.to_string())),
+            Err(error) => {
+                return Outcome::KeyUnavailable(LlmError::Config(format!(
+                    "could not read the API key for {}: {error}",
+                    account.name
+                )));
+            }
         };
         if account.needs_key && key.is_none() {
             return Outcome::NoKey(account.name.clone());

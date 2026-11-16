@@ -597,6 +597,52 @@ mod tests {
             .is_ok_and(|mut d| d.next().is_some()));
     }
 
+    /// The merge stands even when the task record cannot be updated, but the
+    /// UI is told the record is stale.
+    #[test]
+    fn merge_reports_a_task_record_that_could_not_be_updated() {
+        let (dir, svc) = service();
+        let (root, ws_id) = repo_workspace(dir.path(), &svc);
+        let (sink, _log) = collector();
+        let task = run(&svc, &ws_id, "auto", sink);
+        // Make the vault unwritable: a file where the folder was.
+        let vault = dir.path().join("vault");
+        std::fs::remove_dir_all(&vault).expect("rm vault");
+        std::fs::write(&vault, "not a folder").expect("block vault");
+
+        let outcome = svc.review_action(&task, "merge").expect("merge");
+        assert!(outcome.commit.is_some());
+        assert!(root.join("NEXT_AGENT_DEMO.md").exists(), "merged");
+        let notice = outcome.notice.expect("a notice about the record");
+        assert!(notice.contains("task record"), "{notice}");
+    }
+
+    /// When step snapshots cannot be opened the task still runs, and the
+    /// timeline says per-step undo is off.
+    #[test]
+    fn a_task_without_step_snapshots_says_undo_is_off() {
+        let (dir, svc) = service();
+        let (_root, ws_id) = repo_workspace(dir.path(), &svc);
+        // A file where the snapshot folder would go.
+        std::fs::write(dir.path().join("snapshot"), "blocked").expect("block");
+        let (sink, log) = collector();
+        let task = run(&svc, &ws_id, "auto", sink);
+        let notices: Vec<String> = log
+            .lock()
+            .expect("lock")
+            .iter()
+            .filter_map(|m| match m {
+                StreamMessage::Notice { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            notices.iter().any(|n| n.contains("Undo is off")),
+            "{notices:?}"
+        );
+        assert_eq!(svc.task_undoable(&task).expect("count"), 0);
+    }
+
     #[test]
     fn auto_on_non_git_folder_falls_back_to_manual_and_asks() {
         let (dir, svc) = service();

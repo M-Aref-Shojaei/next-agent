@@ -6,6 +6,7 @@ use super::*;
 use crate::llm::ChatMessage;
 use crate::router::combo::CooldownPolicy;
 use crate::router::providers::MemoryKeys;
+use crate::router::settings::SecretError;
 use crate::store::ComboRow;
 use serde_json::json;
 use std::fmt::Write as _;
@@ -2255,4 +2256,75 @@ async fn budgets_fail_closed_when_spend_cannot_be_read() {
     let error = run(&broken, request("alpha/m")).await.0.unwrap_err();
     assert!(error.to_string().contains("could not be read"), "{error}");
     assert_eq!(hits(&servers[0]).await, 0);
+}
+
+/// A keychain that cannot be read.
+struct LockedKeys;
+
+impl KeySource for LockedKeys {
+    fn get(&self, _connection_id: &str) -> Result<Option<String>, SecretError> {
+        Err(SecretError("keychain locked".into()))
+    }
+    fn set(&self, _connection_id: &str, _key: &str) -> Result<(), SecretError> {
+        Ok(())
+    }
+    fn delete(&self, _connection_id: &str) -> Result<(), SecretError> {
+        Ok(())
+    }
+}
+
+/// A local keychain error is a config problem, not a provider failure: it
+/// never opens the provider's circuit breaker and sends nothing.
+#[tokio::test]
+async fn keychain_errors_do_not_open_the_circuit_breaker() {
+    let (servers, connections) = providers(&["alpha"]).await;
+    let (gateway, _) = db_gateway(connections, vec![], GatewaySettings::default());
+    let gateway = Gateway {
+        keys: Arc::new(LockedKeys),
+        ..gateway
+    };
+    for _ in 0..5 {
+        let error = run(&gateway, request("alpha/m")).await.0.unwrap_err();
+        assert!(matches!(error, LlmError::Config(_)), "{error}");
+        assert!(error.to_string().contains("keychain locked"), "{error}");
+    }
+    assert_eq!(
+        gateway.state().breakers.state("alpha"),
+        breaker::BreakerState::Closed
+    );
+    assert_eq!(hits(&servers[0]).await, 0);
+}
+
+/// Without a requested output or a price-table `max_output`, the estimate
+/// assumes the ceiling the request is actually sent with, per provider kind.
+#[test]
+fn cost_estimate_uses_each_providers_request_ceiling() {
+    let connections = vec![
+        conn("alpha", "alpha", ProviderKind::Anthropic, "http://x", 1),
+        conn("beta", "beta", ProviderKind::OpenAi, "http://x", 1),
+        conn("gamma", "gamma", ProviderKind::Gemini, "http://x", 1),
+    ];
+    let (gateway, _) = db_gateway(connections, vec![], GatewaySettings::default());
+    let body = request("alpha/m");
+    let prompt = f64::from(u32::try_from(overflow::estimate_tokens(&body)).expect("small"));
+    let estimate = |provider: &str| {
+        gateway.estimate_cost(
+            &body,
+            &[Target {
+                provider: provider.into(),
+                model: "m".into(),
+            }],
+        )
+    };
+    let expected = |price: f64, ceiling: u32| (prompt * price + f64::from(ceiling) * price) / 1e6;
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-12;
+    for (provider, price, ceiling) in [
+        ("alpha", 5.0, anthropic::DEFAULT_MAX_OUTPUT),
+        ("beta", 1.0, FALLBACK_OUTPUT_TOKENS),
+        ("gamma", 0.5, gemini::DEFAULT_MAX_OUTPUT),
+    ] {
+        let got = estimate(provider);
+        let want = expected(price, ceiling);
+        assert!(close(got, want), "{provider}: {got} != {want}");
+    }
 }

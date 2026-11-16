@@ -12,6 +12,7 @@ use next_agent_core::builtin::RoleResolver;
 use next_agent_core::profiles::{load_profiles, AgentProfile};
 use next_agent_core::router::ReqwestFetcher;
 use next_agent_core::vault::{FileStat, TaskDoc, TaskMeta, VaultWriter};
+use next_agent_core::worktree::WorktreeError;
 use next_agent_core::{
     context_for, spawn_task_with, AgentEvent, AgentExecutor, AgentStep, Approval, BuiltinExecutor,
     EventKind, GitCli, GitSnapshots, LocalTools, MergeOptions, MockExecutor, RunContext, TaskId,
@@ -308,9 +309,27 @@ impl AppService {
             .db_path()
             .parent()
             .map_or_else(PathBuf::new, Path::to_path_buf);
-        let snapshots = GitSnapshots::open(&data_dir, &plan.root, &task_id)
-            .ok()
-            .map(|s| Box::new(s) as Box<dyn next_agent_core::StepSnapshots + Send>);
+        let snapshots = match GitSnapshots::open(&data_dir, &plan.root, &task_id) {
+            Ok(s) => Some(Box::new(s) as Box<dyn next_agent_core::StepSnapshots + Send>),
+            // The task still runs; it just cannot be undone step by step.
+            Err(error) => {
+                // The error can name the workspace path: log only its class.
+                let reason = match &error {
+                    WorktreeError::NotAGitRepo(_) => "not_a_git_repo",
+                    WorktreeError::GitUnavailable(_) => "git_unavailable",
+                    _ => "git_failed",
+                };
+                tracing::warn!(%task_id, kind = "step_snapshots", reason, "per-step undo is off");
+                sink(StreamMessage::Notice {
+                    task_id: task_id.clone(),
+                    tone: "info",
+                    text: format!(
+                        "Undo is off for this task: step snapshots could not be opened ({error})."
+                    ),
+                });
+                None
+            }
+        };
         let handle = spawn_task_with(
             TaskLaunch {
                 db_path: self.db_path().to_path_buf(),
@@ -407,7 +426,7 @@ impl AppService {
             .get(task_id)
             .and_then(|f| f.worktree.clone())
             .ok_or_else(|| format!("no worktree to review for task {task_id}"))?;
-        let outcome = match action {
+        let mut outcome = match action {
             "merge" => {
                 let options = MergeOptions {
                     message: Some(format!("next-agent: {}", self.title_of(task_id))),
@@ -439,7 +458,15 @@ impl AppService {
             entry.clone()
         };
         if action == "merge" {
-            let _ = self.document(&doc);
+            // The merge already happened; a stale record must not undo that,
+            // but the user should know the vault copy says "not merged".
+            if let Err(error) = self.document(&doc) {
+                // The error can name vault paths, so it goes to the UI only.
+                tracing::warn!(%task_id, kind = "vault_write", "task record not updated after merge");
+                outcome.notice = Some(format!(
+                    "Merged, but the task record could not be updated: {error}"
+                ));
+            }
         }
         Ok(outcome)
     }
