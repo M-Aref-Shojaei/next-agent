@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import test, { beforeEach } from "node:test";
 import {
   ALLOWED_FIELDS,
   FORBIDDEN_FIELDS,
   MAX_STRING,
   RATE_LIMIT,
+  commandError,
   createLimiter,
   errorMessage,
   filterFields,
@@ -103,11 +106,56 @@ test("global handlers log ui_error with kind, short message and page path, once"
   assert.equal(listeners.size, 2);
   installGlobalHandlers(fake); // second call does nothing
   listeners.get("error")?.({ error: new Error("word ".repeat(200)) });
-  listeners.get("unhandledrejection")?.({ reason: "nope" });
+  listeners.get("unhandledrejection")?.({ reason: new Error("nope") });
+  // A bare string is a Rust command's error: it can name a page, so it is not sent.
+  listeners.get("unhandledrejection")?.({ reason: 'board "CANARY-PROMPT-7f3a diary" not found' });
   assert.equal(sent[0].event, "ui_error");
   assert.equal(sent[0].fields.kind, "error");
   assert.equal(sent[0].fields.page, "/settings/diagnostics");
   assert.equal((sent[0].fields.error as string).length, MAX_STRING);
   assert.equal(sent[1].fields.kind, "unhandled_rejection");
   assert.equal(sent[1].fields.error, "nope");
+  assert.deepEqual(sent[2].fields, { kind: "unhandled_rejection", page: "/settings/diagnostics" });
+});
+
+test("command_failed carries an error only for commands whose errors name no one's work", () => {
+  const leak = 'a board named "CANARY-PROMPT-7f3a" already exists in /Users/sam/My Vault';
+  for (const command of ["board_create", "graph_save_page", "graph_open", "skill_read", "memory_save", "design_source",
+    "channel_save", "cron_save", "workspace_open", "vault_set", "review_action", "agent_profiles", "task_start", "some_new_command"]) {
+    assert.equal(commandError(command, leak), undefined, command);
+  }
+  assert.equal(commandError("gateway_combo_save", new Error("unknown role `x`")), "unknown role `x`");
+  assert.equal(commandError("setting_set", "router URL must be an http or https URL"), "router URL must be an http or https URL");
+  assert.equal(commandError("gateway_settings_set", "key sk-ant-api03-abcdefghijklmnop"), "key [secret]");
+});
+
+/** `ui_error` kinds whose errors come from areas that never name people's work, plus the
+ * global handlers' JavaScript exceptions (log.ts: an Error's message, never a command's string). */
+const SAFE_UI_ERROR_KINDS = new Set([
+  "app", "diagnostics", "providers", "settings", "upstreams", "usage", "overlay_updates", "mermaid", "boards",
+  "error", "unhandled_rejection",
+]);
+
+function sources(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === "node_modules" ? [] : sources(full);
+    return /\.(ts|svelte)$/.test(entry.name) ? [full] : [];
+  });
+}
+
+test("ui_error sends an error message only from areas whose errors name no one's work", () => {
+  const root = join(import.meta.dirname, "..");
+  const calls = [...sources(join(root, "src")), ...sources(join(root, "coucou/src"))].flatMap((file) =>
+    [...readFileSync(file, "utf8").matchAll(/log\.\w+\("ui_error",\s*\{([^}]*)\}/g)].map((m) => ({ file, fields: m[1] })),
+  );
+  assert.ok(calls.length > 40, `found ${calls.length} ui_error calls`);
+  for (const { file, fields } of calls) {
+    const kind = /kind:\s*"([a-z_]+)"/.exec(fields)?.[1];
+    if (kind === undefined || SAFE_UI_ERROR_KINDS.has(kind)) continue;
+    assert.ok(!/\berror:/.test(fields), `${file}: ui_error kind ${kind} sends its error text`);
+  }
+  // The boards page logs only an Error's name (a type), never the message.
+  const boards = calls.filter((c) => c.fields.includes('kind: "boards"'));
+  assert.ok(boards.every((c) => !c.fields.includes("String(")), "boards send no message");
 });

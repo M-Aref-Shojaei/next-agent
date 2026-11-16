@@ -51,7 +51,7 @@
   let generation = 0;
 
   const fail = (e: unknown) => {
-    log.warn("ui_error", { kind: "boards", error: String(e) });
+    log.warn("ui_error", { kind: "boards" });
     problem = errorText(e);
   };
 

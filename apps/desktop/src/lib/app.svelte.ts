@@ -98,7 +98,7 @@ class AppStore {
       this.error = null;
       return true;
     } catch (e) {
-      log.warn("ui_error", { kind: "app", error: String(e) });
+      log.warn("ui_error", { kind: "workspace_open" });
       this.error = String(e);
       return false;
     }
@@ -133,7 +133,7 @@ class AppStore {
       this.profiles = list.profiles;
       if (list.warnings.length) this.error = `Agent profiles: ${list.warnings.join("; ")}`;
     } catch (e) {
-      log.warn("ui_error", { kind: "app", error: String(e) });
+      log.warn("ui_error", { kind: "agent_profiles" });
       this.error = String(e);
     }
   }
@@ -156,7 +156,7 @@ class AppStore {
       );
       this.error = null;
     } catch (e) {
-      log.warn("ui_error", { kind: "app", error: String(e) });
+      log.warn("ui_error", { kind: "undo_step" });
       this.error = String(e);
     }
   }
@@ -189,7 +189,7 @@ class AppStore {
       this.error = null;
       return id;
     } catch (e) {
-      log.warn("ui_error", { kind: "app", error: String(e) });
+      log.warn("ui_error", { kind: "track_task" });
       this.error = String(e);
       return null;
     }
@@ -246,7 +246,7 @@ class AppStore {
       });
       this.error = null;
     } catch (e) {
-      log.warn("ui_error", { kind: "app", error: String(e) });
+      log.warn("ui_error", { kind: "review_action" });
       this.error = String(e);
     }
   }

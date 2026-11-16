@@ -140,6 +140,15 @@ pub struct Hub {
     throttle: Duration,
 }
 
+/// A reply the hub writes itself (a pairing code, a command's answer, a
+/// refusal): sent, then logged by size only, as task answers are.
+async fn reply(channel: &dyn Channel, state: &dyn ChannelState, message: &Inbound, text: &str) {
+    if let Ok(count) = outbound::send_reply(channel, state, message, text).await {
+        let channel_id = &channel.config().id;
+        tracing::info!(channel_id = %channel_id, bytes = text.len(), count, "message_out");
+    }
+}
+
 /// How a sender is named in logs and access checks.
 fn peer_label(message: &Inbound) -> String {
     format!("{} ({})", message.sender_label, message.sender_id)
@@ -338,7 +347,7 @@ impl Hub {
 
         if message.text.trim().is_empty() {
             if message.media.is_some() {
-                let _ = outbound::send_reply(
+                reply(
                     channel.as_ref(),
                     self.state.as_ref(),
                     &message,
@@ -413,14 +422,8 @@ impl Hub {
                         // Refusals are silent to the sender, visible to the owner.
                         let refused = match outcome {
                             PairingOutcome::Issued(_) => {
-                                let reply = pairing::pairing_reply(&outcome, &message.sender_id);
-                                let _ = outbound::send_reply(
-                                    channel,
-                                    self.state.as_ref(),
-                                    message,
-                                    &reply,
-                                )
-                                .await;
+                                let text = pairing::pairing_reply(&outcome, &message.sender_id);
+                                reply(channel, self.state.as_ref(), message, &text).await;
                                 self.log(channel_id, "in", "pairing", peer, &message.text, None);
                                 self.emit(HubEvent::PairingRequested {
                                     channel_id: channel_id.to_string(),
@@ -468,7 +471,7 @@ impl Hub {
         name: &str,
         session: &str,
     ) {
-        let reply = match name {
+        let text = match name {
             "stop" if self.queues.stop(session) => "Stopped.",
             "stop" => "Nothing is running.",
             "new" => {
@@ -478,7 +481,7 @@ impl Hub {
             }
             _ => HELP,
         };
-        let _ = outbound::send_reply(channel, self.state.as_ref(), message, reply).await;
+        reply(channel, self.state.as_ref(), message, text).await;
     }
 
     fn lock_history(&self) -> std::sync::MutexGuard<'_, HashMap<String, VecDeque<Turn>>> {

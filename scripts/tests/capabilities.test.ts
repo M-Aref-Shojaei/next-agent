@@ -8,7 +8,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error: a plain ES module without types
-import { NEXT_AGENT, OVERLAY_COMMANDS, WINDOWS, capabilities, commandList, mainOverlayCommands, windowCommands } from "../gen-capabilities.mjs";
+import { NEXT_AGENT, OVERLAY_COMMANDS, OVERLAY_SHARED, WINDOWS, capabilities, commandList, mainOverlayCommands, windowCommands } from "../gen-capabilities.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const dir = join(root, "apps/desktop/src-tauri/capabilities");
@@ -32,11 +32,14 @@ test("each window has exactly one capability", () => {
   for (const label of ["main", ...Object.keys(WINDOWS)]) assert.equal(forWindow(label).length, 1, label);
 });
 
-test("no overlay window may call any of Next Agent's commands", () => {
+test("of Next Agent's commands, an overlay window may call exactly diag_log", () => {
+  assert.deepEqual(OVERLAY_SHARED, ["diag_log"]);
   const ours = new Set<string>(NEXT_AGENT.map(allow));
   for (const label of Object.keys(WINDOWS)) {
     const granted = forWindow(label)[0].permissions;
-    assert.deepEqual(granted.filter((p) => ours.has(p)), [], label);
+    // The shared diagnostics log, and nothing else of Next Agent's: not the other diag_* commands either.
+    assert.deepEqual(granted.filter((p) => ours.has(p)), [allow("diag_log")], label);
+    for (const cmd of ["diag_recent", "diag_set_level", "diag_export", "diag_open_folder"]) assert.ok(!granted.includes(allow(cmd)), `${label}: ${cmd}`);
     // The ones that matter most, by name.
     for (const cmd of ["rule_delete", "setting_set", "vault_set", "gateway_connection_save", "gateway_settings_set", "approval_respond", "task_start"]) {
       assert.ok(!granted.includes(allow(cmd)), `${label}: ${cmd}`);

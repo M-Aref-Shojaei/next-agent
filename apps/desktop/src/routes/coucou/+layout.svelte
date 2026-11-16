@@ -4,8 +4,16 @@
   // loads its entry module as it is. Their styles are Coucou's, written on
   // Next Agent's design tokens (ADR-0012), which load here.
   import "$lib/ds/tokens.css";
-  import { installGlobalHandlers } from "$lib/log.ts";
+  import { invoke } from "@tauri-apps/api/core";
+  import { installGlobalHandlers, setLogSink } from "$lib/log.ts";
 
+  // These windows log into the same diagnostics log as the main window
+  // (ADR-0013): `diag_log`, the one Next Agent command their capabilities
+  // grant, with the same rate limit, allowlist and redaction in Rust (target
+  // `ui`, the window's label as `window`). Outside Tauri there is no sink.
+  if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+    setLogSink((level, event, fields) => invoke("diag_log", { level, event, fields }));
+  }
   // Window errors and unhandled rejections in Coucou's windows, as in the main window.
   installGlobalHandlers();
 

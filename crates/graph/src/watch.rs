@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -70,6 +70,18 @@ impl Drop for GraphWatcher {
     }
 }
 
+/// A notify error's kind as a log token.
+fn notify_kind(kind: &notify::ErrorKind) -> &'static str {
+    match kind {
+        notify::ErrorKind::Generic(_) => "generic",
+        notify::ErrorKind::Io(_) => "io",
+        notify::ErrorKind::PathNotFound => "path_not_found",
+        notify::ErrorKind::WatchNotFound => "watch_not_found",
+        notify::ErrorKind::InvalidConfig(_) => "invalid_config",
+        notify::ErrorKind::MaxFilesWatch => "max_files_watch",
+    }
+}
+
 #[allow(clippy::needless_pass_by_value)] // used as `map_err(io_error)`
 fn io_error(e: notify::Error) -> GraphError {
     GraphError::Io(std::io::Error::other(e.to_string()))
@@ -85,10 +97,14 @@ fn run(
     loop {
         let Ok(first) = rx.recv() else { return };
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        let mut collect = |event: notify::Result<notify::Event>| {
-            if let Ok(event) = event {
-                paths.extend(event.paths);
-            }
+        let mut collect = |event: notify::Result<notify::Event>| match event {
+            Ok(event) => paths.extend(event.paths),
+            // The error can name a path: log its kind only.
+            Err(error) => tracing::warn!(
+                target: "notes",
+                kind = notify_kind(&error.kind),
+                "watcher_error"
+            ),
         };
         collect(first);
         let mut closed = false;
@@ -143,15 +159,24 @@ fn flush(
         return;
     }
     let Ok(mut idx) = index.lock() else { return };
-    if full_sync {
-        let _ = idx.sync(graph);
+    let started = Instant::now();
+    // Counts and kinds only: a file's name is a page's name.
+    let failed = if full_sync {
         files.clear();
+        usize::from(idx.sync(graph).is_err())
     } else {
-        for rel in &files {
-            let _ = idx.index_file(graph, rel);
-        }
-    }
+        files
+            .iter()
+            .filter(|rel| idx.index_file(graph, rel).is_err())
+            .count()
+    };
     drop(idx);
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let mode = if full_sync { "sync" } else { "files" };
+    if failed > 0 {
+        tracing::warn!(target: "notes", kind = "reindex", mode, count = failed, "watcher_error");
+    }
+    tracing::debug!(target: "notes", mode, files = files.len(), duration_ms, "graph_reindexed");
     if let Some(cb) = on_change {
         cb(&files);
     }

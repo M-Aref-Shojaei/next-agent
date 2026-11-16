@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { DiffAction } from "./diff.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 import { mockApi } from "./mock-api.ts";
-import { errorMessage, log, setLogSink, type LogEntry, type LogLevel } from "./log.ts";
+import { commandError, log, setLogSink, type LogEntry, type LogLevel } from "./log.ts";
 export type { LogEntry, LogLevel } from "./log.ts";
 import type {
   Backlink,
@@ -341,7 +341,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     if (watched && isSlowCommand(command, duration_ms)) log.warn("slow_command", { command, duration_ms });
     return result;
   } catch (e) {
-    if (watched) log.error("command_failed", { command, duration_ms: Math.round(performance.now() - started), error: errorMessage(e) });
+    if (watched) log.error("command_failed", { command, duration_ms: Math.round(performance.now() - started), error: commandError(command, e) });
     throw e;
   }
 }

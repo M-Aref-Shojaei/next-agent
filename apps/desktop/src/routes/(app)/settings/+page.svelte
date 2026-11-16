@@ -55,7 +55,7 @@
       vaultPath = await api.vaultSet(vaultPath);
       message = "Vault path saved.";
     } catch (e) {
-      log.warn("ui_error", { kind: "settings", error: String(e) });
+      log.warn("ui_error", { kind: "vault" });
       message = String(e);
     }
   }

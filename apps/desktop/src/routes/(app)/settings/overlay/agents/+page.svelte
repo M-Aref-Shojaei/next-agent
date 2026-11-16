@@ -71,7 +71,7 @@
     try {
       preview = await change.preview(install);
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_agents", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_agents" });
       // An unreadable or invalid settings.json stops here rather than being
       // treated as empty and written over.
       note(block, "danger", errorText(err), true);
@@ -146,7 +146,7 @@
     try {
       plan = await overlay.agentHooksPreview(agent.id, install);
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_agents", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_agents" });
       // An unreadable or unexpected config stops here rather than being treated as empty and written over.
       note(agent.id, "danger", errorText(err), true);
       return;
@@ -179,7 +179,7 @@
     try {
       agy = await overlay.agyApprovalsSetEnabled(enabled);
     } catch (err) {
-      log.warn("ui_error", { kind: "overlay_agents", error: String(err) });
+      log.warn("ui_error", { kind: "overlay_agents" });
       agy = agy ? { ...agy, enabled: !enabled } : agy;
       agyNote = errorText(err);
     }
