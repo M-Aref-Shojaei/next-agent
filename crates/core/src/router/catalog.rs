@@ -209,7 +209,7 @@ pub fn load_file(path: &std::path::Path) -> (Pricing, usize) {
         return (Pricing::default(), 0);
     };
     if meta.len() > MAX_BYTES as u64 {
-        tracing::warn!(target: "router", "ignoring an oversized model catalog file");
+        tracing::warn!(target: "router", reason = "oversized", "catalog_ignored");
         return (Pricing::default(), 0);
     }
     let stamp = (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len());
@@ -225,10 +225,11 @@ pub fn load_file(path: &std::path::Path) -> (Pricing, usize) {
     let (pricing, count) = match std::fs::read_to_string(path).map(|t| parse_openrouter(&t)) {
         Ok(Ok(table)) => {
             let count = table.len();
+            tracing::info!(target: "router", count, "catalog_refreshed");
             (Pricing::from_table(table), count)
         }
         Ok(Err(error)) => {
-            tracing::warn!(target: "router", %error, "ignoring the saved model catalog");
+            tracing::warn!(target: "router", %error, "catalog_ignored");
             (Pricing::default(), 0)
         }
         Err(_) => (Pricing::default(), 0),

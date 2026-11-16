@@ -98,7 +98,7 @@ fn fail_open(body: &mut Value, step: impl FnOnce(&mut Value)) {
     if catch_unwind(AssertUnwindSafe(|| step(&mut copy))).is_ok() {
         *body = copy;
     } else {
-        tracing::warn!(target: "router", "token saver failed; request sent unchanged");
+        tracing::warn!(target: "router", "token_saver_failed");
     }
 }
 

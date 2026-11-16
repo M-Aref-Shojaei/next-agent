@@ -162,8 +162,8 @@ impl RouterClient {
         tracing::debug!(
             target: "router",
             status = report.status.as_str(),
-            latency_ms = report.latency_ms,
-            "router health"
+            duration_ms = report.latency_ms,
+            "router_health"
         );
         report
     }
@@ -201,10 +201,10 @@ impl RouterClient {
         tracing::info!(
             target: "router",
             model = %request.model,
-            latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-            tool_calls = completion.tool_calls.len(),
-            finish = completion.finish_reason.as_deref().unwrap_or(""),
-            "router chat completed"
+            duration_ms = elapsed_ms(started),
+            count = completion.tool_calls.len(),
+            reason = completion.finish_reason.as_deref().unwrap_or(""),
+            "chat_completed"
         );
         Ok(completion)
     }
@@ -243,7 +243,8 @@ impl RouterClient {
                     mapped
                 }
             };
-            tracing::warn!(target: "router", attempt, error = %retry, "router call failed; retrying");
+            let (status, kind) = failure_shape(&retry);
+            tracing::warn!(target: "router", attempt, status, kind, "provider_call_failed");
             tokio::time::sleep(delay).await;
             delay *= 2;
         }
@@ -299,6 +300,44 @@ impl HealthProbe for RouterClient {
     fn probe(&self) -> ProbeFuture<'_> {
         Box::pin(self.health())
     }
+}
+
+/// Milliseconds since `started`, for the log.
+pub(crate) fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// What a failure looks like in the log: the HTTP status (0 when there was
+/// none) and a fixed kind. Never the error text, which can hold a provider's
+/// response body (and so the prompt).
+pub(crate) fn failure_shape(error: &LlmError) -> (u16, &'static str) {
+    match error {
+        LlmError::Http { status, .. } => (*status, "http"),
+        LlmError::Unauthorized => (401, "unauthorized"),
+        LlmError::ModelNotFound(_) => (404, "model_not_found"),
+        LlmError::Unavailable(_) => (0, "unavailable"),
+        LlmError::Config(_) => (0, "config"),
+        LlmError::Protocol(_) => (0, "protocol"),
+    }
+}
+
+/// The error type or code a provider's JSON error body names (`error.type`,
+/// `error.code` or `error.status`), when it is a short token. Anything else
+/// is dropped: a body can echo the prompt.
+pub(crate) fn error_code(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let error = value.get("error")?;
+    ["type", "code", "status"]
+        .iter()
+        .filter_map(|key| error.get(key)?.as_str())
+        .find(|code| {
+            !code.is_empty()
+                && code.len() <= 64
+                && code
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        })
+        .map(str::to_string)
 }
 
 pub(crate) fn describe(error: &reqwest::Error) -> String {

@@ -19,6 +19,16 @@ pub enum Period {
     Monthly,
 }
 
+impl Period {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Daily => "daily",
+            Self::Monthly => "monthly",
+        }
+    }
+}
+
 /// One spending limit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
