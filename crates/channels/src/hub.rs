@@ -412,6 +412,15 @@ impl Hub {
                         } else if outcome == PairingOutcome::Full {
                             // Silent to the sender, visible to the owner.
                             self.log(channel_id, "in", "denied", peer, "pairing queue full", None);
+                        } else if outcome == PairingOutcome::Unavailable {
+                            self.log(
+                                channel_id,
+                                "in",
+                                "denied",
+                                peer,
+                                "pairing storage unavailable",
+                                None,
+                            );
                         }
                         return Err(Handled::Pairing(outcome));
                     }
@@ -466,7 +475,15 @@ impl Hub {
 
     fn request_pairing(&self, channel: &dyn Channel, message: &Inbound) -> PairingOutcome {
         let channel_id = &channel.config().id;
-        let mut pending = self.state.pairings(channel_id).unwrap_or_default();
+        // A read error must not look like an empty list: saving over it
+        // would drop every other sender's pending code.
+        let mut pending = match self.state.pairings(channel_id) {
+            Ok(pending) => pending,
+            Err(error) => {
+                tracing::warn!(%channel_id, kind = "pairing_read", %error, "pending pairings could not be read");
+                return PairingOutcome::Unavailable;
+            }
+        };
         let template = PairingRequest {
             channel_id: channel_id.clone(),
             sender_id: message.sender_id.clone(),
@@ -482,7 +499,11 @@ impl Hub {
             (self.clock)(),
             &mut pairing::random_code,
         );
-        let _ = self.state.set_pairings(channel_id, &pending);
+        if let Err(error) = self.state.set_pairings(channel_id, &pending) {
+            // An unsaved code could never be approved: do not hand it out.
+            tracing::warn!(%channel_id, kind = "pairing_write", %error, "pending pairings could not be saved");
+            return PairingOutcome::Unavailable;
+        }
         outcome
     }
 

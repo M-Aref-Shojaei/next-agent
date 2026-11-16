@@ -54,6 +54,8 @@ pub enum PairingOutcome {
     Pending(String),
     /// Too many requests are already waiting.
     Full,
+    /// The pending list could not be read or saved; nothing was issued.
+    Unavailable,
 }
 
 /// Drop expired requests.
@@ -128,6 +130,7 @@ pub fn pairing_reply(outcome: &PairingOutcome, sender_id: &str) -> String {
             "Next Agent: this chat is not paired yet.\n\nYour id: {sender_id}\nPairing code: {code}\n\nAsk the owner to approve it in the Next Agent desktop app (Settings → Channels). The code expires in 1 hour."
         ),
         PairingOutcome::Full => "Next Agent: too many pairing requests are waiting. Please try again later.".into(),
+        PairingOutcome::Unavailable => "Next Agent: pairing is unavailable right now. Please try again later.".into(),
     }
 }
 
