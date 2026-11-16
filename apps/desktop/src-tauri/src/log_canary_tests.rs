@@ -33,6 +33,7 @@ use next_agent_graph::BlockNode;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -216,7 +217,10 @@ fn allowing_sink(svc: &Arc<AppService>) -> Sink {
 
 /// An OpenAI-compatible stream of `chunks`, with usage.
 fn sse(chunks: &[Value]) -> ResponseTemplate {
-    let mut body: String = chunks.iter().map(|c| format!("data: {c}\n\n")).collect();
+    let mut body = chunks.iter().fold(String::new(), |mut out, c| {
+        let _ = write!(out, "data: {c}\n\n");
+        out
+    });
     body.push_str(
         "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":3}}\n\n",
     );
@@ -389,12 +393,9 @@ fn telegram_message(update: u64, from: &str, user: &str, text: &str) -> Value {
     }})
 }
 
-/// A message from an allowed sender runs a channel task and is answered; a
-/// message from a stranger gets a pairing code. Text, sender ids, user
-/// names, the pairing code and the bot token stay out of the log.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn canary_channel_message_through_mock_telegram_stays_out_of_the_log() {
-    let log = log();
+/// A Bot API with one batch of updates: a message from the allowed sender
+/// and one from a stranger, both full of canaries.
+async fn mock_telegram() -> MockServer {
     let server = MockServer::start().await;
     let api = |name: &str| format!("/bot{BOT_TOKEN}/{name}");
     Mock::given(method("POST"))
@@ -435,6 +436,16 @@ async fn canary_channel_message_through_mock_telegram_stays_out_of_the_log() {
         .respond_with(telegram_ok(&json!(true)))
         .mount(&server)
         .await;
+    server
+}
+
+/// A message from an allowed sender runs a channel task and is answered; a
+/// message from a stranger gets a pairing code. Text, sender ids, user
+/// names, the pairing code and the bot token stay out of the log.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn canary_channel_message_through_mock_telegram_stays_out_of_the_log() {
+    let log = log();
+    let server = mock_telegram().await;
 
     let dir = tempfile::tempdir().expect("tmp");
     let (app, ws) = service(dir.path());

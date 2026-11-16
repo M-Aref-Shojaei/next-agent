@@ -293,7 +293,13 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         // The status line relay calls in with every Claude Code update: not log-worthy.
         if event != "StatusLine" {
             // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
-            tracing::info!(target: "overlay", kind = %event, "hook_event");
+            // Next Agent: one per tool call in every Claude Code session is noise at `info`
+            // (the 2026-11-16 audit: 97% of a session's lines); those go to `debug`.
+            if matches!(event.as_str(), "PreToolUse" | "PostToolUse" | "PostToolUseFailure") {
+                tracing::debug!(target: "overlay", kind = %event, "hook_event");
+            } else {
+                tracing::info!(target: "overlay", kind = %event, "hook_event");
+            }
         }
         let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
         pipe.finish();

@@ -458,12 +458,11 @@ impl SqliteBroker<'_> {
         else {
             return;
         };
-        let captured = match snapshots.capture() {
-            Ok(captured) => captured,
-            Err(error) => {
-                tracing::warn!(target: "broker", %error, "step_snapshot_failed");
-                return;
-            }
+        // The error carries git's stderr, which names the workspace's files:
+        // log that it failed, not why.
+        let Ok(captured) = snapshots.capture() else {
+            tracing::warn!(target: "broker", kind = "capture", "step_snapshot_failed");
+            return;
         };
         match self.store.insert_step_snapshot(
             task_id,

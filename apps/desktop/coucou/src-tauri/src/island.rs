@@ -88,7 +88,10 @@ fn publish_notch(app: &AppHandle, notch: Option<NotchInfo>) {
         return;
     }
     // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
-    tracing::info!(target: "overlay", kind = ?notch, "island_notch");
+    // Next Agent: `kind = ?notch` printed a struct, which the log turns into `[invalid]`
+    // (2026-11-16 audit): log whether the screen has a notch.
+    let kind = if notch.is_some() { "notch" } else { "no_notch" };
+    tracing::info!(target: "overlay", kind, "island_notch");
     let _ = app.emit_to(WINDOW_LABEL, "island-notch", notch);
 }
 
