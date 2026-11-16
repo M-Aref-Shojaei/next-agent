@@ -744,7 +744,7 @@ impl Skills {
         for root in &self.roots {
             // A symlinked root could point anywhere (`.next-agent -> ~`).
             if !resolves_to_itself(&root.path) {
-                tracing::warn!(root = %root.path.display(), "skills folder goes through a symlink; skipped");
+                tracing::warn!("skills folder goes through a symlink; skipped");
                 continue;
             }
             let mut found = Vec::new();
@@ -1000,6 +1000,14 @@ impl Skills {
             self.run_batch(ops, cx)
         };
         clear_cache();
+        for change in &outcome.changes {
+            let kind = match change.kind {
+                ChangeKind::Created => "create",
+                ChangeKind::Patched => "patch",
+                ChangeKind::Archived => "archive",
+            };
+            tracing::info!(kind, "skill_changed");
+        }
         outcome
     }
 

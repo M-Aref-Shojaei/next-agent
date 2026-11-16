@@ -213,6 +213,24 @@ struct Preview {
     /// Kept alive while the preview runs; dropping it stops the proxy.
     _proxy: PreviewProxy,
     dev: Option<DevServer>,
+    /// The port the proxy forwards to (for logs).
+    port: u16,
+}
+
+/// Remove a workspace's preview. Dropping it stops the proxy and any dev
+/// server it started; the log records the stop by port.
+fn stop_preview(previews: &mut HashMap<String, Preview>, workspace_id: &str) {
+    if let Some(preview) = previews.remove(workspace_id) {
+        tracing::info!(port = preview.port, "preview_stopped");
+    }
+}
+
+/// A refused preview URL is logged as blocked; the URL itself never is.
+fn refused<T, E>(result: Result<T, E>) -> Result<T, E> {
+    if result.is_err() {
+        tracing::warn!(reason = "url_refused", "preview_blocked");
+    }
+    result
 }
 
 /// Managed Tauri state: one preview per workspace.
@@ -226,7 +244,9 @@ impl DesignState {
     /// managed state is not dropped then).
     pub fn stop_all(&self) {
         if let Ok(mut previews) = self.previews.lock() {
-            previews.clear();
+            for (_, preview) in previews.drain() {
+                tracing::info!(port = preview.port, "preview_stopped");
+            }
         }
     }
 
@@ -521,7 +541,11 @@ impl AppService {
             sketch: sketch_text.as_deref(),
             critique,
         };
+        let started = std::time::Instant::now();
         let directions = studio::generate(model.as_ref(), &request, progress)?;
+        let count = directions.len();
+        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        tracing::info!(count, duration_ms, "design_generated");
         let batch_id = new_id("batch", 0);
         let mut out = Vec::new();
         for (i, d) in directions.into_iter().enumerate() {
@@ -664,19 +688,20 @@ impl AppService {
         let (root, _) = self.workspace_root(workspace_id)?;
         let bridge = proxy::bridge_script(studio_origin)?;
         let (target, dev) = match url.map(str::trim).filter(|u| !u.is_empty()) {
-            Some(url) => (ssrf::check_preview_url(url)?, None),
+            Some(url) => (refused(ssrf::check_preview_url(url))?, None),
             None => {
                 // Stop the old preview first: it may be this project's dev server.
-                state.previews()?.remove(workspace_id);
+                stop_preview(&mut *state.previews()?, workspace_id);
                 let dev = start_dev_server(&root)?;
                 let target = ssrf::check_preview_url(&format!("http://localhost:{}/", dev.1))?;
                 (target, Some(dev.0))
             }
         };
         let target_text = format!("http://{}{}", target.authority(), target.path);
+        let port = target.port;
         let proxy = PreviewProxy::start(target, bridge).map_err(|e| e.to_string())?;
         // One preview per workspace: the new one replaces any running one.
-        state.previews()?.remove(workspace_id);
+        stop_preview(&mut *state.previews()?, workspace_id);
         let dto = PreviewDto {
             url: proxy.url(),
             origin: proxy.origin(),
@@ -684,9 +709,15 @@ impl AppService {
             command: dev.as_ref().map(|d| d.command.clone()),
             sandbox: sandbox::APP_SANDBOX.into(),
         };
-        state
-            .previews()?
-            .insert(workspace_id.to_string(), Preview { _proxy: proxy, dev });
+        state.previews()?.insert(
+            workspace_id.to_string(),
+            Preview {
+                _proxy: proxy,
+                dev,
+                port,
+            },
+        );
+        tracing::info!(port, "preview_started");
         Ok(dto)
     }
 
@@ -1173,7 +1204,7 @@ pub fn design_preview_start(
 
 #[tauri::command]
 pub fn design_preview_stop(state: Design, workspace_id: String) -> Result<(), String> {
-    state.previews()?.remove(&workspace_id);
+    stop_preview(&mut *state.previews()?, &workspace_id);
     Ok(())
 }
 

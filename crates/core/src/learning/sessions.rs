@@ -106,8 +106,8 @@ impl Transcript for SessionRecorder {
                 self.store
                     .session_set_prompt(&self.session_id, &hash, model)
             });
-        if let Err(error) = result {
-            tracing::warn!(%error, "session store: system prompt not recorded");
+        if result.is_err() {
+            tracing::warn!("session store: system prompt not recorded");
         }
     }
 
@@ -140,20 +140,24 @@ impl Transcript for SessionRecorder {
             rows.push(row);
         }
         // One transaction per batch: the agent loop waits on this.
-        if let Err(error) = self.store.messages_append(&rows) {
-            tracing::warn!(%error, "session store: messages not recorded");
+        if self.store.messages_append(&rows).is_err() {
+            tracing::warn!("session store: messages not recorded");
         }
     }
 
     fn compacted(&mut self) {
-        if let Err(error) = self.store.messages_compacted(&self.session_id) {
-            tracing::warn!(%error, "session store: compaction not recorded");
+        if self.store.messages_compacted(&self.session_id).is_err() {
+            tracing::warn!("session store: compaction not recorded");
         }
     }
 
     fn end(&mut self, reason: &str) {
-        if let Err(error) = self.store.session_end(&self.session_id, now(), reason) {
-            tracing::warn!(%error, "session store: end not recorded");
+        if self
+            .store
+            .session_end(&self.session_id, now(), reason)
+            .is_err()
+        {
+            tracing::warn!("session store: end not recorded");
         }
     }
 }

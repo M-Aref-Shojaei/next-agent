@@ -10,8 +10,14 @@ use next_agent_graph::{
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::State;
+
+/// Log one index pass: file count and time only.
+fn log_indexed(stats: &IndexStats, started: Instant) {
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    tracing::info!(files = stats.indexed, duration_ms, "graph_indexed");
+}
 
 /// Called with the graph-relative files the watcher re-indexed.
 pub type ChangeListener = Arc<dyn Fn(Vec<String>) + Send + Sync>;
@@ -116,7 +122,9 @@ impl NotesService {
         let (graph, created_config) = Graph::init(&root).map_err(|e| e.to_string())?;
         let mut index =
             Index::open(&self.cache_dir.join(cache_name(&root))).map_err(|e| e.to_string())?;
+        let started = Instant::now();
         let stats = index.sync(&graph).map_err(|e| e.to_string())?;
+        log_indexed(&stats, started);
         let (pages, blocks) = index.counts().map_err(|e| e.to_string())?;
         let index = Arc::new(Mutex::new(index));
         let listener = lock(&self.listener)?.clone();
@@ -124,8 +132,11 @@ impl NotesService {
             Box::new(move |files: &[String]| l(files.to_vec())) as next_agent_graph::watch::OnChange
         });
         // A graph still works without a watcher (e.g. on network drives).
-        let watcher =
-            GraphWatcher::start(graph.clone(), Arc::clone(&index), DEBOUNCE, on_change).ok();
+        let watcher = GraphWatcher::start(graph.clone(), Arc::clone(&index), DEBOUNCE, on_change)
+            .inspect_err(|_| {
+                tracing::warn!(error = "file watcher could not start", "watcher_error");
+            })
+            .ok();
         let previous = lock(&self.open)?.replace(OpenGraph {
             graph,
             index,
@@ -300,7 +311,12 @@ impl NotesService {
 
     /// Drop the index and rebuild it from the files.
     pub fn rebuild(&self) -> Result<IndexStats, String> {
-        self.with(|graph, index| index.rebuild(graph).map_err(|e| e.to_string()))
+        self.with(|graph, index| {
+            let started = Instant::now();
+            let stats = index.rebuild(graph).map_err(|e| e.to_string())?;
+            log_indexed(&stats, started);
+            Ok(stats)
+        })
     }
 }
 

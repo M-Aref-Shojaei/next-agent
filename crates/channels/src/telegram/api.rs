@@ -39,6 +39,8 @@ pub struct TelegramApi {
     token: String,
     /// `getUpdates` long-poll timeout.
     poll: Duration,
+    /// The channel this client serves, for logs (empty for a probe).
+    channel_id: String,
 }
 
 impl std::fmt::Debug for TelegramApi {
@@ -75,7 +77,15 @@ impl TelegramApi {
             base: base.trim_end_matches('/').to_string(),
             token: token.to_string(),
             poll,
+            channel_id: String::new(),
         })
+    }
+
+    /// Tag this client with its channel id (for `api_error` logs).
+    #[must_use]
+    pub fn for_channel(mut self, channel_id: &str) -> Self {
+        self.channel_id = channel_id.to_string();
+        self
     }
 
     /// The bot's numeric id: the part of the token before `:` (public).
@@ -99,6 +109,7 @@ impl TelegramApi {
             return Ok(payload["result"].clone());
         }
         let code = payload["error_code"].as_u64().unwrap_or(u64::from(status));
+        tracing::warn!(channel_id = %self.channel_id, status, "api_error");
         let description = self.scrub(payload["description"].as_str().unwrap_or("no description"));
         Err(classify(
             code,

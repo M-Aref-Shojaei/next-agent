@@ -346,12 +346,14 @@ pub fn save(
     if let Some(base) = base_revision {
         match &current {
             None => {
+                tracing::warn!("board_conflict");
                 return Err(format!(
                     "conflict: deleted: board \"{}\" no longer exists on disk",
                     name.trim()
                 ));
             }
             Some(meta) if revision_of(meta) != base => {
+                tracing::warn!("board_conflict");
                 return Err(format!(
                     "conflict: board \"{}\" changed on disk since it was opened",
                     name.trim()
@@ -361,6 +363,7 @@ pub fn save(
         }
     }
     atomic_write(&path, content.as_bytes())?;
+    tracing::info!(bytes = content.len(), "board_saved");
     let meta = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
     Ok(revision_of(&meta))
 }

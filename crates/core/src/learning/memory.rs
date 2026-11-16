@@ -355,6 +355,11 @@ impl MemoryStore {
             ));
         }
         self.write(target, &entries)?;
+        let kind = match target {
+            Target::Memory => "memory",
+            Target::User => "user",
+        };
+        tracing::info!(kind, bytes = text.len(), "memory_saved");
         Ok(entries.len())
     }
 
