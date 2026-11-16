@@ -65,7 +65,7 @@ impl ReqwestFetcher {
             }
             body.extend_from_slice(&chunk);
         }
-        tracing::info!(target: "http_fetch", status, bytes = body.len(), "http_fetch completed");
+        tracing::info!(target: "router", status, bytes = body.len(), "http_fetch_completed");
         Ok(FetchedPage {
             status,
             content_type,

@@ -2328,3 +2328,74 @@ fn cost_estimate_uses_each_providers_request_ceiling() {
         assert!(close(got, want), "{provider}: {got} != {want}");
     }
 }
+
+// ---- Logging privacy ------------------------------------------------------------
+
+/// Records every event's message and field values as text, so a test can
+/// check what a log writer would have been given. (`tracing` only; core does
+/// not depend on the diagnostics crate.)
+#[derive(Clone, Default)]
+struct CapturedLogs(Arc<Mutex<Vec<String>>>);
+
+struct FieldText<'a>(&'a mut String);
+
+impl tracing::field::Visit for FieldText<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        let _ = write!(self.0, " {}={value:?}", field.name());
+    }
+}
+
+impl tracing::Subscriber for CapturedLogs {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut line = format!("{} {}", event.metadata().level(), event.metadata().target());
+        event.record(&mut FieldText(&mut line));
+        self.0.lock().expect("lock").push(line);
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+#[tokio::test]
+async fn provider_error_body_echoing_the_prompt_is_never_logged() {
+    const CANARY: &str = "CANARY-PROMPT-7f3a";
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {"type": "invalid_request_error", "message": format!("bad prompt: {CANARY}")}
+        })))
+        .mount(&server)
+        .await;
+    let h = harness(
+        vec![conn(
+            "o1",
+            "openai",
+            ProviderKind::OpenAi,
+            &format!("{}/v1", server.uri()),
+            1,
+        )],
+        vec![],
+        GatewaySettings::default(),
+    );
+    let logs = CapturedLogs::default();
+    let _guard = tracing::subscriber::set_default(logs.clone());
+    let body = json!({"model": "openai/gpt-4o", "messages": [{"role": "user", "content": CANARY}]});
+    let (result, _) = run(&h.gateway, body).await;
+    // The caller still gets the error; only the log must stay clean.
+    assert!(result.is_err());
+    let lines = logs.0.lock().expect("lock").join("\n");
+    assert!(lines.contains("provider_call_failed"), "{lines}");
+    assert!(lines.contains("status=400"), "{lines}");
+    assert!(lines.contains("invalid_request_error"), "{lines}");
+    assert!(
+        !lines.contains(CANARY),
+        "the prompt reached the log: {lines}"
+    );
+}

@@ -219,9 +219,7 @@ impl GatewayConfig {
             .iter()
             .filter_map(|row| {
                 Connection::from_row(row)
-                    .map_err(
-                        |e| tracing::warn!(target: "router", error = %e, "skipping connection"),
-                    )
+                    .map_err(|e| tracing::warn!(target: "router", error = %e, "connection_skipped"))
                     .ok()
             })
             .collect();
@@ -230,7 +228,7 @@ impl GatewayConfig {
             .iter()
             .filter_map(|row| {
                 Combo::from_row(row)
-                    .map_err(|e| tracing::warn!(target: "router", error = %e, "skipping combo"))
+                    .map_err(|e| tracing::warn!(target: "router", error = %e, "combo_skipped"))
                     .ok()
             })
             .collect();
@@ -410,6 +408,12 @@ pub trait UsageSink: Send + Sync {
     }
 }
 
+/// Dollars as whole micro-dollars, for the log.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn micros(usd: f64) -> u64 {
+    (usd.max(0.0) * 1_000_000.0) as u64
+}
+
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -442,13 +446,13 @@ impl StoreUsage {
 impl UsageSink for StoreUsage {
     fn record(&self, row: &UsageRow) {
         if let Err(error) = self.store().record_usage(row) {
-            tracing::warn!(target: "router", %error, "could not record usage");
+            tracing::warn!(target: "router", %error, "usage_record_failed");
         }
     }
 
     fn record_switch(&self, row: &SwitchRow) {
         if let Err(error) = self.store().record_switch(row) {
-            tracing::warn!(target: "router", %error, "could not record a model switch");
+            tracing::warn!(target: "router", %error, "switch_record_failed");
         }
     }
 
@@ -456,9 +460,7 @@ impl UsageSink for StoreUsage {
         let row = self
             .store()
             .get_sticky(session, combo)
-            .map_err(
-                |error| tracing::warn!(target: "router", %error, "could not read sticky model"),
-            )
+            .map_err(|error| tracing::warn!(target: "router", %error, "sticky_read_failed"))
             .ok()??;
         Some(Sticky {
             model: row.model,
@@ -474,14 +476,14 @@ impl UsageSink for StoreUsage {
             window: serde_json::to_string(&sticky.window).unwrap_or_else(|_| "[]".into()),
         };
         if let Err(error) = self.store().set_sticky(&row) {
-            tracing::warn!(target: "router", %error, "could not save sticky model");
+            tracing::warn!(target: "router", %error, "sticky_save_failed");
         }
     }
 
     fn cache_get(&self, key: &str) -> Option<String> {
         self.store()
             .cache_get(key, unix_now())
-            .map_err(|error| tracing::warn!(target: "router", %error, "response cache read failed"))
+            .map_err(|error| tracing::warn!(target: "router", %error, "cache_read_failed"))
             .ok()?
     }
 
@@ -496,13 +498,13 @@ impl UsageSink for StoreUsage {
             i64::from(settings.max_entries),
         );
         if let Err(error) = result {
-            tracing::warn!(target: "router", %error, "response cache write failed");
+            tracing::warn!(target: "router", %error, "cache_write_failed");
         }
     }
 
     fn record_cache_hit(&self, row: &CacheHitRow) {
         if let Err(error) = self.store().record_cache_hit(row) {
-            tracing::warn!(target: "router", %error, "could not record a cache hit");
+            tracing::warn!(target: "router", %error, "cache_hit_record_failed");
         }
     }
 
@@ -731,7 +733,7 @@ impl Gateway {
                 .pricing
                 .context_length(&self.price_provider(t), &t.model)
         }) {
-            tracing::info!(target: "router", tokens, "prompt too large for some models; trying ones that fit first");
+            tracing::info!(target: "router", tokens_in = tokens, "prompt_too_large");
         }
         // Providers whose breaker is open go last (they would be refused);
         // half-open ones keep their place so the strategy's order holds.
@@ -854,46 +856,43 @@ impl Gateway {
                         )));
                     }
                     Outcome::KeyUnavailable(error) => {
-                        tracing::warn!(target: "router", provider = %account.provider, kind = "keychain", error = %error, "API key could not be read");
+                        tracing::warn!(target: "router", provider = %account.provider, kind = "keychain", error = %error, "api_key_unreadable");
                         last_error = Some(error);
                     }
-                    Outcome::Http { status, error } => {
-                        tracing::warn!(target: "router", provider = %target.label(), status, "attempt failed");
-                        match status {
-                            401..=403 => {
-                                self.state.penalize(&account.id, None, &error.to_string());
-                                last_error = Some(error);
-                            }
-                            429 => {
-                                self.state.penalize(
-                                    &account.id,
-                                    Some(&target.model),
-                                    &error.to_string(),
-                                );
-                                last_error = Some(error);
-                            }
-                            502..=504 => {
-                                let delay = self.state.penalize(
-                                    &account.id,
-                                    Some(&target.model),
-                                    &error.to_string(),
-                                );
-                                if delay <= SHORT_COOLDOWN && !last_model {
-                                    tokio::time::sleep(delay).await;
-                                }
-                                last_error = Some(error);
-                                break;
-                            }
-                            400..=499 => {
-                                first_request_error.get_or_insert(error);
-                                break;
-                            }
-                            _ => {
-                                last_error = Some(error);
-                                break;
-                            }
+                    Outcome::Http { status, error } => match status {
+                        401..=403 => {
+                            self.state.penalize(&account.id, None, &error.to_string());
+                            last_error = Some(error);
                         }
-                    }
+                        429 => {
+                            self.state.penalize(
+                                &account.id,
+                                Some(&target.model),
+                                &error.to_string(),
+                            );
+                            last_error = Some(error);
+                        }
+                        502..=504 => {
+                            let delay = self.state.penalize(
+                                &account.id,
+                                Some(&target.model),
+                                &error.to_string(),
+                            );
+                            if delay <= SHORT_COOLDOWN && !last_model {
+                                tokio::time::sleep(delay).await;
+                            }
+                            last_error = Some(error);
+                            break;
+                        }
+                        400..=499 => {
+                            first_request_error.get_or_insert(error);
+                            break;
+                        }
+                        _ => {
+                            last_error = Some(error);
+                            break;
+                        }
+                    },
                     Outcome::Transport(error) => {
                         last_error = Some(error);
                         break;
@@ -1115,7 +1114,7 @@ impl Gateway {
         // on the same remaining budget.
         let _gate = self.state.budget_gate();
         let statuses = self.budgets_for(Some(role)).map_err(|error| {
-            tracing::warn!(target: "router", %error, "could not read spend; budgets fail closed");
+            tracing::warn!(target: "router", %error, reason = "spend_unreadable", "budget_blocked");
             LlmError::Http {
                 status: BUDGET_BLOCKED_STATUS,
                 body: format!("Budgets are set but today's spend could not be read ({error}); the request was not sent."),
@@ -1133,6 +1132,7 @@ impl Gateway {
         if self.config.settings.budget_refuse_unpriced {
             targets.retain(|t| priced(t));
             if targets.is_empty() {
+                tracing::warn!(target: "router", reason = "unpriced_models", "budget_blocked");
                 return Err(LlmError::Http {
                     status: BUDGET_BLOCKED_STATUS,
                     body: "A budget is set, and none of these models has a known price, so their spend could not be counted. Add a price in pricing.json, refresh the model catalog, or allow unpriced models in Settings → Providers → Budgets.".into(),
@@ -1140,7 +1140,13 @@ impl Gateway {
             }
         }
         for status in statuses.iter().filter(|s| s.level == Level::Warn) {
-            tracing::warn!(target: "router", budget = %status.budget.label(), spent = status.spent, "budget above {:.0}%", super::budget::WARN_AT * 100.0);
+            tracing::warn!(
+                target: "router",
+                kind = status.budget.period.as_str(),
+                role = status.budget.role.as_deref().unwrap_or("all"),
+                cost_micros = micros(status.spent),
+                "budget_warned"
+            );
         }
         let estimate = self.estimate_cost(body, targets);
         let over = statuses
@@ -1151,7 +1157,12 @@ impl Gateway {
                 status: BUDGET_BLOCKED_STATUS,
                 body: over.message(),
             };
+            let (kind, role) = (
+                over.budget.period.as_str(),
+                over.budget.role.as_deref().unwrap_or("all"),
+            );
             if self.config.settings.budget_action == BudgetAction::Block {
+                tracing::warn!(target: "router", kind, role, reason = "limit_reached", "budget_blocked");
                 return Err(blocked());
             }
             let price = |t: &Target| {
@@ -1166,7 +1177,7 @@ impl Gateway {
                 .min_by(|a, b| a.0.total_cmp(&b.0))
                 .map(|(_, t)| t)
                 .ok_or_else(blocked)?;
-            tracing::warn!(target: "router", budget = %over.budget.label(), model = %cheapest.label(), "budget reached; using the cheapest model");
+            tracing::warn!(target: "router", kind, role, model = %cheapest.model, reason = "cheapest_model", "budget_blocked");
             *targets = vec![cheapest];
         }
         let estimate = self.estimate_cost(body, targets);
@@ -1232,9 +1243,7 @@ impl Gateway {
             let account = *self.config.accounts(&t.provider).first()?;
             let raw = sink.cache_get(&self.cache_key(body, account, &t.model, options))?;
             serde_json::from_str::<Entry>(&raw)
-                .map_err(
-                    |error| tracing::warn!(target: "router", %error, "ignoring a bad cache entry"),
-                )
+                .map_err(|error| tracing::warn!(target: "router", %error, "cache_entry_ignored"))
                 .ok()
                 .map(|entry| (t, entry))
         })?;
@@ -1250,7 +1259,7 @@ impl Gateway {
             saved_tokens: entry.prompt_tokens + entry.completion_tokens,
             saved_cost: entry.cost,
         });
-        tracing::info!(target: "router", provider = %target.label(), "served from the response cache");
+        tracing::info!(target: "router", provider = %target.provider, model = %target.model, "cache_hit");
         Some(completion)
     }
 
@@ -1377,7 +1386,7 @@ impl Gateway {
             }
         }
         if let Some(switch) = switch {
-            tracing::info!(target: "router", %combo, %session, from = %switch.from, to = %switch.to, reason = %switch.reason, "smart combo switched model");
+            tracing::info!(target: "router", %combo, session_id = %session, model = %switch.to, reason = %switch.reason, "combo_switch");
         }
     }
 
@@ -1477,6 +1486,14 @@ impl Gateway {
         let response = match sent {
             Ok(response) => response,
             Err(error) => {
+                tracing::warn!(
+                    target: "router",
+                    provider = %account.provider,
+                    model = %target.model,
+                    kind = "transport",
+                    duration_ms = super::client::elapsed_ms(started),
+                    "provider_call_failed"
+                );
                 self.record(attempt, 0, Usage::default(), started, &report);
                 return Outcome::Transport(LlmError::Unavailable(format!(
                     "{}: {}",
@@ -1488,6 +1505,17 @@ impl Gateway {
         let status = response.status().as_u16();
         if !response.status().is_success() {
             let text = response.text().await.unwrap_or_default();
+            // Status, error type and size only: the body can echo the prompt.
+            tracing::warn!(
+                target: "router",
+                provider = %account.provider,
+                model = %target.model,
+                status,
+                code = super::client::error_code(&text).as_deref().unwrap_or(""),
+                bytes = text.len(),
+                duration_ms = super::client::elapsed_ms(started),
+                "provider_call_failed"
+            );
             self.record(
                 attempt,
                 i64::from(status),
@@ -1514,12 +1542,15 @@ impl Gateway {
         self.record(attempt, i64::from(status), usage, started, &report);
         tracing::info!(
             target: "router",
-            provider = %target.label(),
-            latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-            prompt_tokens = usage.prompt,
-            completion_tokens = usage.completion,
-            rtk_saved = report.bytes_before.saturating_sub(report.bytes_after),
-            "gateway call finished"
+            provider = %account.provider,
+            model = %target.model,
+            status,
+            duration_ms = super::client::elapsed_ms(started),
+            tokens_in = usage.prompt,
+            tokens_out = usage.completion,
+            tokens_cached = usage.cached,
+            bytes = report.bytes_before.saturating_sub(report.bytes_after),
+            "provider_call"
         );
         outcome
     }

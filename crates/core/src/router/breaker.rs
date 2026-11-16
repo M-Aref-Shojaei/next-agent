@@ -158,7 +158,12 @@ impl Breakers {
     /// Any success closes the breaker.
     pub fn success(&self, provider: &str) {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        entries.remove(provider);
+        if entries
+            .remove(provider)
+            .is_some_and(|entry| entry.open_until.is_some())
+        {
+            tracing::info!(target: "router", %provider, "breaker_closed");
+        }
     }
 
     /// A provider failure; returns the new state.
@@ -173,7 +178,7 @@ impl Breakers {
             entry.open_until = Some(now + self.cooldown(entry.trips));
             entry.probe_started = None;
             entry.failures = 0;
-            tracing::warn!(target: "router", %provider, trips = entry.trips, "circuit breaker opened");
+            tracing::warn!(target: "router", %provider, count = entry.trips, "breaker_opened");
         }
         Self::state_of(entry, now)
     }
