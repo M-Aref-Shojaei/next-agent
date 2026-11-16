@@ -387,18 +387,23 @@ impl SqliteBroker<'_> {
             }
         };
 
+        // Cancelled after the decision (e.g. while an approval was pending)
+        // but before the tool ran: it never ran, so it is no allow.
+        if ctx.is_some_and(RunContext::is_cancelled) {
+            let reason = "cancelled before the tool started";
+            self.audit(request, "deny", reason);
+            return BrokerOutcome {
+                decision: "deny",
+                reason: reason.into(),
+                result: ToolResult::error(call_id, reason),
+            };
+        }
+
         if noteworthy(self.mode, &evaluation) {
             self.audit(request, "allow", &reason);
         }
 
         let result = if let Some(ctx) = ctx {
-            if ctx.is_cancelled() {
-                return BrokerOutcome {
-                    decision: "allow",
-                    reason,
-                    result: ToolResult::error(call_id, "cancelled before the tool started"),
-                };
-            }
             self.snapshot_before(Some(ctx), call_id, request);
             ctx.events.emit(EventKind::ToolStarted {
                 call_id: call_id.to_string(),
@@ -825,6 +830,50 @@ mod tests {
         let rows = store.step_snapshots("t1").expect("rows");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].tool, "write_file");
+    }
+
+    /// A call cancelled after the decision but before it starts never ran:
+    /// it is reported and audited as a denial, not an allow.
+    #[test]
+    fn calls_cancelled_before_they_start_are_not_recorded_as_allowed() {
+        let store = Store::open_in_memory().expect("store");
+        let count = std::rc::Rc::new(std::cell::Cell::new(0));
+        // Bypass makes the write noteworthy, so an allow would be audited.
+        let mut broker = SqliteBroker::new(
+            &store,
+            Mode::BypassPermissions,
+            context_for("/work/project".into(), "ws_1".into(), None),
+        )
+        .with_executor(StubExecutor)
+        .with_snapshots(Box::new(CountingSnapshots(count.clone())))
+        .for_task("t1");
+        let write = ToolRequest::Write {
+            path: "/work/project/a.rs".into(),
+            contents: "x".into(),
+        };
+        let collector = crate::events::Collector::new();
+        let events = crate::events::Emitter::new(crate::task::TaskId::from_seed("cancel"))
+            .with_sink(collector.clone());
+        let cancelled = || true;
+        let ctx = RunContext {
+            events: &events,
+            cancelled: &cancelled,
+        };
+        let outcome = broker.handle_floored(&ctx, "c1", &write, None);
+        assert_eq!(outcome.decision, "deny");
+        assert!(outcome.reason.contains("cancelled"), "{}", outcome.reason);
+        assert!(!outcome.result.ok);
+        assert_eq!(count.get(), 0, "no snapshot for a call that never ran");
+        assert!(collector
+            .events()
+            .iter()
+            .all(|e| e.kind.kind() != "tool_started"));
+        let audit = store.audit_recent(Some("t1"), 10).expect("audit");
+        assert_eq!(audit.len(), 1, "{audit:?}");
+        assert_eq!(audit[0].3, "deny");
+        assert!(audit[0].4.contains("cancelled"), "{audit:?}");
+        let verified = store.verify_audit().expect("verify");
+        assert!(verified.ok);
     }
 
     #[test]
