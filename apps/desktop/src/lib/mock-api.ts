@@ -1,5 +1,6 @@
 // In-memory stand-in for the Rust commands, used outside Tauri.
 import type { Api, BoardDoc, Workspace } from "./api.ts";
+import type { LogEntry, LogLevel } from "./log.ts";
 import { mockGraphApi } from "./notes/mock-graph.ts";
 import { designMockApi } from "./design-mock.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
@@ -167,8 +168,40 @@ async function runDemo(
   await emit("task_completed", { summary: failed ? "1 tool call(s) failed" : "3 tool call(s) executed" });
 }
 
+// Diagnostics: newest first, like the Rust ring buffer. Sample entries make the page look alive in a browser.
+const LEVEL_RANK: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3 };
+let logLevel: LogLevel = "info";
+const sample = (ago: number, level: LogLevel, target: string, event: string, fields: Record<string, unknown>): LogEntry => ({
+  ts: new Date(Date.now() - ago * 1000).toISOString(), level, target, event, fields,
+});
+const logEntries: LogEntry[] = [
+  sample(20, "info", "router", "provider_call", { provider: "anthropic", model: "claude-sonnet-4-5", status: 200, duration_ms: 812, tokens_in: 1200, tokens_out: 300 }),
+  sample(95, "warn", "router", "provider_call_failed", { provider: "openai", model: "gpt-4.1", status: 529, duration_ms: 1330, attempt: 2 }),
+  sample(240, "info", "tasks", "task_finished", { task_id: "t_01JMOCK", mode: "agent", ok: true, duration_ms: 41200 }),
+  sample(300, "error", "ui", "command_failed", { command: "board_save", duration_ms: 14, error: "revision conflict" }),
+  sample(600, "info", "app", "app_started", { version: "0.1.0", os: "macos", arch: "aarch64" }),
+];
+
 export const mockApi: Api = {
   ...mockGraphApi, // notes-ui
+  async diagRecent(filter) {
+    return logEntries
+      .filter((e) => (!filter?.level || e.level === filter.level) && (!filter?.target || e.target === filter.target))
+      .slice(0, filter?.limit ?? 200);
+  },
+  async diagSetLevel(level) {
+    logLevel = level;
+  },
+  async diagOpenFolder() {},
+  async diagExport() {
+    return { path: "~/Downloads/next-agent-diagnostics.jsonl", entries: logEntries.length };
+  },
+  async diagLog(level, event, fields) {
+    if (LEVEL_RANK[level] > LEVEL_RANK[logLevel]) return;
+    // Like Rust, events from the UI belong to the "ui" area.
+    logEntries.unshift({ ts: new Date().toISOString(), level, target: "ui", event, fields: { ...fields } });
+    logEntries.length = Math.min(logEntries.length, 2000);
+  },
   async workspaceOpen(path) {
     const trimmed = path.trim();
     if (!trimmed) throw "workspace path is empty";
