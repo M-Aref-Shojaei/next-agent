@@ -455,10 +455,11 @@ fn write_history(path: &Path, history: &History) -> std::io::Result<()> {
     written
 }
 
-/// One line in next-agent.log. Tests must never write to the real one.
+/// One line in the diagnostics log. Tests must never write to it.
 fn note(message: String) {
     #[cfg(not(test))]
-    crate::log::line(message);
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    crate::log::line("recap_file_issue", message);
     #[cfg(test)]
     eprintln!("{message}");
 }

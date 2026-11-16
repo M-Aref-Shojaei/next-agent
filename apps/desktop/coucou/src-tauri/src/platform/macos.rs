@@ -316,7 +316,8 @@ pub fn make_non_activating(win: &WebviewWindow) {
             // first pass over the island would never be let through.
             let _ = panel::set_ignores_mouse(false);
         }
-        Err(err) => crate::log::line(format!("island panel: {err}")),
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        Err(err) => crate::log::fail("island_panel_failed", &err),
     }
 }
 

@@ -127,7 +127,8 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         (current.clone(), screen_changed, autostart_changed, shortcuts_changed)
     };
     if let Err(err) = settings::save(&settings) {
-        log::line(format!("could not save settings: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        log::fail("settings_save_failed", &err);
     }
     if autostart_changed {
         let manager = app.autolaunch();
@@ -232,7 +233,8 @@ fn fit_zoom(app: AppHandle, dpr: f64) -> bool {
     let mut zoom = ZOOM.lock().unwrap();
     if let Some(new_zoom) = island::calculate_zoom_correction(*zoom, scale, dpr) {
         *zoom = new_zoom;
-        log::line(format!("webview dpr {dpr} != window scale {scale} — setting zoom {new_zoom:.3}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        log::line("webview_zoom_adjusted", format!("dpr {dpr} != window scale {scale}, zoom {new_zoom:.3}"));
         let _ = win.set_zoom(new_zoom);
         true
     } else {
@@ -442,7 +444,8 @@ fn hooks_apply(
         let mut current = shared.settings.lock().unwrap();
         current.hooks_installed = install;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
@@ -469,7 +472,8 @@ fn agent_hooks_preview(agent: String, install: bool) -> Result<config_file::Plan
 fn agent_hooks_apply(agent: String, install: bool, fingerprint: String) -> Result<String, String> {
     let backups = agents::apply(&agent, install, &fingerprint)?;
     let done = if install { "installed" } else { "removed" };
-    log::line(format!("agent hooks {done} for {agent}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = done, tool = %agent, "agent_hooks_changed");
     Ok(backups)
 }
 
@@ -500,7 +504,8 @@ fn status_line_apply(
             current.show_plan_in_compact_island = false;
         }
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
@@ -642,7 +647,8 @@ fn subscription_set(app: AppHandle, shared: State<Shared>, provider: String, on:
         current.clone()
     };
     if let Err(err) = settings::save(&settings) {
-        log::line(format!("could not save settings: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        log::fail("settings_save_failed", &err);
     }
     let status = cli_relay::status(&settings);
     let _ = app.emit("settings-changed", settings);
@@ -711,7 +717,8 @@ fn github_refresh(section: String) {
 /// Lets the island write to the same log as the Rust side.
 #[tauri::command]
 fn log_line(message: String) {
-    log::line(format!("ui  {message}"));
+    // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+    log::ui_note(&message);
 }
 
 // ── Global shortcuts ──────────────────────────────────────────────────────────
@@ -777,7 +784,8 @@ pub const MOVED_PAGES: [&str; 13] = [
 /// `MOVED_PAGES`). The page itself picks the route (`overlay-settings-open`).
 fn show_next_agent_settings(app: &AppHandle, page: &str) {
     let Some(win) = app.get_webview_window(SETTINGS_LABEL) else {
-        log::line("Next Agent's main window is missing");
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::warn!(target: "overlay", window = "main", kind = "missing", "overlay_window");
         return;
     };
     let _ = win.emit_to(SETTINGS_LABEL, "overlay-settings-open", page.to_string());
@@ -821,7 +829,8 @@ fn create_settings_window(app: &AppHandle) {
             });
             webview_memory::set_low(&win, true); // created hidden
         }
-        Err(err) => log::line(format!("Next Agent window failed: {err}")),
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        Err(err) => tracing::warn!(target: "overlay", window = "main", kind = "create_failed", error = %err, "overlay_window"),
     }
 }
 
@@ -864,7 +873,8 @@ pub fn show_hub(app: &AppHandle, page: Option<&str>) {
         // Creating it at startup can fail on some machines (WebView2
         // 0x80070578, #775): try again now, on the main thread, where
         // window creation can't deadlock a command.
-        log::line("Next Agent window missing, creating it again");
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::warn!(target: "overlay", window = "main", kind = "recreate", "overlay_window");
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
             create_settings_window(&handle);
@@ -1206,7 +1216,8 @@ pub fn setup(app: &mut tauri::App, boot: Boot) -> Result<(), Box<dyn std::error:
     notes::setup(&handle);
     // Next Agent: tauri.conf.json used to create it, before setup ran.
     if let Err(err) = create_island_window(&handle) {
-        log::line(format!("island window failed: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::warn!(target: "overlay", window = "island", kind = "create_failed", error = %err, "overlay_window");
     }
 
     if let Some(win) = island::window(&handle) {
@@ -1235,7 +1246,10 @@ pub fn setup(app: &mut tauri::App, boot: Boot) -> Result<(), Box<dyn std::error:
     gate.set_active(true);
     island::spawn_cursor_poll(handle.clone(), gate.clone());
 
-    log::line(format!("--- Next Agent {} started ---", env!("CARGO_PKG_VERSION")));
+    // Next Agent: the old free-text overlay/next-agent.log is retired; its lines now go to the shared logs/ (ADR-0013).
+    log::retire_old_file();
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", version = env!("CARGO_PKG_VERSION"), "overlay_started");
     hooks::ensure_hook_exe(&handle);
     pipe::start(handle.clone());
     phone_link::start_if_enabled(&handle);

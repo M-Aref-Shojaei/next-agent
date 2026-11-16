@@ -432,7 +432,8 @@ fn save_prefs(prefs: &Prefs) {
         .and_then(|()| std::fs::rename(&temp, &path));
     if let Err(err) = written {
         let _ = std::fs::remove_file(&temp);
-        crate::log::line(format!("update: could not save update.json: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::fail("update_state_save_failed", &err);
     }
 }
 
@@ -615,13 +616,15 @@ pub async fn check(app: &AppHandle, manual: bool) {
         save_prefs(&s.prefs);
         match result {
             Err(err) => {
-                crate::log::line(format!("update: GitHub unreachable: {err}"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                crate::log::fail("update_check_failed", &err);
                 s.check = CheckState::Unreachable;
                 false
             }
             Ok(Some(release)) if is_newer(&release.version, current_version()) => {
                 if s.latest.as_ref().map(|r| &r.version) != Some(&release.version) {
-                    crate::log::line(format!("update: {} is out (running {})", release.version, current_version()));
+                    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                    tracing::info!(target: "overlay", from_version = current_version(), to_version = %release.version, "update_available");
                 }
                 s.latest = Some(release);
                 s.check = CheckState::None;
@@ -681,14 +684,16 @@ pub fn install(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         match run(&app, &release, kind).await {
             Ok(()) => {
-                crate::log::line(format!("update: running the {kind:?} installer for {}, quitting", release.version));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::info!(target: "overlay", kind = ?kind, to_version = %release.version, "update_installing");
                 set_phase(&app, Phase::Installing);
                 // Long enough for the card to say so; the installer closes a Coucou still open.
                 tokio::time::sleep(Duration::from_millis(1200)).await;
                 app.exit(0);
             }
             Err(message) => {
-                crate::log::line(format!("update: failed: {message}"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                crate::log::fail("update_failed", &message);
                 set_phase(&app, Phase::Error { message });
             }
         }
@@ -723,7 +728,8 @@ async fn run(app: &AppHandle, release: &Release, kind: InstallKind) -> Result<()
     let (program, args) = installer_command(kind, &path, system_root.as_deref())
         .ok_or_else(|| t("The download failed. Try again, or get the new version on GitHub."))?;
     std::process::Command::new(program).args(args).spawn().map_err(|err| {
-        crate::log::line(format!("update: could not start the installer: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::fail("update_installer_failed", &err);
         t("Windows blocked the installer. Get the new version from its release page instead.")
     })?;
     Ok(())

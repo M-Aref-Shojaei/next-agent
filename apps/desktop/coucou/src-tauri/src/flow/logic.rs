@@ -193,7 +193,9 @@ impl FlowKey {
         fixed.iter().map(|c| c.to_string()).collect()
     }
 
-    /// How the key is written in the log (the pages write their own).
+    /// How the key is written (the pages write their own).
+    // Next Agent: the log no longer names the key (ADR-0013); only its test uses this.
+    #[allow(dead_code)]
     pub fn label(self, combo: &[String]) -> String {
         match self {
             FlowKey::RightCtrl => "Right Ctrl".into(),

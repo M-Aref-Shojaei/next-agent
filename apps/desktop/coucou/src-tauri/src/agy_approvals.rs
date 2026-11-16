@@ -123,11 +123,13 @@ pub fn agy_approvals_set_enabled(
         let mut current = shared.settings.lock().unwrap();
         current.agy_approvals_enabled = enabled;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
-    log::line(format!("Antigravity approvals from the island {}", if enabled { "on" } else { "off" }));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = if enabled { "agy_approvals_on" } else { "agy_approvals_off" }, "overlay_setting");
     let _ = app.emit("settings-changed", updated);
     Ok(status(enabled))
 }

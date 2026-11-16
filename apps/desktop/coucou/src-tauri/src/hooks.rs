@@ -293,7 +293,8 @@ fn read_status_line_previous() -> Option<Value> {
 /// the move is protected too. Never replaces a copy already at `new`.
 fn migrate_status_line_previous(legacy: &Path, new: &Path) {
     if legacy.is_file() && !new.exists() && std::fs::rename(legacy, new).is_ok() {
-        crate::log::line("moved statusline-previous.json out of bin/");
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::line("hook_cleanup", "moved statusline-previous.json out of bin/");
     }
 }
 
@@ -430,13 +431,9 @@ pub fn ensure_hook_exe(app: &AppHandle) {
         }
     }
 
-    let tried: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
     let Some(src) = candidates.into_iter().find(|p| p.exists()) else {
-        crate::log::line(format!(
-            "{} not found — Claude Code hooks cannot work. Looked in: {}",
-            platform::HOOK_EXE,
-            tried.join(", ")
-        ));
+        // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+        crate::log::fail("hook_binary_missing", "the relay binary was not found, Claude Code hooks cannot work");
         return;
     };
     install_relay(&src, &dest);
@@ -455,7 +452,8 @@ fn install_relay(src: &Path, dest: &Path) {
     // copy is fine, it is the same relay.
     if let Err(err) = std::fs::copy(src, dest) {
         if !dest.exists() {
-            crate::log::line(format!("could not install {}: {err}", platform::HOOK_EXE));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("hook_install_failed", &err);
         }
     }
 }
@@ -476,7 +474,8 @@ fn install_relay(src: &Path, dest: &Path) {
         .and_then(|_| std::fs::rename(&temp, dest));
     if let Err(err) = result {
         let _ = std::fs::remove_file(&temp);
-        crate::log::line(format!("could not install {}: {err}", platform::HOOK_EXE));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::fail("hook_install_failed", &err);
     }
 }
 

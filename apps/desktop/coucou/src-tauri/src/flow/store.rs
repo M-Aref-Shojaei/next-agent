@@ -237,7 +237,8 @@ impl Store {
 
     fn save<T: Serialize>(&self, value: &T, name: &str) {
         if let Err(err) = self.write(value, name) {
-            crate::log::line(format!("flow: could not save {name}: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("dictation_store_failed", &err);
         }
     }
 

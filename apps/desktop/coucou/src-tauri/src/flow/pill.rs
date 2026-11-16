@@ -96,7 +96,8 @@ fn page_url(app: &AppHandle) -> WebviewUrl {
 pub fn setup(app: &AppHandle) {
     let mut mode = platform::desktop_mode();
     if mode == DesktopMode::Off {
-        crate::log::line("flow pill: no way to place it on this desktop");
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::line("dictation_pill_unplaced", "no way to place the pill on this desktop");
     } else {
         let park = cfg!(windows);
         let mut builder = WebviewWindowBuilder::new(app, LABEL, page_url(app))
@@ -133,7 +134,8 @@ pub fn setup(app: &AppHandle) {
                 }
             }
             Err(err) => {
-                crate::log::line(format!("flow pill window failed: {err}"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                crate::log::fail("dictation_pill_failed", &err);
                 mode = DesktopMode::Off;
             }
         }

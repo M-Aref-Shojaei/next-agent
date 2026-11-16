@@ -59,11 +59,10 @@ fn endpoint() -> Result<Url, String> {
                 Some(raw) => net::anthropic_endpoint(&raw),
             };
             match &resolved {
-                Ok(url) if url.as_str() != DEFAULT_ENDPOINT => crate::log::line(format!(
-                    "chat: Claude requests go to {} ({BASE_URL_VAR})",
-                    net::host_for_log(url)
-                )),
-                Err(err) => crate::log::line(format!("chat: {err}")),
+                // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+                Ok(url) if url.as_str() != DEFAULT_ENDPOINT => crate::log::line("claude_endpoint_overridden", "chat requests go to a custom Claude endpoint"),
+                // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+                Err(_) => crate::log::fail("claude_endpoint_invalid", "the Claude endpoint override is not usable"),
                 _ => {}
             }
             resolved

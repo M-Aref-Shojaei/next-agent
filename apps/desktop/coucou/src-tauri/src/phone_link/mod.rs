@@ -66,7 +66,8 @@ impl Host for TauriHost {
     }
 
     fn answer(&self, request_id: &str, answers: &serde_json::Map<String, serde_json::Value>) {
-        log::line(format!("phone link: answered a question id={request_id}")); // never what was picked
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::info!(target: "overlay", kind = "question_answered", approval_id = %request_id, "phone_link"); // never what was picked
         recap::forget_request(&self.app, request_id);
         let map: std::collections::HashMap<String, serde_json::Value> = answers.clone().into_iter().collect();
         pipe::answer_question(&self.app, request_id, &map);
@@ -75,7 +76,8 @@ impl Host for TauriHost {
 
     fn decide(&self, request_id: &str, allow: bool) {
         let word = if allow { "allow" } else { "deny" };
-        log::line(format!("phone link: decision id={request_id} {word}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::info!(target: "overlay", kind = "decision", decision = word, approval_id = %request_id, "phone_link");
         recap::record_decision(&self.app, request_id, word);
         pipe::answer(&self.app, request_id, word);
         // The card on the island closes; it was answered elsewhere.
@@ -165,15 +167,18 @@ impl PhoneLink {
             return;
         }
         let Ok(target) = relay_client::Target::parse(&url) else {
-            log::line("phone link: relay address not valid, not connecting");
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "relay_address_invalid", "phone_link");
             return;
         };
         let Ok(creds) = relay_client::credentials(&*self.store) else {
-            log::line("phone link: relay needs an access key, not connecting");
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "relay_needs_key", "phone_link");
             return;
         };
         let handle = tauri::async_runtime::block_on(async move { relay_client::start(shared, target, creds) });
-        log::line("phone link: connecting to the relay");
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::info!(target: "overlay", kind = "connecting", "phone_link");
         *self.relay.lock().unwrap() = Some(handle);
     }
 
@@ -187,11 +192,14 @@ impl PhoneLink {
         let result = self.start_inner();
         match result {
             Ok(r) => {
-                log::line(format!("phone link: listening on port {}", r.port));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::info!(target: "overlay", kind = "listening", port = r.port, "phone_link");
                 // So the phone can find this computer again after a Wi-Fi change. The link works without it.
                 match self.advertiser.start(&pairing::computer_name(), r.port, &r.identity.fingerprint) {
-                    Ok(()) => log::line("phone link: announced on the local network"),
-                    Err(e) => log::line(format!("phone link: not announced on the local network: {e}")),
+                    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                    Ok(()) => tracing::info!(target: "overlay", kind = "announced", "phone_link"),
+                    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                    Err(e) => tracing::warn!(target: "overlay", kind = "announce_failed", error = %e, "phone_link"),
                 }
                 *running = Some(r);
                 *self.error.lock().unwrap() = None;
@@ -200,7 +208,8 @@ impl PhoneLink {
                 Ok(())
             }
             Err(e) => {
-                log::line(format!("phone link: could not start: {e}"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                tracing::warn!(target: "overlay", kind = "start_failed", error = %e, "phone_link");
                 *self.error.lock().unwrap() = Some(e.clone());
                 Err(e)
             }
@@ -237,7 +246,8 @@ impl PhoneLink {
         self.advertiser.stop();
         if let Some(r) = self.running.lock().unwrap().take() {
             r.handle.stop();
-            log::line("phone link: stopped");
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "stopped", "phone_link");
         }
     }
 }
@@ -311,7 +321,8 @@ pub fn phone_link_set_enabled(
         let mut current = shared.settings.lock().unwrap();
         current.phone_link = enabled;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
@@ -373,7 +384,8 @@ pub fn phone_link_new_pairing(window: WebviewWindow, link: State<PhoneLink>) -> 
     let running = link.running.lock().unwrap();
     let r = running.as_ref().ok_or("the phone link is off")?;
     renew_pairing(&link.hub, &r.shared.token, &*link.store)?;
-    log::line("phone link: new pairing code, phones disconnected");
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "pairing_reset", "phone_link");
     let result = pairing_of(&link, r);
     drop(running);
     link.sync_relay();
@@ -444,12 +456,14 @@ pub fn phone_relay_set(
         current.phone_relay = enabled;
         current.phone_relay_url = clean;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
     link.sync_relay();
-    log::line(format!("phone link: relay {}", if enabled { "on" } else { "off" }));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = if enabled { "relay_on" } else { "relay_off" }, "phone_link");
     let _ = app.emit("settings-changed", updated);
     Ok(relay_status_of(&link, &shared))
 }
@@ -471,7 +485,8 @@ pub fn phone_relay_set_access(
             let mut current = shared.settings.lock().unwrap();
             current.phone_relay = false;
             if let Err(err) = settings::save(&current) {
-                log::line(format!("could not save settings: {err}"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                log::fail("settings_save_failed", &err);
             }
             current.clone()
         };
@@ -480,7 +495,8 @@ pub fn phone_relay_set_access(
     // Phones paired for the relay follow the new key by themselves (LAN or relay); others re-scan.
     if let Some(access) = relay_client::access_key(&*link.store) {
         let told = link.hub.send_relay_access(&access);
-        log::line(format!("phone link: relay access key changed, {told} phone(s) told"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::info!(target: "overlay", kind = "relay_key_changed", count = told as u64, "phone_link");
     }
     link.sync_relay();
     Ok(relay_status_of(&link, &shared))
@@ -514,12 +530,14 @@ pub fn phone_details_set_enabled(
         let mut current = shared.settings.lock().unwrap();
         current.phone_details = enabled;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
     link.hub.kick_all("closed", "details setting changed");
-    log::line(format!("phone link: details {}", if enabled { "on" } else { "off" }));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = if enabled { "details_on" } else { "details_off" }, "phone_link");
     let _ = app.emit("settings-changed", updated);
     Ok(DetailsStatus { enabled })
 }
@@ -552,12 +570,14 @@ pub fn phone_answers_set_enabled(
         let mut current = shared.settings.lock().unwrap();
         current.phone_answers = enabled;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
     link.hub.kick_all("closed", "answers setting changed");
-    log::line(format!("phone link: answering questions {}", if enabled { "on" } else { "off" }));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = if enabled { "questions_on" } else { "questions_off" }, "phone_link");
     let _ = app.emit("settings-changed", updated);
     Ok(AnswersStatus { enabled })
 }
@@ -590,12 +610,14 @@ pub fn phone_diffs_set_enabled(
         let mut current = shared.settings.lock().unwrap();
         current.phone_diffs = enabled;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
     link.hub.kick_all("closed", "diffs setting changed");
-    log::line(format!("phone link: file changes on the phone {}", if enabled { "on" } else { "off" }));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = if enabled { "file_changes_on" } else { "file_changes_off" }, "phone_link");
     let _ = app.emit("settings-changed", updated);
     Ok(DiffsStatus { enabled })
 }
@@ -628,12 +650,14 @@ pub fn phone_usage_set_enabled(
         let mut current = shared.settings.lock().unwrap();
         current.phone_usage = enabled;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
     link.hub.kick_all("closed", "usage setting changed");
-    log::line(format!("phone link: plan usage on the phone {}", if enabled { "on" } else { "off" }));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = if enabled { "plan_usage_on" } else { "plan_usage_off" }, "phone_link");
     let _ = app.emit("settings-changed", updated);
     Ok(UsageStatus { enabled })
 }
@@ -666,12 +690,14 @@ pub fn phone_recap_set_enabled(
         let mut current = shared.settings.lock().unwrap();
         current.phone_recap = enabled;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
     link.hub.kick_all("closed", "recap setting changed");
-    log::line(format!("phone link: weekly recap on the phone {}", if enabled { "on" } else { "off" }));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = if enabled { "recap_on" } else { "recap_off" }, "phone_link");
     let _ = app.emit("settings-changed", updated);
     Ok(RecapStatus { enabled })
 }
@@ -707,12 +733,14 @@ pub fn phone_services_set(
         let mut current = shared.settings.lock().unwrap();
         current.phone_services = allowed.clone();
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         current.clone()
     };
     link.hub.kick_all("closed", "services setting changed");
-    log::line(format!("phone link: {} service(s) on the phone", allowed.len()));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "services", count = allowed.len() as u64, "phone_link");
     let _ = app.emit("settings-changed", updated);
     Ok(ServicesStatus { services: allowed })
 }
@@ -827,7 +855,8 @@ pub fn phone_chat_set_enabled(
         let mut current = shared.settings.lock().unwrap();
         current.phone_chat = enabled;
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         let status = ChatStatus { enabled, models: chat_backend::clean_models(&current.phone_chat_models) };
         (current.clone(), status)
@@ -836,7 +865,8 @@ pub fn phone_chat_set_enabled(
         link.chat.shutdown();
     }
     link.hub.kick_all("closed", "chat setting changed");
-    log::line(format!("phone link: chat {}", if enabled { "on" } else { "off" }));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = if enabled { "chat_on" } else { "chat_off" }, "phone_link");
     let _ = app.emit("settings-changed", updated);
     Ok(status)
 }
@@ -855,7 +885,8 @@ pub fn phone_chat_set_models(
         let mut current = shared.settings.lock().unwrap();
         current.phone_chat_models = cleaned.clone();
         if let Err(err) = settings::save(&current) {
-            log::line(format!("could not save settings: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            log::fail("settings_save_failed", &err);
         }
         (current.clone(), ChatStatus { enabled: current.phone_chat, models: cleaned })
     };

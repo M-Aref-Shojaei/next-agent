@@ -164,14 +164,16 @@ fn enable(app: &AppHandle, flow: &Arc<Flow>) {
         Ok(()) => match os::listen(&prefs.key.codes(&prefs.key_combo), tx.clone()) {
             Ok(l) => Some(Box::new(l)),
             Err(err) => {
-                crate::log::line(format!("flow: the key can't be watched: {err}"));
+                // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+                crate::log::fail("dictation_key_unwatchable", &err);
                 None
             }
         },
         #[cfg(target_os = "linux")]
         Err("wayland") => wayland::listen(tx.clone()).map(|h| Box::new(h) as Box<dyn std::any::Any + Send>),
         Err(why) => {
-            crate::log::line(format!("flow: no key on this desktop ({why}); the pill's buttons still work"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::warn!(target: "overlay", kind = "no_key", reason = %why, "dictation");
             None
         }
     };
@@ -185,7 +187,8 @@ fn enable(app: &AppHandle, flow: &Arc<Flow>) {
     drop(running);
     speech::preload();
     pill::update(app, |s| s.enabled = true);
-    crate::log::line(format!("flow dictation on ({})", prefs.key.label(&prefs.key_combo)));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "enabled", "dictation");
 }
 
 fn disable(app: &AppHandle, flow: &Arc<Flow>) {
@@ -352,7 +355,8 @@ fn begin(app: &AppHandle, flow: &Arc<Flow>) -> Option<Listening> {
             Some(Listening { capture, _hush: hush::hush(quiet), take, started: Instant::now(), app: app_front })
         }
         Err(err) => {
-            crate::log::line(format!("flow: microphone: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("dictation_microphone_failed", &err);
             pill::update(app, |s| s.phase = "failed".into());
             pill::rest_after(app, "failed", 1800);
             pill::announce(
@@ -391,7 +395,8 @@ fn finish(app: &AppHandle, flow: &Arc<Flow>, mut l: Listening, busy: Arc<AtomicB
         let result = process(&app, &flow, &samples, front.as_ref(), seconds);
         busy.store(false, Ordering::Relaxed);
         if let Err(err) = result {
-            crate::log::line(format!("flow: {err}"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("dictation_failed", &err);
             pill::update(&app, |s| s.phase = "idle".into());
         }
     });
@@ -419,7 +424,8 @@ fn process(app: &AppHandle, flow: &Arc<Flow>, samples: &[f32], front: Option<&(S
         }
     }
     let final_text = text::finish(&written, &prepared.snippets);
-    crate::log::line(format!("flow: {} words in {:?}", text::word_count(&final_text), started.elapsed()));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    tracing::info!(target: "overlay", kind = "finished", count = text::word_count(&final_text) as u64, duration_ms = started.elapsed().as_millis() as u64, "dictation");
 
     os::wait_key_released(&key);
     let terminal = front.is_some_and(|(id, _)| is_terminal(id));

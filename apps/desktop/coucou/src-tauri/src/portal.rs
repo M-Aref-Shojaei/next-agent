@@ -375,7 +375,8 @@ impl Portal {
             method(OBJECT, "org.freedesktop.host.portal.Registry", "Register")?
                 .append2(APP_ID, PropMap::new()),
         ) {
-            crate::log::line(format!("shortcuts portal: no app registry ({err})"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            crate::log::fail("shortcuts_portal_unavailable", &err);
         }
 
         let version = portal
@@ -386,7 +387,8 @@ impl Portal {
                 reply.read1::<Variant<u32>>().map(|v| v.0).map_err(|e| e.to_string())
             })
             .map_err(|e| format!("no GlobalShortcuts portal: {e}"))?;
-        crate::log::line(format!("shortcuts portal: GlobalShortcuts version {version}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::info!(target: "overlay", version = %version, "shortcuts_portal");
 
         for rule in [
             format!("type='signal',sender='{DEST}',interface='{IFACE}'"),

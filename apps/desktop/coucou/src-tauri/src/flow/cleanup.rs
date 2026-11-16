@@ -38,8 +38,9 @@ pub async fn clean(raw: &str, style: Style, app: Option<&str>, words: &[String])
                 raw.to_string()
             }
         }
-        Err(err) => {
-            crate::log::line(format!("flow: clean-up skipped: {err}"));
+        Err(_) => {
+            // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+            crate::log::fail("dictation_cleanup_skipped", "the clean-up request failed, the raw text is used");
             raw.to_string()
         }
     }

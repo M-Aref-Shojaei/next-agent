@@ -339,7 +339,8 @@ fn build_stream(source: &Source, mut sink: impl FnMut(&[f32]) + Send + 'static) 
             sink(&out);
         }
     };
-    let err_fn = |err: cpal::Error| crate::log::line(format!("audio: {err}"));
+    // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+    let err_fn = |err: cpal::Error| crate::log::fail("audio_stream_error", &err);
     let stream = match format {
         cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(
             config,

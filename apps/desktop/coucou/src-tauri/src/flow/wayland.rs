@@ -42,9 +42,11 @@ pub fn listen(tx: Sender<(KeyEvent, Instant)>) -> Option<HoldKey> {
         portal::Event::Deactivated(id) if id == SHORTCUT_ID => {
             let _ = tx.send((KeyEvent::Up, Instant::now()));
         }
-        portal::Event::Bound { .. } => crate::log::line("flow: dictation shortcut held by the desktop"),
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        portal::Event::Bound { .. } => crate::log::line("dictation_shortcut_bound", "the desktop holds the dictation shortcut"),
         portal::Event::Failed { reason, .. } | portal::Event::Unavailable(reason) => {
-            crate::log::line(format!("flow: no dictation shortcut from the desktop ({reason})"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::warn!(target: "overlay", kind = "no_shortcut", reason = %reason, "dictation");
         }
         _ => {}
     })?;

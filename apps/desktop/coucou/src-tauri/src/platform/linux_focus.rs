@@ -154,7 +154,8 @@ pub fn focus_session_window(owners: &[u32], folder: &str) -> bool {
             Method::X11 => x11::activate(&pids, folder),
         };
         if done {
-            crate::log::line(format!("open terminal: window raised ({method:?})"));
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            tracing::info!(target: "overlay", kind = "window_raised", reason = format!("{method:?}"), "terminal_focus");
         }
         done
     });

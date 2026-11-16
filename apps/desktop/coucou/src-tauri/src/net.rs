@@ -159,7 +159,9 @@ pub fn error_detail(body: &[u8]) -> String {
     text.trim().chars().take(200).collect()
 }
 
-/// Only the host of an address, for the log: never a path, a query or a key.
+/// Only the host of an address: never a path, a query or a key.
+// Next Agent: the log no longer names the Claude endpoint host (ADR-0013); only its test uses this.
+#[allow(dead_code)]
 pub fn host_for_log(url: &Url) -> String {
     match (url.host_str(), url.port()) {
         (Some(h), Some(p)) => format!("{h}:{p}"),

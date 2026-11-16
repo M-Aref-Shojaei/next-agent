@@ -63,7 +63,8 @@ pub fn paste(text: &str, shift: bool) -> Outcome {
     // Give the clipboard a moment to be announced before the app reads it.
     std::thread::sleep(Duration::from_millis(40));
     if let Err(err) = super::os::send_paste(shift) {
-        crate::log::line(format!("flow: paste keystroke failed: {err}"));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        crate::log::fail("dictation_paste_failed", &err);
         return Outcome::Copied;
     }
     let ours = text.to_string();

@@ -262,7 +262,8 @@ fn launch_here(folder: &str, prompt: &str) -> Result<String, String> {
         let spawn = linux_spawn(&path.to_string_lossy(), &shell, folder, prompt);
         match start(&spawn, false) {
             Ok(()) => return Ok(candidate),
-            Err(err) => crate::log::line(format!("launch: {candidate} didn't start: {err}")),
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            Err(err) => crate::log::fail("terminal_launch_failed", &err),
         }
     }
     Err("no terminal found".into())
@@ -294,7 +295,8 @@ fn launch_here(folder: &str, prompt: &str) -> Result<String, String> {
         let spawn = windows_spawn(Some(&wt.to_string_lossy()), shell, folder, file.as_deref());
         match start(&spawn, false) {
             Ok(()) => return Ok("Windows Terminal".into()),
-            Err(err) => crate::log::line(format!("launch: Windows Terminal didn't start: {err}")),
+            // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+            Err(err) => crate::log::fail("terminal_launch_failed", &err),
         }
     }
     let spawn = windows_spawn(None, shell, folder, file.as_deref());
@@ -349,14 +351,15 @@ pub fn launch_session(folder: String, prompt: String) -> bool {
     if !valid_folder(&folder) {
         return false;
     }
-    let name = session_window::folder_name(&folder).to_string();
     match launch_here(&folder, &prompt) {
-        Ok(terminal) => {
-            crate::log::line(format!("launch: Claude Code in {name} with {terminal}"));
+        Ok(_) => {
+            // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+            tracing::info!(target: "overlay", kind = "claude_code", "terminal_launch");
             true
         }
         Err(err) => {
-            crate::log::line(format!("launch: couldn't open a terminal in {name}: {err}"));
+            // Next Agent: structured overlay event: the message text could carry user content (ADR-0013).
+            crate::log::fail("terminal_launch_failed", &err);
             false
         }
     }
@@ -390,7 +393,8 @@ pub async fn drop_into_session(session_id: String, path: Option<String>, paths: 
         let focused = session_window::lookup(&session_id)
             .is_some_and(|owners| platform::focus_session_window(&owners, &folder))
             || in_herdr;
-        crate::log::line(format!("drop: {} file(s) into a session, window found: {focused}", paths.len()));
+        // Next Agent: event name plus allowlisted fields for the shared diagnostics log (ADR-0013).
+        tracing::info!(target: "overlay", count = paths.len() as u64, ok = focused, "file_drop");
         if !focused {
             return if flow::paste::copy(&text) { "copied" } else { "failed" }.to_string();
         }
