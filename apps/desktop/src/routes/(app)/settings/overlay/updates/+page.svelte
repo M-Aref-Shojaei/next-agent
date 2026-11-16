@@ -3,6 +3,7 @@
   // with Next Agent's update source (owner request): empty by default, and
   // then nothing is checked.
   import { onMount } from "svelte";
+  import { log } from "$lib/log.ts";
   import { Button, SettingsRow, SettingsSection, Switch, TextField } from "$lib/ds/index.ts";
   import { onOverlayEvent, overlay, updateFeedback } from "$lib/overlay-settings.ts";
   import { overlayStore as store } from "$lib/overlay-store.svelte.ts";
@@ -25,7 +26,8 @@
     try {
       status = await overlay.updateSetSource(source.trim());
       sourceError = "";
-    } catch {
+    } catch (e) {
+      log.warn("ui_error", { kind: "overlay_updates", error: String(e) });
       sourceError = "Not a GitHub owner/repo";
     }
   }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
   import {
@@ -55,6 +56,7 @@
       usage = await api.usageSummary(days);
       message = "";
     } catch (e) {
+      log.warn("ui_error", { kind: "usage", error: String(e) });
       message = String(e);
     }
   }

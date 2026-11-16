@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import { api, type AuditStatus, type Rule } from "$lib/api.ts";
   import { app } from "$lib/app.svelte.ts";
@@ -33,7 +34,10 @@
     rules = app.activeWorkspaceId ? await api.rulesList(app.activeWorkspaceId) : [];
     audit = await api.auditVerify();
   }
-  onMount(() => void load().catch((e) => (message = String(e))));
+  onMount(() => void load().catch((e) => {
+    log.warn("ui_error", { kind: "settings", error: String(e) });
+    message = String(e);
+  }));
 
   async function saveRouter(event: SubmitEvent) {
     event.preventDefault();
@@ -41,6 +45,7 @@
       await api.settingSet("router.url", routerUrl);
       message = "Router URL saved.";
     } catch (e) {
+      log.warn("ui_error", { kind: "settings", error: String(e) });
       message = String(e);
     }
   }
@@ -50,6 +55,7 @@
       vaultPath = await api.vaultSet(vaultPath);
       message = "Vault path saved.";
     } catch (e) {
+      log.warn("ui_error", { kind: "settings", error: String(e) });
       message = String(e);
     }
   }
@@ -58,6 +64,7 @@
       await api.ruleDelete(id);
       rules = rules.filter((r) => r.id !== id);
     } catch (e) {
+      log.warn("ui_error", { kind: "settings", error: String(e) });
       message = String(e);
     }
   }

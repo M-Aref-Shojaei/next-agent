@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { log } from "$lib/log.ts";
   import { goto } from "$app/navigation";
   import { onDestroy, untrack } from "svelte";
   import { app } from "$lib/app.svelte.ts";
@@ -52,7 +53,10 @@
   let tab = $state<"explore" | "edit">("explore");
   let problem = $state("");
   let notices = $state<string[]>([]);
-  const fail = (e: unknown) => (problem = errorText(e));
+  const fail = (e: unknown) => {
+    log.warn("ui_error", { kind: "design", error: String(e) });
+    problem = errorText(e);
+  };
 
   // ---- design system ----
   let files = $state<DesignFiles | null>(null);
@@ -98,7 +102,7 @@
   let iframe = $state<HTMLIFrameElement | null>(null);
   let selecting = $state(true);
   let starting = $state(false);
-  let log = $state<string[]>([]);
+  let devLog = $state<string[]>([]);
   let selected = $state<{ location: RawLocation; text: string } | null>(null);
   let source = $state<SourceView | null>(null);
   let before = $state<Record<string, string>>({});
@@ -289,7 +293,7 @@
     const id = ws.id;
     logTimer = setInterval(async () => {
       try {
-        log = await api.designPreviewLog(id);
+        devLog = await api.designPreviewLog(id);
       } catch {
         // ignore
       }
@@ -338,6 +342,7 @@
       try {
         source = await api.designSource(ws.id, msg.location);
       } catch (e) {
+        log.warn("ui_error", { kind: "design", error: String(e) });
         source = null;
         editNote = String(e);
       }
@@ -480,8 +485,8 @@
           {#if preview}
             <p class="muted small">Proxying {preview.target}{#if preview.command} · started <code>{preview.command}</code>{/if}. Enter selects the focused element, Escape clears.</p>
             <DesignFrame frame={previewFrame} title="Live app preview" sandbox={preview.sandbox} src={preview.url} bind:iframe />
-            {#if log.length}
-              <details class="log"><summary>Dev server output</summary><pre>{log.join("\n")}</pre></details>
+            {#if devLog.length}
+              <details class="log"><summary>Dev server output</summary><pre>{devLog.join("\n")}</pre></details>
             {/if}
           {:else}
             <EmptyState
