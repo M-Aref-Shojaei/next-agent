@@ -63,8 +63,21 @@ pub const SETTINGS_KEY: &str = "gateway.settings";
 /// Cooldowns up to this long are waited out before moving on (5xx).
 const SHORT_COOLDOWN: Duration = Duration::from_secs(5);
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-/// Output ceiling assumed when the price table has no `max_output` for a model.
+/// Output ceiling assumed when the price table has no `max_output` for a
+/// model on an OpenAI-compatible (or unknown) provider.
 const FALLBACK_OUTPUT_TOKENS: u32 = 16_384;
+/// Gemini output ceiling when the price table has none.
+const GEMINI_MAX_OUTPUT: u32 = 65_536;
+
+/// Output ceiling a request to `kind` is built with when the price table has
+/// no `max_output`. The cost estimate uses the same value, so the two agree.
+fn default_max_output(kind: ProviderKind) -> u32 {
+    match kind {
+        ProviderKind::OpenAi => FALLBACK_OUTPUT_TOKENS,
+        ProviderKind::Anthropic => anthropic::DEFAULT_MAX_OUTPUT,
+        ProviderKind::Gemini => GEMINI_MAX_OUTPUT,
+    }
+}
 /// HTTP status returned when a budget refuses a request.
 const BUDGET_BLOCKED_STATUS: u16 = 402;
 
@@ -1060,13 +1073,19 @@ impl Gateway {
         targets
             .iter()
             .map(|t| {
-                let provider = self.price_provider(t);
+                // Same account `price_provider` picks: prices and the request
+                // ceiling both follow it.
+                let account = self.config.accounts(&t.provider).into_iter().next();
+                let provider = account.map_or_else(|| t.provider.clone(), |c| c.provider.clone());
                 let output = requested.unwrap_or_else(|| {
                     i64::from(
                         self.config
                             .pricing
                             .max_output(&provider, &t.model)
-                            .unwrap_or(FALLBACK_OUTPUT_TOKENS),
+                            .unwrap_or(
+                                account
+                                    .map_or(FALLBACK_OUTPUT_TOKENS, |c| default_max_output(c.kind)),
+                            ),
                     )
                 });
                 let usage = Usage {
@@ -1369,26 +1388,23 @@ impl Gateway {
         let mut base = openai.clone();
         base["model"] = json!(model);
         base["stream"] = json!(true);
-        let max_output = pricing.max_output(&account.provider, model);
+        let ceiling = pricing
+            .max_output(&account.provider, model)
+            .unwrap_or_else(|| default_max_output(account.kind));
         match account.kind {
             ProviderKind::OpenAi => {
                 base["stream_options"] = json!({"include_usage": true});
-                reasoning::apply_openai(
-                    &mut base,
-                    &account.provider,
-                    max_output.unwrap_or(FALLBACK_OUTPUT_TOKENS),
-                );
+                reasoning::apply_openai(&mut base, &account.provider, ceiling);
                 (base, Format::OpenAi, gemini::NameMap::new())
             }
             ProviderKind::Anthropic => {
-                let ceiling = max_output.unwrap_or(anthropic::DEFAULT_MAX_OUTPUT);
                 let mut body = anthropic::request(&base, model, ceiling);
                 reasoning::apply_anthropic(&mut body, &base, ceiling);
                 (body, Format::Anthropic, gemini::NameMap::new())
             }
             ProviderKind::Gemini => {
                 let (mut body, names) = gemini::request(&base);
-                reasoning::apply_gemini(&mut body, &base, model, max_output.unwrap_or(65_536));
+                reasoning::apply_gemini(&mut body, &base, model, ceiling);
                 (body, Format::Gemini, names)
             }
         }

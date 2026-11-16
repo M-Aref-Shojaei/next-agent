@@ -2294,3 +2294,37 @@ async fn keychain_errors_do_not_open_the_circuit_breaker() {
     );
     assert_eq!(hits(&servers[0]).await, 0);
 }
+
+/// Without a requested output or a price-table `max_output`, the estimate
+/// assumes the ceiling the request is actually sent with, per provider kind.
+#[test]
+fn cost_estimate_uses_each_providers_request_ceiling() {
+    let connections = vec![
+        conn("alpha", "alpha", ProviderKind::Anthropic, "http://x", 1),
+        conn("beta", "beta", ProviderKind::OpenAi, "http://x", 1),
+        conn("gamma", "gamma", ProviderKind::Gemini, "http://x", 1),
+    ];
+    let (gateway, _) = db_gateway(connections, vec![], GatewaySettings::default());
+    let body = request("alpha/m");
+    let prompt = f64::from(u32::try_from(overflow::estimate_tokens(&body)).expect("small"));
+    let estimate = |provider: &str| {
+        gateway.estimate_cost(
+            &body,
+            &[Target {
+                provider: provider.into(),
+                model: "m".into(),
+            }],
+        )
+    };
+    let expected = |price: f64, ceiling: u32| (prompt * price + f64::from(ceiling) * price) / 1e6;
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-12;
+    for (provider, price, ceiling) in [
+        ("alpha", 5.0, anthropic::DEFAULT_MAX_OUTPUT),
+        ("beta", 1.0, FALLBACK_OUTPUT_TOKENS),
+        ("gamma", 0.5, GEMINI_MAX_OUTPUT),
+    ] {
+        let got = estimate(provider);
+        let want = expected(price, ceiling);
+        assert!(close(got, want), "{provider}: {got} != {want}");
+    }
+}
