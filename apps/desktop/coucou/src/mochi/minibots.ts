@@ -2,8 +2,11 @@
 // Mini Mochis (pills + compact grid) — port of MiniBotCanvasView.
 // Each canvas owns a BotEngine; the island's frame loop ticks every live one.
 
-import { BotEngine, hexToRGB } from "./engine";
+import { BotEngine, hexToRGB, type RGB } from "./engine";
 import type { AgentTask } from "../core/state";
+// Next Agent: our own logo mark (src/assets/brand/), not Coucou art.
+import MARK_MONO_URL from "../assets/brand/mark-mono.png?url";
+import MARK_LINES_URL from "../assets/brand/mark-lines.png?url";
 
 interface MiniBot {
   canvas: HTMLCanvasElement;
@@ -12,6 +15,54 @@ interface MiniBot {
   taskId: string;
   /** Asked every frame: whether this one dances (the music pill's, MiniBotCanvasView). */
   dancing?: () => boolean;
+}
+
+// Next Agent: the pills wear the Next Agent logo mark instead of the orb. `mark-mono` (the hexagon with
+// the brain lines cut out) is tinted with the pill's identity colour, `mark-lines` (white) goes on top.
+// The images load once; the tinted hexagon is cached per colour.
+let markMono: HTMLImageElement | null = null;
+let markLines: HTMLImageElement | null = null;
+const tintCache = new Map<string, HTMLCanvasElement>();
+
+function loadMark() {
+  if (markMono || typeof Image === "undefined") return;
+  markMono = new Image();
+  markMono.src = MARK_MONO_URL;
+  markLines = new Image();
+  markLines.src = MARK_LINES_URL;
+}
+
+const ready = (i: HTMLImageElement | null): i is HTMLImageElement => !!i && i.complete && i.naturalWidth > 0;
+
+function tintedMark(color: RGB): HTMLCanvasElement | null {
+  if (!ready(markMono)) return null;
+  const key = color.map((c) => Math.round(c * 255)).join(",");
+  let c = tintCache.get(key);
+  if (!c) {
+    c = document.createElement("canvas");
+    c.width = markMono.naturalWidth;
+    c.height = markMono.naturalHeight;
+    const g = c.getContext("2d")!;
+    g.drawImage(markMono, 0, 0);
+    g.globalCompositeOperation = "source-in"; // keeps the colour only where the hexagon is
+    g.fillStyle = `rgb(${key})`;
+    g.fillRect(0, 0, c.width, c.height);
+    tintCache.set(key, c);
+  }
+  return c;
+}
+
+/** Draws the mark centred on the origin, `r` being the orb radius it replaces. */
+function drawMark(x: CanvasRenderingContext2D, r: number, color: RGB, alpha: number) {
+  const hex = tintedMark(color);
+  if (!hex || !ready(markLines) || alpha <= 0.001) return;
+  const d = r * 2.1;
+  x.save();
+  x.globalAlpha *= alpha;
+  x.imageSmoothingQuality = "high";
+  x.drawImage(hex, -d / 2, -d / 2, d, d);
+  x.drawImage(markLines, -d / 2, -d / 2, d, d);
+  x.restore();
 }
 
 const live = new Map<HTMLCanvasElement, MiniBot>();
@@ -42,6 +93,8 @@ export function createMiniBot(task: AgentTask, bodySize: number, dancing?: () =>
 
   const engine = new BotEngine();
   engine.isMini = true;
+  loadMark();
+  engine.bodyDrawer = drawMark;
   engine.bodyColor = hexToRGB(task.color);
   engine.setState(task.state, true);
   if (task.emote) engine.setPermanentEmote(task.emote);

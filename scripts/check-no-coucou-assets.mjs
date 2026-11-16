@@ -16,7 +16,8 @@ const RULES = [
   // The vendored Tauri app (ADR-0011): code only. Its icons (src-tauri/icons/),
   // screenshots and any picture, sound or video stay upstream.
   {
-    test: (p) => /^apps\/desktop\/coucou\/.*\.(png|jpe?g|gif|webp|ico|icns|svg|wav|mp3|m4a|aiff?|ogg|mp4|mov|webm)$/i.test(p),
+    // Our own brand marks (src/assets/brand/) are ours, not Coucou's.
+    test: (p) => !/^apps\/desktop\/coucou\/src\/assets\/brand\//.test(p) && /^apps\/desktop\/coucou\/.*\.(png|jpe?g|gif|webp|ico|icns|svg|wav|mp3|m4a|aiff?|ogg|mp4|mov|webm)$/i.test(p),
     why: "a picture, sound or video in the vendored Coucou app",
   },
   { test: (p) => /^apps\/desktop\/coucou\/(screenshots|src-tauri\/icons)\//.test(p), why: "Coucou's screenshots or icons" },

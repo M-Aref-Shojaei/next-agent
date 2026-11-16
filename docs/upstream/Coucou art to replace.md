@@ -16,7 +16,7 @@ Upstream draws Mochi in code on a Canvas 2D (no image files). Mochi's look is th
 |---|---|---|---|
 | Island mascot | `src/mochi/engine.ts` (`BotEngine.draw`), used by `src/island/island.ts` | canvas W×W; body radius `R = 0.3·W`; in the island the diameter is `VIEW_LAYOUTS[view].botDiameter`, 56–62 CSS px (`src/core/layout.ts`), drawn at 2× DPR | 11 states (`BOT_STATES`: idle, working, thinking, searching, approval, question, error, finished, ratelimit, sleeping, dizzy); 13 eye shapes; 7 emotes; blink, squash, gulp, slap, roll, dance, mailbox morph; hands; blush |
 | Badge and particles | `engine.ts` (`drawBadge`, `drawParticles`), **kept** | badge ≈ 0.27 R; hearts, stars, sparks, sweat, "z" | not character art, so upstream's are drawn |
-| Mini bots (one per agent pill) | `src/mochi/minibots.ts` → `BotEngine` with `bodyColor` | 14–22 px | flat colour body, state eyes |
+| Mini bots (one per agent pill) | `src/mochi/minibots.ts` → `BotEngine` with `bodyColor` | 14–22 px | **Filled (2026-11-16):** the Next Agent logo mark (`src/assets/brand/mark-mono.png` tinted with the pill's colour, `mark-lines.png` in white on top) replaces the orb; bob, state cues and badges are unchanged. See [[Overlay Fixes]] task 2 |
 | Launch greeting | `src/mochi/greeting.ts` (`drawMochi`, `drawMinis`) | 640×150 reference canvas; body height `HB = 58` | drop, bounce, wave (hands), blink, happy and content eyes, four mini bots |
 | Desktop companion window | `src/desktop/main.ts` (route `/coucou/mochi`) | 120×120 window (`PANEL_SIZE`) | same engine; asleep / awake; eyes follow the cursor |
 | Dictation pill | `src/pill/main.ts` | about 28 px | engine states while listening or thinking |
@@ -25,7 +25,7 @@ Upstream draws Mochi in code on a Canvas 2D (no image files). Mochi's look is th
 | Weekly recap share image | `src/recap/share.ts` (`drawMochi`) | 1080×1920 PNG export, character about 220 px | idle |
 | Outfits (wardrobe) | `src/mochi/outfits.ts`: **not copied**; stand-in draws the orb | wardrobe button about 28×28 px; costumes on the head at R | santa, witch, pumpkin, bunny ears, party hat, crown and the rest (`OUTFIT_SELECTIONS` in `wardrobe.ts`) |
 
-The outfit choice, the seasonal "auto" pick and the wardrobe view still work. Only the costume drawing is missing.
+The pills' mini bots are the only spot the mark fills so far; every other row still draws the orb until the owner decides. The outfit choice, the seasonal "auto" pick and the wardrobe view still work. Only the costume drawing is missing.
 
 ## 2. Icons → done: Next Agent's logo (2026-11-15)
 
