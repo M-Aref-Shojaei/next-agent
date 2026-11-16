@@ -14,8 +14,8 @@ mod redact;
 mod time;
 mod writer;
 
-pub use layer::{area, is_event_name, AREAS};
-pub use redact::{redact, MAX_CHARS};
+use layer::is_event_name;
+pub use redact::redact;
 pub use tracing::Level;
 
 use serde::{Deserialize, Serialize};
@@ -98,6 +98,22 @@ pub struct LogEntry {
     pub dropped_fields: u32,
 }
 
+impl LogEntry {
+    /// An entry with no message, fields or span; `emit` stamps `ts`.
+    pub(crate) fn new(level: Level, target: &str, event: String) -> Self {
+        Self {
+            ts: String::new(),
+            level: level_name(level).into(),
+            target: target.into(),
+            event,
+            message: None,
+            fields: Map::new(),
+            span: Map::new(),
+            dropped_fields: 0,
+        }
+    }
+}
+
 #[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if signature.
 fn is_zero(n: &u32) -> bool {
     *n == 0
@@ -141,27 +157,37 @@ impl fmt::Display for InitError {
 
 impl std::error::Error for InitError {}
 
+/// Levels from most to least severe, with the name the log writes (trace
+/// is written as debug; the app does not offer it).
+const LEVELS: [(Level, &str); 5] = [
+    (Level::ERROR, "error"),
+    (Level::WARN, "warn"),
+    (Level::INFO, "info"),
+    (Level::DEBUG, "debug"),
+    (Level::TRACE, "debug"),
+];
+
 /// Severity rank: error 1, warn 2, info 3, debug 4, trace 5.
 pub(crate) fn rank(level: Level) -> u8 {
-    match level {
-        Level::ERROR => 1,
-        Level::WARN => 2,
-        Level::INFO => 3,
-        Level::DEBUG => 4,
-        Level::TRACE => 5,
-    }
+    let index = LEVELS.iter().position(|(l, _)| *l == level).unwrap_or(4);
+    u8::try_from(index + 1).unwrap_or(5)
+}
+
+fn from_rank(rank: u8) -> (Level, &'static str) {
+    LEVELS[usize::from(rank.clamp(1, 5)) - 1]
+}
+
+pub(crate) fn level_name(level: Level) -> &'static str {
+    from_rank(rank(level)).1
 }
 
 /// `error`, `warn`, `info` or `debug` (the levels the app offers).
 #[must_use]
 pub fn parse_level(name: &str) -> Option<Level> {
-    match name {
-        "error" => Some(Level::ERROR),
-        "warn" => Some(Level::WARN),
-        "info" => Some(Level::INFO),
-        "debug" => Some(Level::DEBUG),
-        _ => None,
-    }
+    LEVELS[..4]
+        .iter()
+        .find(|(_, n)| *n == name)
+        .map(|(l, _)| *l)
 }
 
 thread_local! {
@@ -311,14 +337,9 @@ fn log_panic(inner: &Inner, info: &std::panic::PanicHookInfo<'_>) {
         fields.insert("line".into(), location.line().into());
     }
     inner.emit(LogEntry {
-        ts: String::new(),
-        level: "error".into(),
-        target: "app".into(),
-        event: "panic".into(),
         message: Some(redact(&payload)).filter(|m| !m.is_empty()),
         fields,
-        span: Map::new(),
-        dropped_fields: 0,
+        ..LogEntry::new(Level::ERROR, "app", "panic".into())
     });
     inner.flush();
 }
@@ -332,13 +353,7 @@ impl Handle {
     /// The current level.
     #[must_use]
     pub fn level(&self) -> Level {
-        match self.inner.level.load(Ordering::Relaxed) {
-            1 => Level::ERROR,
-            2 => Level::WARN,
-            3 => Level::INFO,
-            4 => Level::DEBUG,
-            _ => Level::TRACE,
-        }
+        from_rank(self.inner.level.load(Ordering::Relaxed)).0
     }
 
     /// Recent entries from memory, newest first.
@@ -376,24 +391,20 @@ impl Handle {
             return Ok(false);
         }
         let mut collect = layer::Collect::default();
-        let mut message = None;
         for (name, value) in fields {
-            match (name.as_str(), value) {
-                // A UI error's text (`ui_error`): free text, redacted.
-                ("message", Value::String(text)) => message = Some(redact(text)),
-                ("message" | "event", _) => collect.dropped += 1,
-                _ => collect.put(name, value.clone()),
-            }
+            collect.put(name, value.clone());
         }
+        // The event name is the argument; an `event` field is dropped.
+        let dropped = collect.dropped + u32::from(collect.event.is_some());
         self.inner.emit(LogEntry {
-            ts: String::new(),
-            level: layer::level_name(level).into(),
-            target: "ui".into(),
-            event: event.into(),
-            message: message.filter(|m| !m.is_empty()),
+            // A UI error's text (`ui_error`): free text, redacted.
+            message: collect
+                .message
+                .filter(|m| !m.is_empty())
+                .map(|m| redact(&m)),
             fields: collect.fields,
-            span: Map::new(),
-            dropped_fields: collect.dropped,
+            dropped_fields: dropped,
+            ..LogEntry::new(level, "ui", event.into())
         });
         Ok(true)
     }
@@ -415,7 +426,7 @@ impl Handle {
             "version": env!("CARGO_PKG_VERSION"),
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
-            "level": layer::level_name(self.level()),
+            "level": level_name(self.level()),
             "exported_at": ts,
         });
         let mut entries = 0;
@@ -472,9 +483,7 @@ fn resanitize(entry: LogEntry) -> LogEntry {
         span.put(&name, value);
     }
     LogEntry {
-        level: parse_level(&entry.level)
-            .map_or("debug", layer::level_name)
-            .into(),
+        level: parse_level(&entry.level).map_or("debug", level_name).into(),
         target: layer::area(&entry.target).into(),
         event: if is_event_name(&entry.event) {
             entry.event

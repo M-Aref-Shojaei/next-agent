@@ -3,13 +3,13 @@
 //! string.
 
 use crate::fields::{is_allowed, is_free_text, INVALID};
-use crate::{rank, redact, Inner, LogEntry};
+use crate::{redact, Inner, LogEntry};
 use serde_json::{Map, Value};
 use std::fmt;
 use std::sync::Arc;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
-use tracing::{Event, Level, Metadata, Subscriber};
+use tracing::{Event, Metadata, Subscriber};
 use tracing_core::Interest;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
@@ -92,14 +92,11 @@ where
         }
         let (event_name, message, bad_name) = name_event(visit.event, visit.message);
         self.inner.emit(LogEntry {
-            ts: String::new(),
-            level: level_name(*meta.level()).to_string(),
-            target: area(meta.target()).to_string(),
-            event: event_name,
             message,
             fields: visit.fields,
             span,
             dropped_fields: visit.dropped + u32::from(bad_name),
+            ..LogEntry::new(*meta.level(), area(meta.target()), event_name)
         });
     }
 }
@@ -160,15 +157,6 @@ pub(crate) fn is_ours(target: &str) -> bool {
     !target.contains("::") || target.starts_with("next_agent") || target.starts_with("coucou")
 }
 
-pub(crate) fn level_name(level: Level) -> &'static str {
-    match rank(level) {
-        1 => "error",
-        2 => "warn",
-        3 => "info",
-        _ => "debug",
-    }
-}
-
 /// Clean one allowlisted value: strings are redacted, and a token-shaped
 /// field (anything but free text) must not hold whitespace or long text.
 pub(crate) fn clean(name: &str, value: Value) -> Option<Value> {
@@ -189,8 +177,8 @@ pub(crate) fn clean(name: &str, value: Value) -> Option<Value> {
 pub(crate) struct Collect {
     pub(crate) fields: Map<String, Value>,
     pub(crate) dropped: u32,
-    message: Option<String>,
-    event: Option<String>,
+    pub(crate) message: Option<String>,
+    pub(crate) event: Option<String>,
 }
 
 impl Collect {

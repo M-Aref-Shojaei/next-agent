@@ -6,6 +6,7 @@
 //! or base64 runs become `[secret]`; the result is cut to 300 characters.
 
 use regex::{Captures, Regex};
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 /// Longest string the log keeps, in characters.
@@ -100,51 +101,60 @@ static HOME: LazyLock<Option<String>> = LazyLock::new(|| {
 /// Redact one string for the log. Safe on any input; never panics.
 #[must_use]
 pub fn redact(text: &str) -> String {
-    let mut out = URL
-        .replace_all(text, |c: &Captures| {
-            let rest = if c[3].is_empty() { "" } else { "/…" };
-            format!("{}{}{rest}", &c[1], &c[2])
-        })
-        .into_owned();
+    // Work on a bounded prefix: the result is cut to 300 characters anyway,
+    // and the margin keeps a secret near the cut from being split before
+    // its pattern can see it.
+    let mut out: String = text.chars().take(INPUT_CHARS).collect();
+    replace(&mut out, &URL, |c| {
+        let rest = if c[3].is_empty() { "" } else { "/…" };
+        format!("{}{}{rest}", &c[1], &c[2])
+    });
     for pattern in SECRETS.iter() {
-        out = pattern.replace_all(&out, SECRET).into_owned();
+        replace(&mut out, pattern, |_| SECRET.into());
     }
-    out = ASSIGNED_SECRET
-        .replace_all(&out, |c: &Captures| format!("{}{}{SECRET}", &c[1], &c[2]))
-        .into_owned();
-    out = EMAIL.replace_all(&out, REDACTED).into_owned();
+    replace(&mut out, &ASSIGNED_SECRET, |c| {
+        format!("{}{}{SECRET}", &c[1], &c[2])
+    });
+    replace(&mut out, &EMAIL, |_| REDACTED.into());
     for pattern in PHONES.iter() {
-        out = pattern.replace_all(&out, REDACTED).into_owned();
+        replace(&mut out, pattern, |_| REDACTED.into());
     }
     if let Some(home) = HOME.as_deref() {
-        out = out.replace(home, "~");
+        if out.contains(home) {
+            out = out.replace(home, "~");
+        }
     }
-    out = HOMES.replace_all(&out, "~").into_owned();
-    out = PATH
-        .replace_all(&out, |c: &Captures| {
-            format!("{}{}", &c[1], shorten_path(&c[2], false))
-        })
-        .into_owned();
-    out = RELATIVE_PATH
-        .replace_all(&out, |c: &Captures| {
-            format!("{}{}", &c[1], shorten_path(&c[2], true))
-        })
-        .into_owned();
-    out = HEX.replace_all(&out, SECRET).into_owned();
-    out = BASE64
-        .replace_all(&out, |c: &Captures| {
-            let run = &c[0];
-            let mixed = run.bytes().any(|b| b.is_ascii_digit())
-                && run.bytes().any(|b| b.is_ascii_uppercase())
-                && run.bytes().any(|b| b.is_ascii_lowercase());
-            if mixed {
-                SECRET.to_string()
-            } else {
-                run.to_string()
-            }
-        })
-        .into_owned();
+    replace(&mut out, &HOMES, |_| "~".into());
+    replace(&mut out, &PATH, |c| {
+        format!("{}{}", &c[1], shorten_path(&c[2], false))
+    });
+    replace(&mut out, &RELATIVE_PATH, |c| {
+        format!("{}{}", &c[1], shorten_path(&c[2], true))
+    });
+    replace(&mut out, &HEX, |_| SECRET.into());
+    replace(&mut out, &BASE64, |c| {
+        let run = &c[0];
+        let mixed = run.bytes().any(|b| b.is_ascii_digit())
+            && run.bytes().any(|b| b.is_ascii_uppercase())
+            && run.bytes().any(|b| b.is_ascii_lowercase());
+        if mixed {
+            SECRET.into()
+        } else {
+            run.into()
+        }
+    });
     truncate(&out)
+}
+
+/// Characters of the input that redaction looks at.
+const INPUT_CHARS: usize = 4096;
+
+/// One pass; allocates only when the pattern matched.
+fn replace(out: &mut String, pattern: &Regex, with: impl Fn(&Captures) -> String) {
+    let replaced = pattern.replace_all(out, |c: &Captures| with(c));
+    if let Cow::Owned(changed) = replaced {
+        *out = changed;
+    }
 }
 
 /// `~/code/app/src/main.rs` → `~/…/*.rs (depth 4)`; relative

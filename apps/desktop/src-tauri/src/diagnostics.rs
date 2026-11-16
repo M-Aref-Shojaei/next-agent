@@ -37,14 +37,9 @@ pub fn start() -> Diagnostics {
             let mut config = Config::new(dir);
             config.stderr = cfg!(debug_assertions);
             diag::init(config).map_err(|e| e.to_string())
-        });
-    let handle = match handle {
-        Ok(handle) => Some(handle),
-        Err(error) => {
-            eprintln!("diagnostics log not started: {error}");
-            None
-        }
-    };
+        })
+        .map_err(|error| eprintln!("diagnostics log not started: {error}"))
+        .ok();
     tracing::info!(
         target: "app",
         version = env!("CARGO_PKG_VERSION"),
@@ -117,18 +112,7 @@ pub fn diag_set_level(
 /// Show the logs folder in the file manager.
 #[tauri::command]
 pub fn diag_open_folder(diagnostics: State<Diagnostics>) -> Result<(), String> {
-    let folder = diagnostics.handle()?.folder();
-    // No shell: the folder is one argument to the OS's own opener.
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-    #[cfg(target_os = "windows")]
-    let mut command = std::process::Command::new("explorer");
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = std::process::Command::new("xdg-open");
-    command
-        .arg(folder)
-        .spawn()
-        .map(|_| ())
+    crate::open_with_os(diagnostics.handle()?.folder())
         .map_err(|e| format!("could not open the logs folder: {e}"))
 }
 

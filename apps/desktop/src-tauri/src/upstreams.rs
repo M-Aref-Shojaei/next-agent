@@ -244,18 +244,7 @@ pub fn upstream_open(watch: Watch, url: String) -> Result<(), String> {
 }
 
 fn open_in_browser(url: &str) -> Result<(), String> {
-    // No shell: the URL is one argument to the OS's own opener.
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-    #[cfg(target_os = "windows")]
-    let mut command = std::process::Command::new("explorer");
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = std::process::Command::new("xdg-open");
-    command
-        .arg(url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("could not open the browser: {e}"))
+    crate::open_with_os(url).map_err(|e| format!("could not open the browser: {e}"))
 }
 
 #[cfg(test)]

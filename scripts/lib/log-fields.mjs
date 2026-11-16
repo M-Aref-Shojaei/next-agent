@@ -94,14 +94,23 @@ function quoteEnd(code, i) {
   return code[j] === "'" ? j + 1 : i + 1;
 }
 
+/** End of the string or quoted literal starting at `i`, or `i` when there is none. */
+function literalEnd(code, i) {
+  const c = code[i];
+  if (c === '"' || c === "`") return stringEnd(code, i);
+  if (c === "'" && /^'(?:\\.|[^\\'\n])*'/.test(code.slice(i))) return quoteEnd(code, i);
+  return i;
+}
+
 /** The text inside the parentheses opening at `open`, and where it ends. */
 function balanced(code, open) {
   let depth = 0;
   let i = open;
   while (i < code.length) {
     const c = code[i];
-    if (c === '"' || c === "`" || (c === "'" && /^'(?:\\.|[^\\'\n])*'/.test(code.slice(i)))) {
-      i = c === "'" ? quoteEnd(code, i) : stringEnd(code, i);
+    const literal = literalEnd(code, i);
+    if (literal > i) {
+      i = literal;
       continue;
     }
     if (c === "(" || c === "[" || c === "{") depth++;
@@ -122,8 +131,9 @@ function splitArgs(body) {
   let i = 0;
   while (i < body.length) {
     const c = body[i];
-    if (c === '"' || c === "`" || (c === "'" && /^'(?:\\.|[^\\'\n])*'/.test(body.slice(i)))) {
-      i = c === "'" ? quoteEnd(body, i) : stringEnd(body, i);
+    const literal = literalEnd(body, i);
+    if (literal > i) {
+      i = literal;
       continue;
     }
     if ("([{".includes(c)) depth++;

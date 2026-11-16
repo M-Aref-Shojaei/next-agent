@@ -28,6 +28,18 @@ pub const PRODUCT_NAME: &str = "Next Agent";
 /// Identifier used by the OS for app data directories.
 pub const APP_IDENTIFIER: &str = "dev.nextagent.desktop";
 
+/// Open a URL or folder with the OS's own opener. No shell: `target` is one
+/// argument to `open`, `explorer` or `xdg-open`.
+pub(crate) fn open_with_os(target: impl AsRef<std::ffi::OsStr>) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("explorer");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(target).spawn().map(|_| ())
+}
+
 /// Create and manage the app's services, then start their background work.
 ///
 /// # Errors
