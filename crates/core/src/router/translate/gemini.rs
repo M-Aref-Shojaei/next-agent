@@ -14,6 +14,9 @@ use crate::llm::LlmError;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
+/// Output ceiling for a Gemini request when the price table has none.
+pub const DEFAULT_MAX_OUTPUT: u32 = 65_536;
+
 /// Sanitised function name → the name the agent used.
 pub type NameMap = HashMap<String, String>;
 

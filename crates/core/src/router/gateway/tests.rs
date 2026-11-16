@@ -2321,7 +2321,7 @@ fn cost_estimate_uses_each_providers_request_ceiling() {
     for (provider, price, ceiling) in [
         ("alpha", 5.0, anthropic::DEFAULT_MAX_OUTPUT),
         ("beta", 1.0, FALLBACK_OUTPUT_TOKENS),
-        ("gamma", 0.5, GEMINI_MAX_OUTPUT),
+        ("gamma", 0.5, gemini::DEFAULT_MAX_OUTPUT),
     ] {
         let got = estimate(provider);
         let want = expected(price, ceiling);

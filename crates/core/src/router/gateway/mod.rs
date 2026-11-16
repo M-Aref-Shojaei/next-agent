@@ -66,20 +66,21 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Output ceiling assumed when the price table has no `max_output` for a
 /// model on an OpenAI-compatible (or unknown) provider.
 const FALLBACK_OUTPUT_TOKENS: u32 = 16_384;
-/// Gemini output ceiling when the price table has none.
-const GEMINI_MAX_OUTPUT: u32 = 65_536;
-
-/// Output ceiling a request to `kind` is built with when the price table has
-/// no `max_output`. The cost estimate uses the same value, so the two agree.
-fn default_max_output(kind: ProviderKind) -> u32 {
-    match kind {
-        ProviderKind::OpenAi => FALLBACK_OUTPUT_TOKENS,
-        ProviderKind::Anthropic => anthropic::DEFAULT_MAX_OUTPUT,
-        ProviderKind::Gemini => GEMINI_MAX_OUTPUT,
-    }
-}
 /// HTTP status returned when a budget refuses a request.
 const BUDGET_BLOCKED_STATUS: u16 = 402;
+
+/// Output ceiling a request to `model` on `account` is built with: the price
+/// table's `max_output`, else the provider kind's default. The cost estimate
+/// uses the same value, so the two agree.
+fn output_ceiling(pricing: &Pricing, account: &Connection, model: &str) -> u32 {
+    pricing
+        .max_output(&account.provider, model)
+        .unwrap_or(match account.kind {
+            ProviderKind::OpenAi => FALLBACK_OUTPUT_TOKENS,
+            ProviderKind::Anthropic => anthropic::DEFAULT_MAX_OUTPUT,
+            ProviderKind::Gemini => gemini::DEFAULT_MAX_OUTPUT,
+        })
+}
 
 /// User-editable gateway settings.
 #[allow(clippy::struct_excessive_bools)] // Independent on/off switches.
@@ -919,10 +920,13 @@ impl Gateway {
     /// The provider name prices are filed under for a target (a connection
     /// id or name in the target resolves to its provider).
     fn price_provider(&self, target: &Target) -> String {
-        self.config
-            .accounts(&target.provider)
-            .first()
+        self.price_account(target)
             .map_or_else(|| target.provider.clone(), |c| c.provider.clone())
+    }
+
+    /// The account a target's prices (and output ceiling) follow.
+    fn price_account(&self, target: &Target) -> Option<&Connection> {
+        self.config.accounts(&target.provider).into_iter().next()
     }
 
     /// Breaker score of the provider behind a target address (1 = healthy).
@@ -1073,20 +1077,18 @@ impl Gateway {
         targets
             .iter()
             .map(|t| {
-                // Same account `price_provider` picks: prices and the request
-                // ceiling both follow it.
-                let account = self.config.accounts(&t.provider).into_iter().next();
+                let account = self.price_account(t);
                 let provider = account.map_or_else(|| t.provider.clone(), |c| c.provider.clone());
                 let output = requested.unwrap_or_else(|| {
-                    i64::from(
-                        self.config
-                            .pricing
-                            .max_output(&provider, &t.model)
-                            .unwrap_or(
-                                account
-                                    .map_or(FALLBACK_OUTPUT_TOKENS, |c| default_max_output(c.kind)),
-                            ),
-                    )
+                    i64::from(account.map_or_else(
+                        || {
+                            self.config
+                                .pricing
+                                .max_output(&provider, &t.model)
+                                .unwrap_or(FALLBACK_OUTPUT_TOKENS)
+                        },
+                        |c| output_ceiling(&self.config.pricing, c, &t.model),
+                    ))
                 });
                 let usage = Usage {
                     prompt,
@@ -1388,9 +1390,7 @@ impl Gateway {
         let mut base = openai.clone();
         base["model"] = json!(model);
         base["stream"] = json!(true);
-        let ceiling = pricing
-            .max_output(&account.provider, model)
-            .unwrap_or_else(|| default_max_output(account.kind));
+        let ceiling = output_ceiling(pricing, account, model);
         match account.kind {
             ProviderKind::OpenAi => {
                 base["stream_options"] = json!({"include_usage": true});

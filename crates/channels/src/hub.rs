@@ -400,27 +400,29 @@ impl Hub {
                         // Answer only when a code is issued: repeats and a
                         // full queue stay silent, so a flood of unpaired
                         // senders cannot spend the bot's rate limit.
-                        if matches!(outcome, PairingOutcome::Issued(_)) {
-                            let reply = pairing::pairing_reply(&outcome, &message.sender_id);
-                            let _ =
-                                outbound::send_reply(channel, self.state.as_ref(), message, &reply)
-                                    .await;
-                            self.log(channel_id, "in", "pairing", peer, &message.text, None);
-                            self.emit(HubEvent::PairingRequested {
-                                channel_id: channel_id.to_string(),
-                            });
-                        } else if outcome == PairingOutcome::Full {
-                            // Silent to the sender, visible to the owner.
-                            self.log(channel_id, "in", "denied", peer, "pairing queue full", None);
-                        } else if outcome == PairingOutcome::Unavailable {
-                            self.log(
-                                channel_id,
-                                "in",
-                                "denied",
-                                peer,
-                                "pairing storage unavailable",
-                                None,
-                            );
+                        // Refusals are silent to the sender, visible to the owner.
+                        let refused = match outcome {
+                            PairingOutcome::Issued(_) => {
+                                let reply = pairing::pairing_reply(&outcome, &message.sender_id);
+                                let _ = outbound::send_reply(
+                                    channel,
+                                    self.state.as_ref(),
+                                    message,
+                                    &reply,
+                                )
+                                .await;
+                                self.log(channel_id, "in", "pairing", peer, &message.text, None);
+                                self.emit(HubEvent::PairingRequested {
+                                    channel_id: channel_id.to_string(),
+                                });
+                                None
+                            }
+                            PairingOutcome::Pending(_) => None,
+                            PairingOutcome::Full => Some("pairing queue full"),
+                            PairingOutcome::Unavailable => Some("pairing storage unavailable"),
+                        };
+                        if let Some(why) = refused {
+                            self.log(channel_id, "in", "denied", peer, why, None);
                         }
                         return Err(Handled::Pairing(outcome));
                     }

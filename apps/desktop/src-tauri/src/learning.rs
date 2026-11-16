@@ -790,12 +790,7 @@ impl AppService {
             Ok(task_id) => ("started", None, Some(task_id.as_str())),
             Err(error) => ("error", Some(error.as_str()), None),
         };
-        if let Err(write) = self
-            .store()?
-            .cron_record_run(&job.id, now, status, error, task)
-        {
-            tracing::warn!(cron_id = %job.id, kind = "cron_record_run", status, error = %write, "cron run could not be recorded");
-        }
+        cron::record_run(&*self.store()?, &job.id, now, status, error, task);
         outcome
     }
 
