@@ -21,6 +21,7 @@
     { id: "overlay", label: "Overlay", href: "#overlay" },
     { id: "upstreams", label: "Upstreams", href: "#upstreams", badge: upstreams.unseen > 0 ? "new" : undefined },
     { id: "design", label: "Design system", href: "#design" },
+    { id: "diagnostics", label: "Diagnostics", href: "#diagnostics" },
     { id: "vault", label: "Vault", href: "#vault" },
     { id: "rules", label: "Permission rules", href: "#rules" },
     { id: "audit", label: "Audit log", href: "#audit" },
@@ -121,6 +122,10 @@
 
   <SettingsSection id="design" title="Design system" description="Every token and component the app's screens are built from, in light and dark.">
     {#snippet actions()}<a class="go" href="/settings/design-system">Design system →</a>{/snippet}
+  </SettingsSection>
+
+  <SettingsSection id="diagnostics" title="Diagnostics" description="A local log of how the app behaves, never of what you work on. Set the level, browse recent entries and export a copy for a bug report.">
+    {#snippet actions()}<a class="go" href="/settings/diagnostics">Diagnostics →</a>{/snippet}
   </SettingsSection>
 
   <SettingsSection id="vault" title="Vault">

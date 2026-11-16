@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import type { DiffAction } from "./diff.ts";
 import type { ApprovalChoice, StreamMessage } from "./timeline.ts";
 import { mockApi } from "./mock-api.ts";
+import { errorMessage, log, setLogSink, type LogEntry, type LogLevel } from "./log.ts";
+export type { LogEntry, LogLevel } from "./log.ts";
 import type {
   Backlink,
   Backlinks,
@@ -150,6 +152,14 @@ export interface Api {
   approvalRespond(taskId: string, approvalId: string, choice: ApprovalChoice): Promise<void>;
   reviewAction(taskId: string, action: DiffAction): Promise<ReviewOutcome>;
   routerHealth(): Promise<RouterHealthReport | null>;
+  /** Recent diagnostics entries, newest first (ADR-0013). */
+  diagRecent(filter?: { level?: LogLevel; target?: string; limit?: number }): Promise<LogEntry[]>;
+  diagSetLevel(level: LogLevel): Promise<void>;
+  diagOpenFolder(): Promise<void>;
+  /** Writes a redacted export to Downloads. */
+  diagExport(): Promise<{ path: string; entries: number }>;
+  /** For the UI's own logger (lib/log.ts); Rust allowlists and redacts again. */
+  diagLog(level: LogLevel, event: string, fields: Record<string, unknown>): Promise<void>;
   /** Subscribe to router status changes; returns an unsubscribe function. */
   onRouterHealth(callback: (report: RouterHealthReport) => void): Promise<() => void>;
   // Built-in LLM gateway (Settings → Providers, Usage).
@@ -287,105 +297,132 @@ function channel<T>(on: (m: T) => void): Channel<T> {
   return c;
 }
 
+const SLOW_COMMAND_MS = 2000;
+
+/**
+ * The one place the UI calls Rust. A failed command logs `command_failed` and a
+ * slow one `slow_command`, with the command name and timing only: never the
+ * arguments, which hold people's work. The diagnostics commands are not logged,
+ * so logging cannot feed itself.
+ */
+async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const started = performance.now();
+  const watched = !command.startsWith("diag_");
+  try {
+    const result = await invoke<T>(command, args);
+    const duration_ms = Math.round(performance.now() - started);
+    if (watched && duration_ms > SLOW_COMMAND_MS) log.warn("slow_command", { command, duration_ms });
+    return result;
+  } catch (e) {
+    if (watched) log.error("command_failed", { command, duration_ms: Math.round(performance.now() - started), error: errorMessage(e) });
+    throw e;
+  }
+}
+
 const tauriApi: Api = {
-  workspaceOpen: (path) => invoke("workspace_open", { path }),
-  workspaceList: () => invoke("workspace_list"),
-  vaultSet: (path) => invoke("vault_set", { path }),
-  vaultGet: () => invoke("vault_get"),
-  settingGet: (key) => invoke("setting_get", { key }),
-  settingSet: (key, value) => invoke("setting_set", { key, value }),
-  rulesList: (workspaceId) => invoke("rules_list", { workspaceId }),
-  ruleDelete: (id) => invoke("rule_delete", { id }),
-  auditVerify: () => invoke("audit_verify"),
+  workspaceOpen: (path) => call("workspace_open", { path }),
+  workspaceList: () => call("workspace_list"),
+  vaultSet: (path) => call("vault_set", { path }),
+  vaultGet: () => call("vault_get"),
+  settingGet: (key) => call("setting_get", { key }),
+  settingSet: (key, value) => call("setting_set", { key, value }),
+  rulesList: (workspaceId) => call("rules_list", { workspaceId }),
+  ruleDelete: (id) => call("rule_delete", { id }),
+  auditVerify: () => call("audit_verify"),
   taskStart: (workspaceId, prompt, mode, onMessage, profile) => {
     const onEvent = new Channel<StreamMessage>();
     onEvent.onmessage = onMessage;
-    return invoke("task_start", { workspaceId, prompt, mode, onEvent, profile: profile ?? null });
+    return call("task_start", { workspaceId, prompt, mode, onEvent, profile: profile ?? null });
   },
-  agentProfiles: (workspaceId) => invoke("agent_profiles", { workspaceId }),
-  taskUndoStep: (taskId) => invoke("task_undo_step", { taskId }),
-  taskUndoable: (taskId) => invoke("task_undoable", { taskId }),
-  taskCancel: (taskId) => invoke("task_cancel", { taskId }),
+  agentProfiles: (workspaceId) => call("agent_profiles", { workspaceId }),
+  taskUndoStep: (taskId) => call("task_undo_step", { taskId }),
+  taskUndoable: (taskId) => call("task_undoable", { taskId }),
+  taskCancel: (taskId) => call("task_cancel", { taskId }),
   approvalRespond: (taskId, approvalId, choice) =>
-    invoke("approval_respond", { taskId, approvalId, choice }),
-  reviewAction: (taskId, action) => invoke("review_action", { taskId, action }),
-  routerHealth: () => invoke("router_health"),
-  boardList: () => invoke("board_list"),
-  boardCreate: (name, scene) => invoke("board_create", { name, scene: scene ?? null }),
-  boardOpen: (name) => invoke("board_open", { name }),
+    call("approval_respond", { taskId, approvalId, choice }),
+  reviewAction: (taskId, action) => call("review_action", { taskId, action }),
+  routerHealth: () => call("router_health"),
+  diagRecent: (filter) => call("diag_recent", { ...filter }),
+  diagSetLevel: (level) => call("diag_set_level", { level }),
+  diagOpenFolder: () => call("diag_open_folder"),
+  diagExport: () => call("diag_export"),
+  diagLog: (level, event, fields) => call("diag_log", { level, event, fields }),
+  boardList: () => call("board_list"),
+  boardCreate: (name, scene) => call("board_create", { name, scene: scene ?? null }),
+  boardOpen: (name) => call("board_open", { name }),
   boardSave: (name, content, baseRevision) =>
-    invoke("board_save", { name, content, baseRevision: baseRevision ?? null }),
-  boardRename: (from, to) => invoke("board_rename", { from, to }),
-  boardDelete: (name) => invoke("board_delete", { name }),
-  boardSketch: (name) => invoke("board_sketch", { name }),
-  boardExport: (name, ext, data) => invoke("board_export", { name, ext, data }),
+    call("board_save", { name, content, baseRevision: baseRevision ?? null }),
+  boardRename: (from, to) => call("board_rename", { from, to }),
+  boardDelete: (name) => call("board_delete", { name }),
+  boardSketch: (name) => call("board_sketch", { name }),
+  boardExport: (name, ext, data) => call("board_export", { name, ext, data }),
   // --- notes-ui ---
-  graphOpen: (path, create) => invoke("graph_open", { path, create: create ?? null }),
-  graphSearch: (q, limit) => invoke("graph_search", { q, limit: limit ?? null }),
-  graphPage: (name) => invoke("graph_page", { name }),
-  graphBacklinks: (name) => invoke("graph_backlinks", { name }),
-  graphJournals: (limit) => invoke("graph_journals", { limit: limit ?? null }),
-  graphSavePage: (name, tree) => invoke("graph_save_page", { name, tree }),
-  graphPages: () => invoke("graph_pages"),
-  graphGraph: () => invoke("graph_graph"),
-  graphQuery: (text, today) => invoke("graph_query", { text, today }),
-  graphBlock: (uuid) => invoke("graph_block", { uuid }),
-  graphJournalName: (day) => invoke("graph_journal_name", { day }),
+  graphOpen: (path, create) => call("graph_open", { path, create: create ?? null }),
+  graphSearch: (q, limit) => call("graph_search", { q, limit: limit ?? null }),
+  graphPage: (name) => call("graph_page", { name }),
+  graphBacklinks: (name) => call("graph_backlinks", { name }),
+  graphJournals: (limit) => call("graph_journals", { limit: limit ?? null }),
+  graphSavePage: (name, tree) => call("graph_save_page", { name, tree }),
+  graphPages: () => call("graph_pages"),
+  graphGraph: () => call("graph_graph"),
+  graphQuery: (text, today) => call("graph_query", { text, today }),
+  graphBlock: (uuid) => call("graph_block", { uuid }),
+  graphJournalName: (day) => call("graph_journal_name", { day }),
   onGraphChanged: (callback) => listen<string[]>("graph-changed", (e) => callback(e.payload)),
   // --- end notes-ui ---
-  learningSettingsGet: () => invoke("learning_settings_get"),
-  learningSettingsSet: (settings) => invoke("learning_settings_set", { settings }),
-  memoryGet: (workspaceId) => invoke("memory_get", { workspaceId }),
-  memorySave: (workspaceId, target, text) => invoke("memory_save", { workspaceId, target, text }),
-  skillsOverview: (workspaceId) => invoke("skills_overview", { workspaceId }),
-  skillRead: (workspaceId, name) => invoke("skill_read", { workspaceId, name }),
-  skillPin: (workspaceId, root, name, pinned) => invoke("skill_pin", { workspaceId, root, name, pinned }),
-  skillArchive: (workspaceId, name) => invoke("skill_archive", { workspaceId, name }),
-  skillRestore: (workspaceId, root, name) => invoke("skill_restore", { workspaceId, root, name }),
-  curatorRun: () => invoke("curator_run"),
-  cronJobs: (workspaceId) => invoke("cron_jobs", { workspaceId: workspaceId ?? null }),
-  cronSave: (input) => invoke("cron_save", { input }),
-  cronPause: (id, paused) => invoke("cron_pause", { id, paused }),
-  cronDelete: (id) => invoke("cron_delete", { id }),
-  cronRunNow: (id) => invoke("cron_run_now", { id }),
+  learningSettingsGet: () => call("learning_settings_get"),
+  learningSettingsSet: (settings) => call("learning_settings_set", { settings }),
+  memoryGet: (workspaceId) => call("memory_get", { workspaceId }),
+  memorySave: (workspaceId, target, text) => call("memory_save", { workspaceId, target, text }),
+  skillsOverview: (workspaceId) => call("skills_overview", { workspaceId }),
+  skillRead: (workspaceId, name) => call("skill_read", { workspaceId, name }),
+  skillPin: (workspaceId, root, name, pinned) => call("skill_pin", { workspaceId, root, name, pinned }),
+  skillArchive: (workspaceId, name) => call("skill_archive", { workspaceId, name }),
+  skillRestore: (workspaceId, root, name) => call("skill_restore", { workspaceId, root, name }),
+  curatorRun: () => call("curator_run"),
+  cronJobs: (workspaceId) => call("cron_jobs", { workspaceId: workspaceId ?? null }),
+  cronSave: (input) => call("cron_save", { input }),
+  cronPause: (id, paused) => call("cron_pause", { id, paused }),
+  cronDelete: (id) => call("cron_delete", { id }),
+  cronRunNow: (id) => call("cron_run_now", { id }),
   onTaskStream: (callback) => listen<StreamMessage>("task-stream", (e) => callback(e.payload)),
   onTaskStarted: (callback) => listen<TaskStarted>("task-started", (e) => callback(e.payload)),
   onRouterHealth: (callback) =>
     listen<RouterHealthReport | null>("router-health", (event) => {
       if (event.payload) callback(event.payload);
     }),
-  gatewayPresets: () => invoke("gateway_presets"),
-  gatewayConnections: () => invoke("gateway_connections"),
-  gatewayConnectionSave: (input) => invoke("gateway_connection_save", { input }),
-  gatewayConnectionDelete: (id) => invoke("gateway_connection_delete", { id }),
-  gatewayConnectionTest: (id) => invoke("gateway_connection_test", { id }),
-  gatewayCombos: () => invoke("gateway_combos"),
-  gatewayComboSave: (input) => invoke("gateway_combo_save", { input }),
-  gatewayComboDelete: (id) => invoke("gateway_combo_delete", { id }),
-  gatewaySettingsGet: () => invoke("gateway_settings_get"),
-  gatewaySettingsSet: (settings) => invoke("gateway_settings_set", { settings }),
-  gatewayTargets: () => invoke("gateway_targets"),
-  usageSummary: (days) => invoke("usage_summary", { days }),
-  gatewayCatalogStatus: () => invoke("gateway_catalog_status"),
-  gatewayCatalogRefresh: () => invoke("gateway_catalog_refresh"),
-  gatewayCacheCount: () => invoke("gateway_cache_count"),
-  gatewayCacheClear: () => invoke("gateway_cache_clear"),
-  upstreamWatchStatus: () => invoke("upstream_watch_status"),
-  upstreamWatchCheck: () => invoke("upstream_watch_check"),
-  upstreamWatchMarkSeen: () => invoke("upstream_watch_mark_seen"),
-  upstreamOpen: (url) => invoke("upstream_open", { url }),
+  gatewayPresets: () => call("gateway_presets"),
+  gatewayConnections: () => call("gateway_connections"),
+  gatewayConnectionSave: (input) => call("gateway_connection_save", { input }),
+  gatewayConnectionDelete: (id) => call("gateway_connection_delete", { id }),
+  gatewayConnectionTest: (id) => call("gateway_connection_test", { id }),
+  gatewayCombos: () => call("gateway_combos"),
+  gatewayComboSave: (input) => call("gateway_combo_save", { input }),
+  gatewayComboDelete: (id) => call("gateway_combo_delete", { id }),
+  gatewaySettingsGet: () => call("gateway_settings_get"),
+  gatewaySettingsSet: (settings) => call("gateway_settings_set", { settings }),
+  gatewayTargets: () => call("gateway_targets"),
+  usageSummary: (days) => call("usage_summary", { days }),
+  gatewayCatalogStatus: () => call("gateway_catalog_status"),
+  gatewayCatalogRefresh: () => call("gateway_catalog_refresh"),
+  gatewayCacheCount: () => call("gateway_cache_count"),
+  gatewayCacheClear: () => call("gateway_cache_clear"),
+  upstreamWatchStatus: () => call("upstream_watch_status"),
+  upstreamWatchCheck: () => call("upstream_watch_check"),
+  upstreamWatchMarkSeen: () => call("upstream_watch_mark_seen"),
+  upstreamOpen: (url) => call("upstream_open", { url }),
   onUpstreamWatch: (callback) => listen<WatchView>("upstream-watch", (event) => callback(event.payload)),
-  channelList: () => invoke("channel_list"),
-  channelSave: (config, token) => invoke("channel_save", { input: { config, token: token ?? null } }),
-  channelDelete: (id) => invoke("channel_delete", { id }),
-  channelTest: (id, token) => invoke("channel_test", { id, token: token ?? null }),
-  channelRestart: (id) => invoke("channel_restart", { id }),
-  channelPairings: (id) => invoke("channel_pairings", { id }),
-  channelPairingResolve: (id, code, approve) => invoke("channel_pairing_resolve", { id, code, approve }),
-  channelAllowList: (id) => invoke("channel_allow_list", { id }),
-  channelAllowAdd: (id, senderId, label) => invoke("channel_allow_add", { id, senderId, label }),
-  channelAllowRemove: (id, senderId) => invoke("channel_allow_remove", { id, senderId }),
-  channelActivity: (id, limit) => invoke("channel_activity", { id, limit: limit ?? null }),
+  channelList: () => call("channel_list"),
+  channelSave: (config, token) => call("channel_save", { input: { config, token: token ?? null } }),
+  channelDelete: (id) => call("channel_delete", { id }),
+  channelTest: (id, token) => call("channel_test", { id, token: token ?? null }),
+  channelRestart: (id) => call("channel_restart", { id }),
+  channelPairings: (id) => call("channel_pairings", { id }),
+  channelPairingResolve: (id, code, approve) => call("channel_pairing_resolve", { id, code, approve }),
+  channelAllowList: (id) => call("channel_allow_list", { id }),
+  channelAllowAdd: (id, senderId, label) => call("channel_allow_add", { id, senderId, label }),
+  channelAllowRemove: (id, senderId) => call("channel_allow_remove", { id, senderId }),
+  channelActivity: (id, limit) => call("channel_activity", { id, limit: limit ?? null }),
   onChannelHealth: (callback) =>
     listen<{ channelId: string; health: ChannelHealth }>("channel-health", (e) => callback(e.payload.channelId, e.payload.health)),
   onChannelChange: async (callback) => {
@@ -395,22 +432,22 @@ const tauriApi: Api = {
     ]);
     return () => offs.forEach((off) => off());
   },
-  designSystemGet: (workspaceId) => invoke("design_system_get", { workspaceId }),
-  designSystemGenerate: (workspaceId, overwrite) => invoke("design_system_generate", { workspaceId, overwrite }),
-  designSystemSave: (workspaceId, designMd, tokensCss) => invoke("design_system_save", { workspaceId, designMd, tokensCss }),
+  designSystemGet: (workspaceId) => call("design_system_get", { workspaceId }),
+  designSystemGenerate: (workspaceId, overwrite) => call("design_system_generate", { workspaceId, overwrite }),
+  designSystemSave: (workspaceId, designMd, tokensCss) => call("design_system_save", { workspaceId, designMd, tokensCss }),
   designGenerate: (workspaceId, prompt, frame, count, board, critique, onProgress) =>
-    invoke("design_generate", { workspaceId, prompt, frame, count, board, critique, onProgress: channel(onProgress) }),
-  designHistory: (workspaceId) => invoke("design_history", { workspaceId }),
-  designChoose: (id) => invoke("design_choose", { id }),
-  designIterate: (id, message) => invoke("design_iterate", { id, message }),
-  designPreviewStart: (workspaceId, url, studioOrigin) => invoke("design_preview_start", { workspaceId, url, studioOrigin }),
-  designPreviewStop: (workspaceId) => invoke("design_preview_stop", { workspaceId }),
-  designPreviewLog: (workspaceId) => invoke("design_preview_log", { workspaceId }),
-  designSource: (workspaceId, location) => invoke("design_source", { workspaceId, location }),
+    call("design_generate", { workspaceId, prompt, frame, count, board, critique, onProgress: channel(onProgress) }),
+  designHistory: (workspaceId) => call("design_history", { workspaceId }),
+  designChoose: (id) => call("design_choose", { id }),
+  designIterate: (id, message) => call("design_iterate", { id, message }),
+  designPreviewStart: (workspaceId, url, studioOrigin) => call("design_preview_start", { workspaceId, url, studioOrigin }),
+  designPreviewStop: (workspaceId) => call("design_preview_stop", { workspaceId }),
+  designPreviewLog: (workspaceId) => call("design_preview_log", { workspaceId }),
+  designSource: (workspaceId, location) => call("design_source", { workspaceId, location }),
   designApplyStyle: (workspaceId, location, changes, onMessage) =>
-    invoke("design_apply_style", { workspaceId, location, changes, onEvent: channel(onMessage) }),
-  designConvert: (id, framework, onMessage) => invoke("design_convert", { id, framework, onEvent: channel(onMessage) }),
-  designImplement: (id, onMessage) => invoke("design_implement", { id, onEvent: channel(onMessage) }),
+    call("design_apply_style", { workspaceId, location, changes, onEvent: channel(onMessage) }),
+  designConvert: (id, framework, onMessage) => call("design_convert", { id, framework, onEvent: channel(onMessage) }),
+  designImplement: (id, onMessage) => call("design_implement", { id, onEvent: channel(onMessage) }),
 };
 
 export function inTauri(): boolean {
@@ -418,3 +455,6 @@ export function inTauri(): boolean {
 }
 
 export const api: Api = inTauri() ? tauriApi : mockApi;
+
+// The UI logger sends through the API: into Rust inside Tauri, into the mock list in a browser.
+setLogSink((level, event, fields) => api.diagLog(level, event, fields));
