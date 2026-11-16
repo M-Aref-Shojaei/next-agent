@@ -446,8 +446,12 @@ impl AppService {
             .with_step_budget(review::MAX_ITERATIONS)
             .with_context_window(0)
             .with_learning(learning.clone());
-        if let Ok(recorder) = SessionRecorder::open(self.db_path(), &session) {
-            executor = executor.with_transcript(Box::new(recorder));
+        match SessionRecorder::open(self.db_path(), &session) {
+            Ok(recorder) => executor = executor.with_transcript(Box::new(recorder)),
+            // The review still runs; only its transcript is not kept.
+            Err(error) => {
+                tracing::warn!(task_id = %id, kind = "transcript_recorder", %error, "review transcript will not be recorded");
+            }
         }
         let tools = LearningTools::new(Box::new(local_tools()), learning);
         let changes = tools.changes();
