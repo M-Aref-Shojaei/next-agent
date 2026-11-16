@@ -46,14 +46,26 @@ const CARD = { x: 10, y: 36, w: 620, h: 104 };
 const CARD_R = 20;
 
 /** IslandRestingLayout for the compact island the greeting lands in. */
-const COMPACT = {
-  width: COMPACT_W,
-  height: NOTCH_H,
-  botDiameter: Math.min(20, Math.max(0, NOTCH_H - 6)),
-  botCenterY: NOTCH_H / 2,
-  miniGridScale: Math.min(1, Math.max(0, NOTCH_H - 4) / 28),
-  miniGridCenterX: COMPACT_W - 40,
-};
+const COMPACT = restingLayout(COMPACT_W, NOTCH_H);
+
+function restingLayout(width: number, height: number) {
+  return {
+    width,
+    height,
+    botDiameter: Math.min(20, Math.max(0, height - 6)),
+    botCenterY: height / 2,
+    miniGridScale: Math.min(1, Math.max(0, height - 4) / 28),
+    miniGridCenterX: width - 40,
+  };
+}
+
+/**
+ * Next Agent: on a Mac with a notch the compact island is sized from it, so the
+ * greeting lands in that one (the Mac app's islandSize(nw:nh:)).
+ */
+export function setGreetingCompact(width: number, height: number) {
+  Object.assign(COMPACT, restingLayout(width, height));
+}
 
 // ── Easing ────────────────────────────────────────────────────────────────────
 

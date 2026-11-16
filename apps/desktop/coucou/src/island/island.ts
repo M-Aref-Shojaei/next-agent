@@ -12,13 +12,14 @@ import {
   ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
   islandSize,
   QUESTION_PICKER_H,
-  type BotEmoteName, type IslandMode, type IslandViewName,
+  compactEar, COMPACT_PLAN_RIGHT_ALONE, COMPACT_PLAN_RIGHT_WITH_GRID,
+  type BotEmoteName, type IslandMode, type IslandViewName, type Notch,
 } from "../core/layout";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 // Next Agent: removed WhatsApp/Spotify (owner request): Spotify's state and the dance rules (Mochi danced to it).
 import { BotEngine, hexToRGB } from "../mochi/engine";
-import { Greeting } from "../mochi/greeting";
+import { Greeting, setGreetingCompact } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { SeasonCache, parseOutfit } from "../mochi/wardrobe";
 import { UploadCanvas } from "../upload/canvas";
@@ -81,6 +82,8 @@ export class Island {
   private closedKey = "";
   /** Width of the closed island for what it shows now. */
   private closedW = 120;
+  /** The compact width last asked for on a notch (the ear grows with the plan pill). */
+  private compactWanted = 0;
   /** Mochi's little life in the closed island: where he looks, and until when
    *  the loop runs for what he is doing (a blink, a glance). */
   private closedLook = { x: 0, y: 0 };
@@ -849,14 +852,42 @@ export class Island {
 
   /** The closed island stays on screen (anything but "hidden"). */
   private get closedShows(): boolean {
-    return closedIsland(State.settings.closedIsland) !== "hidden";
+    // Next Agent: on a notch the folded island is the notch itself (upstream draws
+    // nothing there): the closed island's line would sit under the camera.
+    return State.notch == null && closedIsland(State.settings.closedIsland) !== "hidden";
+  }
+
+  /**
+   * Next Agent: the notch of the screen the island is on changed (Rust measured
+   * it): the compact island is sized from it, nothing is drawn inside it.
+   */
+  setNotch(notch: Notch | null) {
+    const same = notch?.w === State.notch?.w && notch?.h === State.notch?.h;
+    if (same) return;
+    State.notch = notch;
+    const c = this.compactSize();
+    setGreetingCompact(c.w, c.h);
+    this.closedKey = "";
+    this.updateClosed();
+    this.animateGeometry(State.mode === "hidden");
+    if (this.collapsed) this.sendCollapsedSize(true);
+    State.notify();
+  }
+
+  /** The compact island's size: from the notch if there is one, with room for the plan pill. */
+  private compactSize() {
+    return islandSize("compact", State.view, 0, State.notch, this.compactEar());
+  }
+
+  private compactEar(): number {
+    return compactEar(claudeCompactPillVisible(), State.otherTasks.length > 0);
   }
 
   private targetSize(): { w: number; h: number; r: number } {
     if (State.mode === "hidden" && this.closedShows) {
       return { w: this.closedW, h: CLOSED_H, r: 10 };
     }
-    let { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
+    let { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, State.notch, this.compactEar());
     if (State.mode === "expanded" && State.view === "question" && State.pendingApproval?.questions) {
       h = QUESTION_PICKER_H;
     }
@@ -1514,13 +1545,22 @@ export class Island {
       }
     }
 
+    // Next Agent: the ear grows when the plan pill needs it; the island follows.
+    if (State.mode === "compact" && State.notch) {
+      const wanted = this.compactSize().w;
+      if (wanted !== this.compactWanted) {
+        this.compactWanted = wanted;
+        this.animateGeometry(false);
+      }
+    }
+
     // Compact Claude plan indicator
     const showPlan = claudeCompactPillVisible();
     this.compactPlan.style.opacity = showPlan ? "1" : "0";
     this.compactPlan.style.pointerEvents = showPlan ? "auto" : "none";
     if (showPlan) {
       const others = State.otherTasks.slice(0, 4);
-      this.compactPlan.style.right = others.length > 0 ? "58px" : "20px";
+      this.compactPlan.style.right = `${others.length > 0 ? COMPACT_PLAN_RIGHT_WITH_GRID : COMPACT_PLAN_RIGHT_ALONE}px`;
       const pct = dominantPct(State.planUsage);
       const color = planColor(pct);
       this.compactPlan.style.setProperty("--plan", color);
@@ -1536,7 +1576,8 @@ export class Island {
   /** The clock sits in the middle of the compact island, where the notch is on a Mac. */
   private updateClock() {
     this.updateClosed();
-    const on = State.mode === "compact" && State.settings.showClock;
+    // Next Agent: the clock sits in the middle, which is the notch on a Mac: off there.
+    const on = State.mode === "compact" && State.settings.showClock && State.notch == null;
     this.clockEl.style.opacity = on ? "1" : "0";
     if (!on) return;
     const now = new Date();

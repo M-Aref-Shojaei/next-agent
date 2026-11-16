@@ -59,6 +59,38 @@ pub struct ScreenInfo {
     pub scale: f64,
 }
 
+/// Next Agent: a notch's size in logical points (IslandScreenGeometry).
+#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
+pub struct NotchInfo {
+    pub width: f64,
+    pub height: f64,
+}
+
+/// The notch of the screen the island was last placed on (outer `None`: not
+/// measured yet). Measured on the main thread by `apply_geometry`; the page
+/// reads it at start and hears changes on the `island-notch` event.
+static NOTCH: Mutex<Option<Option<NotchInfo>>> = Mutex::new(None);
+
+fn current_notch() -> Option<NotchInfo> {
+    NOTCH.lock().unwrap().flatten()
+}
+
+#[tauri::command]
+pub fn island_notch() -> Option<NotchInfo> {
+    current_notch()
+}
+
+/// Remembers a measurement, logs it, and tells the page when it changed.
+#[cfg(target_os = "macos")]
+fn publish_notch(app: &AppHandle, notch: Option<NotchInfo>) {
+    let previous = NOTCH.lock().unwrap().replace(notch);
+    if previous == Some(notch) {
+        return;
+    }
+    crate::log::line(format!("island notch: {notch:?}"));
+    let _ = app.emit_to(WINDOW_LABEL, "island-notch", notch);
+}
+
 /// The island shape in window-logical coordinates, pushed by the front end.
 /// The poll thread owns the click-through decision so it lands in the same 16 ms
 /// tick as the cursor read — an IPC round trip here loses clicks.
@@ -428,6 +460,11 @@ fn top_inset_from(monitor_y: i32, work_y: i32) -> i32 {
     if (0..200).contains(&inset) { inset } else { 0 }
 }
 
+#[cfg(target_os = "macos")]
+fn panel_notch(x: f64, y: f64) -> Option<NotchInfo> {
+    next_agent_macos_panel::notch_at(x, y).map(|(width, height)| NotchInfo { width, height })
+}
+
 pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: Option<(f64, f64)>) {
     let Some(win) = window(app) else { return };
     let Some(m) = target_monitor(app, pref) else { return };
@@ -446,6 +483,13 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: Option<(f64, f64)>
         let (ox, oy) = logical_origin(&m);
         let width = ms.width as f64 / scale;
         platform::place_island(app, ox as f64 + ((width - lw) / 2.0).round(), oy as f64, lw, lh);
+        // Next Agent: the island is sized from the screen's real notch, as upstream's
+        // islandSize(nw:nh:) is: measured here, on the main thread, and sent to the page.
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let notch = panel_notch(ox as f64, oy as f64);
+            publish_notch(&handle, notch);
+        });
     }
     #[cfg(not(target_os = "macos"))]
     {

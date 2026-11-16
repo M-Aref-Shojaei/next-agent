@@ -228,6 +228,8 @@ export const Bridge = {
   focusWindow: (focused: boolean) => call<void>("focus_window", { focused }),
 
   reposition: () => call<void>("reposition"),
+  /** Next Agent: the notch of the island's screen on a Mac (null without one). */
+  islandNotch: () => call<{ width: number; height: number } | null>("island_notch"),
   fitZoom: (dpr: number) => call<boolean>("fit_zoom", { dpr }),
 
   /** Displays the island can be pinned to: `key` is what `settings.screen` stores. */
