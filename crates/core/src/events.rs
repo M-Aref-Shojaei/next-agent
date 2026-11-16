@@ -278,6 +278,46 @@ impl std::fmt::Debug for Emitter {
     }
 }
 
+/// Log the events that are also app behaviour: compaction and subagent
+/// lifecycle. Only counts and statuses; never goals, summaries or errors.
+fn log_lifecycle(event: &AgentEvent) {
+    let task_id = &event.task_id;
+    match &event.kind {
+        EventKind::ContextCompacted {
+            reason,
+            ok,
+            tokens_before,
+            tokens_after,
+            ..
+        } => tracing::info!(
+            target: "agent",
+            %task_id,
+            reason = reason.as_str(),
+            ok = *ok,
+            tokens_in = *tokens_before,
+            tokens_out = *tokens_after,
+            "compaction"
+        ),
+        EventKind::SubagentStarted { .. } => {
+            tracing::info!(target: "agent", %task_id, "subagent_started");
+        }
+        EventKind::SubagentFinished {
+            status,
+            exit_reason,
+            steps,
+            ..
+        } => tracing::info!(
+            target: "agent",
+            %task_id,
+            status = status.as_str(),
+            kind = exit_reason.as_str(),
+            count = *steps,
+            "subagent_finished"
+        ),
+        _ => {}
+    }
+}
+
 impl Emitter {
     #[must_use]
     pub fn new(task_id: TaskId) -> Self {
@@ -305,10 +345,17 @@ impl Emitter {
     pub fn emit(&self, kind: EventKind) -> AgentEvent {
         let mut state = self.lock();
         let event = state.log.push(kind);
+        log_lifecycle(&event);
         let EmitterState { sinks, error, .. } = &mut *state;
         for sink in sinks.iter_mut() {
             if let Err(problem) = sink.deliver(&event) {
-                tracing::error!(seq = event.seq, kind = event.kind.kind(), %problem, "event sink failed");
+                tracing::error!(
+                    target: "agent",
+                    task_id = %event.task_id,
+                    kind = event.kind.kind(),
+                    error = %problem,
+                    "event_sink_failed"
+                );
                 error.get_or_insert(problem);
                 break;
             }

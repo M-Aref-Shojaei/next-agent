@@ -144,6 +144,32 @@ pub fn run_task_with(
     spec: &TaskSpec,
     ctx: &RunContext<'_>,
 ) -> TaskStatus {
+    // Every event inside carries the task id, so one task can be followed.
+    let span = tracing::info_span!(target: "tasks", "task", task_id = %spec.id);
+    let _entered = span.enter();
+    let started = std::time::Instant::now();
+    let mut steps = 0_usize;
+    tracing::info!(target: "tasks", mode = spec.mode, "task_started");
+    let status = drive(executor, broker, spec, ctx, &mut steps);
+    tracing::info!(
+        target: "tasks",
+        status = status.as_str(),
+        ok = status == TaskStatus::Completed,
+        duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        count = steps,
+        "task_finished"
+    );
+    status
+}
+
+/// The step loop of [`run_task_with`]; `steps` counts tool calls.
+fn drive(
+    executor: &mut dyn AgentExecutor,
+    broker: &mut dyn ToolBroker,
+    spec: &TaskSpec,
+    ctx: &RunContext<'_>,
+    steps: &mut usize,
+) -> TaskStatus {
     let events = ctx.events;
     events.emit(EventKind::TaskStarted {
         mode: spec.mode,
@@ -170,6 +196,7 @@ pub fn run_task_with(
                 step = executor.next(None);
             }
             AgentStep::Call { call_id, request } => {
+                *steps += 1;
                 events.emit(EventKind::ToolRequested {
                     call_id: call_id.clone(),
                     tool: request.name().to_string(),

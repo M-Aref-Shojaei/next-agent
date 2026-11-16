@@ -153,6 +153,12 @@ impl Approver for ChannelApprover {
     fn approve(&mut self, call_id: &str, request: &ToolRequest, reason: &str) -> Approval {
         let approval_id = format!("apr_{call_id}");
         let receiver = self.control.register(&approval_id);
+        tracing::info!(
+            target: "broker",
+            %approval_id,
+            tool = request.name(),
+            "approval_requested"
+        );
         self.events.emit(EventKind::ApprovalRequested {
             approval_id: approval_id.clone(),
             call_id: call_id.to_string(),
@@ -184,6 +190,11 @@ impl Approver for ChannelApprover {
                 Err(RecvTimeoutError::Disconnected) => break (Approval::Deny, "system"),
             }
         };
+        // People's answers are logged where they arrive (desktop or overlay);
+        // only the ones nobody gave are logged here.
+        if by != "user" {
+            tracing::info!(target: "broker", %approval_id, reason = by, "approval_answered");
+        }
         self.events.emit(EventKind::ApprovalResolved {
             approval_id,
             choice: choice.as_str().to_string(),

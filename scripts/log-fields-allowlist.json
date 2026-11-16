@@ -2,16 +2,6 @@
   "$comment": "Log calls that predate the diagnostics log and use fields not on the allowlist (crates/diagnostics/src/fields.rs). At runtime those fields are dropped and counted in dropped_fields. One entry per file; max = current count, may only go down. Remove an entry when its file is clean. Wave 2 of docs/plan/Logging System Plan.md shrinks this to empty. Forbidden names are never allowed here.",
   "entries": [
     {
-      "path": "crates/core/src/broker.rs",
-      "max": 2,
-      "reason": "call_id on step snapshot warnings (Wave 2, task 4)."
-    },
-    {
-      "path": "crates/core/src/events.rs",
-      "max": 2,
-      "reason": "seq and problem (free-text error) on event sink failures (Wave 2, task 4)."
-    },
-    {
       "path": "crates/core/src/learning/skills.rs",
       "max": 1,
       "reason": "root: a skills folder path (Wave 2, task 5)."

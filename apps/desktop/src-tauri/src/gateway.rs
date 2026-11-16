@@ -336,7 +336,9 @@ impl AppService {
         if let Ok(text) = std::fs::read_to_string(&user_file) {
             match Pricing::from_json(&text) {
                 Ok(user) => pricing = pricing.with_override(user),
-                Err(error) => eprintln!("ignoring pricing override: {error}"),
+                Err(error) => {
+                    tracing::warn!(target: "router", %error, "pricing_override_ignored");
+                }
             }
         }
         Ok(config.with_pricing(pricing))
@@ -393,7 +395,7 @@ impl AppService {
                 "budgets are set but the usage database could not be opened: {error}"
             )),
             Err(error) => {
-                eprintln!("usage will not be recorded: {error}");
+                tracing::warn!(target: "router", %error, "usage_not_recorded");
                 Ok(gateway)
             }
         }

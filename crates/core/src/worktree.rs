@@ -148,6 +148,21 @@ pub enum WorktreeError {
 }
 
 impl WorktreeError {
+    /// A stable label for logs: the variant, never paths or git output.
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::NotAGitRepo(_) => "not_a_git_repo",
+            Self::GitUnavailable(_) => "git_unavailable",
+            Self::NoCommits => "no_commits",
+            Self::DetachedHead => "detached_head",
+            Self::DirtyMainTree { .. } => "dirty_main_tree",
+            Self::MergeConflict { .. } => "merge_conflict",
+            Self::NotFound(_) => "not_found",
+            Self::Git { .. } => "git",
+        }
+    }
+
     #[must_use]
     pub fn should_fall_back_to_manual(&self) -> bool {
         matches!(
@@ -455,82 +470,10 @@ impl GitCli {
     }
 }
 
-impl WorktreeProvider for GitCli {
-    fn ensure_task_worktree(&self, repo_root: &Path, task_id: &TaskId) -> Result<TaskWorktree> {
-        let repo = Self::open_repo(repo_root)?;
-        if let Some(existing) = Self::make_wt(&repo, task_id)? {
-            return Ok(existing);
-        }
-        let base = Self::head(&repo)?;
-        Self::ensure_excluded(&repo)?;
-        let branch = branch_name(task_id);
-        let root = repo.join(WORKTREE_DIR).join(task_id.as_str());
-        let root_str = root.to_string_lossy().into_owned();
-        git(&repo, &["worktree", "add", &root_str, "-b", &branch, &base])?;
-        git(
-            &repo,
-            &["config", &format!("branch.{branch}.nextAgentBase"), &base],
-        )?;
-        Ok(TaskWorktree {
-            task_id: task_id.clone(),
-            repo_root: repo,
-            root,
-            branch,
-            base_commit: base,
-        })
-    }
-
-    fn find(&self, repo_root: &Path, task_id: &TaskId) -> Result<Option<TaskWorktree>> {
-        let repo = Self::open_repo(repo_root)?;
-        Self::make_wt(&repo, task_id)
-    }
-
-    fn checkpoint(&self, wt: &TaskWorktree, message: &str) -> Result<Option<String>> {
-        git(&wt.root, &["add", "-A"])?;
-        if run_git(&wt.root, &["diff", "--cached", "--quiet"])?.ok {
-            return Ok(None);
-        }
-        // Agent-authored commit: fixed identity so it works without user git config.
-        git(
-            &wt.root,
-            &[
-                "-c",
-                "user.name=Next Agent",
-                "-c",
-                "user.email=agent@next-agent.local",
-                "commit",
-                "--no-verify",
-                "--no-gpg-sign",
-                "-m",
-                message,
-            ],
-        )?;
-        Ok(Some(
-            git(&wt.root, &["rev-parse", "HEAD"])?.trim().to_owned(),
-        ))
-    }
-
-    fn diff(&self, wt: &TaskWorktree) -> Result<StructuredDiff> {
-        let range = format!("{}...{}", wt.base_commit, wt.branch);
-        let raw = git(
-            &wt.repo_root,
-            &[
-                "diff",
-                "--no-color",
-                "--no-ext-diff",
-                "-M",
-                "--src-prefix=a/",
-                "--dst-prefix=b/",
-                "-U3",
-                &range,
-            ],
-        )?;
-        Ok(parse_unified_diff(&raw))
-    }
-
-    fn merge(&self, wt: &TaskWorktree, options: &MergeOptions) -> Result<MergeOutcome> {
+impl GitCli {
+    fn merge_branch(wt: &TaskWorktree, options: &MergeOptions) -> Result<MergeOutcome> {
         let repo = &wt.repo_root;
-        self.checkpoint(wt, &format!("next-agent: checkpoint {}", wt.task_id))?;
+        Self.checkpoint(wt, &format!("next-agent: checkpoint {}", wt.task_id))?;
 
         let target = git(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"])
             .map_err(|_| WorktreeError::DetachedHead)?;
@@ -608,11 +551,106 @@ impl WorktreeProvider for GitCli {
             files_changed: files,
         })
     }
+}
 
-    fn discard(&self, wt: &TaskWorktree) -> Result<()> {
-        Self::cleanup(wt)
+impl WorktreeProvider for GitCli {
+    fn ensure_task_worktree(&self, repo_root: &Path, task_id: &TaskId) -> Result<TaskWorktree> {
+        let repo = Self::open_repo(repo_root)?;
+        if let Some(existing) = Self::make_wt(&repo, task_id)? {
+            return Ok(existing);
+        }
+        let base = Self::head(&repo)?;
+        Self::ensure_excluded(&repo)?;
+        let branch = branch_name(task_id);
+        let root = repo.join(WORKTREE_DIR).join(task_id.as_str());
+        let root_str = root.to_string_lossy().into_owned();
+        git(&repo, &["worktree", "add", &root_str, "-b", &branch, &base])?;
+        git(
+            &repo,
+            &["config", &format!("branch.{branch}.nextAgentBase"), &base],
+        )?;
+        tracing::info!(target: "worktree", task_id = %task_id, "worktree_created");
+        Ok(TaskWorktree {
+            task_id: task_id.clone(),
+            repo_root: repo,
+            root,
+            branch,
+            base_commit: base,
+        })
     }
 
+    fn find(&self, repo_root: &Path, task_id: &TaskId) -> Result<Option<TaskWorktree>> {
+        let repo = Self::open_repo(repo_root)?;
+        Self::make_wt(&repo, task_id)
+    }
+
+    fn checkpoint(&self, wt: &TaskWorktree, message: &str) -> Result<Option<String>> {
+        git(&wt.root, &["add", "-A"])?;
+        if run_git(&wt.root, &["diff", "--cached", "--quiet"])?.ok {
+            return Ok(None);
+        }
+        // Agent-authored commit: fixed identity so it works without user git config.
+        git(
+            &wt.root,
+            &[
+                "-c",
+                "user.name=Next Agent",
+                "-c",
+                "user.email=agent@next-agent.local",
+                "commit",
+                "--no-verify",
+                "--no-gpg-sign",
+                "-m",
+                message,
+            ],
+        )?;
+        let commit = git(&wt.root, &["rev-parse", "HEAD"])?.trim().to_owned();
+        tracing::info!(target: "worktree", task_id = %wt.task_id, "checkpoint");
+        Ok(Some(commit))
+    }
+
+    fn diff(&self, wt: &TaskWorktree) -> Result<StructuredDiff> {
+        let range = format!("{}...{}", wt.base_commit, wt.branch);
+        let raw = git(
+            &wt.repo_root,
+            &[
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "-U3",
+                &range,
+            ],
+        )?;
+        Ok(parse_unified_diff(&raw))
+    }
+
+    fn merge(&self, wt: &TaskWorktree, options: &MergeOptions) -> Result<MergeOutcome> {
+        let result = Self::merge_branch(wt, options);
+        match &result {
+            Ok(outcome) => tracing::info!(
+                target: "worktree",
+                task_id = %wt.task_id,
+                files = outcome.files_changed.len(),
+                "worktree_merged"
+            ),
+            Err(error) => tracing::warn!(
+                target: "worktree",
+                task_id = %wt.task_id,
+                kind = error.kind(),
+                "worktree_merge_failed"
+            ),
+        }
+        result
+    }
+
+    fn discard(&self, wt: &TaskWorktree) -> Result<()> {
+        Self::cleanup(wt)?;
+        tracing::info!(target: "worktree", task_id = %wt.task_id, "worktree_discarded");
+        Ok(())
+    }
     fn keep(&self, wt: &TaskWorktree) -> Result<()> {
         self.checkpoint(wt, &format!("next-agent: checkpoint {}", wt.task_id))?;
         Ok(())

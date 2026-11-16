@@ -328,8 +328,20 @@ async fn wait_for_decision(
     tokio::select! {
         read = reader.read_line(&mut line) => {
             if let Some(word) = read.ok().and_then(|_| island_decision(&line)) {
-                if let Err(error) = service.approval_respond(&task_id, &approval_id, word) {
-                    eprintln!("[next-agent] overlay approval {approval_id}: {error}");
+                match service.approval_respond(&task_id, &approval_id, word) {
+                    Ok(()) => tracing::info!(
+                        target: "overlay",
+                        %task_id,
+                        %approval_id,
+                        reason = "overlay",
+                        "approval_answered"
+                    ),
+                    Err(error) => tracing::warn!(
+                        target: "overlay",
+                        %approval_id,
+                        %error,
+                        "approval_answer_failed"
+                    ),
                 }
             }
         }

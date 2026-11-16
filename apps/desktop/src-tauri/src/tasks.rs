@@ -319,7 +319,7 @@ impl AppService {
                     WorktreeError::GitUnavailable(_) => "git_unavailable",
                     _ => "git_failed",
                 };
-                tracing::warn!(%task_id, kind = "step_snapshots", reason, "per-step undo is off");
+                tracing::warn!(target: "tasks", %task_id, kind = "step_snapshots", reason, "step_undo_off");
                 sink(StreamMessage::Notice {
                     task_id: task_id.clone(),
                     tone: "info",
@@ -462,7 +462,7 @@ impl AppService {
             // but the user should know the vault copy says "not merged".
             if let Err(error) = self.document(&doc) {
                 // The error can name vault paths, so it goes to the UI only.
-                tracing::warn!(%task_id, kind = "vault_write", "task record not updated after merge");
+                tracing::warn!(target: "tasks", %task_id, kind = "vault_write", "task_record_not_updated");
                 outcome.notice = Some(format!(
                     "Merged, but the task record could not be updated: {error}"
                 ));

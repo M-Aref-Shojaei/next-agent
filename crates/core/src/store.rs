@@ -439,6 +439,12 @@ impl std::fmt::Display for StoreError {
 
 impl std::error::Error for StoreError {}
 
+/// Log a failed open or migration by stage only: a database error's text can
+/// name a path.
+fn log_db_error(kind: &str) {
+    tracing::error!(target: "store", kind, "db_error");
+}
+
 impl From<rusqlite::Error> for StoreError {
     fn from(value: rusqlite::Error) -> Self {
         Self::Sqlite(value)
@@ -451,9 +457,20 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if the file cannot be opened or a migration fails.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let conn = rusqlite::Connection::open(path)?;
+        let conn = rusqlite::Connection::open(path).inspect_err(|_| log_db_error("open"))?;
         let store = Self { conn };
-        store.migrate()?;
+        let before = store.schema_version().unwrap_or(0);
+        store.migrate().inspect_err(|_| log_db_error("migrate"))?;
+        if before < SCHEMA_VERSION {
+            tracing::info!(
+                target: "store",
+                migration = SCHEMA_VERSION,
+                from_version = before,
+                to_version = SCHEMA_VERSION,
+                "migration_applied"
+            );
+        }
+        tracing::info!(target: "store", version = SCHEMA_VERSION, "db_opened");
         Ok(store)
     }
 
@@ -681,6 +698,7 @@ impl Store {
                 rule.pattern
             ],
         )?;
+        tracing::info!(target: "broker", rule_kind = %rule.kind, "rule_added");
         Ok(())
     }
 
@@ -703,10 +721,21 @@ impl Store {
     /// # Errors
     /// Returns [`StoreError`] if the write fails.
     pub fn delete_rule(&self, id: &str) -> Result<bool, StoreError> {
+        let kind: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT kind FROM permission_rules WHERE id = ?1",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )
+            .ok();
         let removed = self.conn.execute(
             "DELETE FROM permission_rules WHERE id = ?1",
             rusqlite::params![id],
         )?;
+        if let (1, Some(kind)) = (removed, kind) {
+            tracing::info!(target: "broker", rule_kind = %kind, "rule_removed");
+        }
         Ok(removed == 1)
     }
 
