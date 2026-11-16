@@ -407,7 +407,7 @@ impl AppService {
             .get(task_id)
             .and_then(|f| f.worktree.clone())
             .ok_or_else(|| format!("no worktree to review for task {task_id}"))?;
-        let outcome = match action {
+        let mut outcome = match action {
             "merge" => {
                 let options = MergeOptions {
                     message: Some(format!("next-agent: {}", self.title_of(task_id))),
@@ -439,7 +439,14 @@ impl AppService {
             entry.clone()
         };
         if action == "merge" {
-            let _ = self.document(&doc);
+            // The merge already happened; a stale record must not undo that,
+            // but the user should know the vault copy says "not merged".
+            if let Err(error) = self.document(&doc) {
+                tracing::warn!(%task_id, kind = "vault_write", %error, "task record not updated after merge");
+                outcome.notice = Some(format!(
+                    "Merged, but the task record could not be updated: {error}"
+                ));
+            }
         }
         Ok(outcome)
     }

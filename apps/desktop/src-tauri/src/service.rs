@@ -597,6 +597,26 @@ mod tests {
             .is_ok_and(|mut d| d.next().is_some()));
     }
 
+    /// The merge stands even when the task record cannot be updated, but the
+    /// UI is told the record is stale.
+    #[test]
+    fn merge_reports_a_task_record_that_could_not_be_updated() {
+        let (dir, svc) = service();
+        let (root, ws_id) = repo_workspace(dir.path(), &svc);
+        let (sink, _log) = collector();
+        let task = run(&svc, &ws_id, "auto", sink);
+        // Make the vault unwritable: a file where the folder was.
+        let vault = dir.path().join("vault");
+        std::fs::remove_dir_all(&vault).expect("rm vault");
+        std::fs::write(&vault, "not a folder").expect("block vault");
+
+        let outcome = svc.review_action(&task, "merge").expect("merge");
+        assert!(outcome.commit.is_some());
+        assert!(root.join("NEXT_AGENT_DEMO.md").exists(), "merged");
+        let notice = outcome.notice.expect("a notice about the record");
+        assert!(notice.contains("task record"), "{notice}");
+    }
+
     #[test]
     fn auto_on_non_git_folder_falls_back_to_manual_and_asks() {
         let (dir, svc) = service();

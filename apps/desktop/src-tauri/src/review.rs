@@ -37,6 +37,10 @@ pub struct ReviewOutcome {
     pub action: String,
     pub commit: Option<String>,
     pub files: Vec<String>,
+    /// Something the user should know although the action succeeded (the
+    /// merged task record could not be updated in the vault).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 impl ReviewOutcome {
@@ -46,6 +50,7 @@ impl ReviewOutcome {
             action: "merge".into(),
             commit: outcome.commit.clone(),
             files: outcome.files_changed.clone(),
+            notice: None,
         }
     }
 
@@ -55,6 +60,7 @@ impl ReviewOutcome {
             action: action.into(),
             commit: None,
             files: Vec::new(),
+            notice: None,
         }
     }
 }
