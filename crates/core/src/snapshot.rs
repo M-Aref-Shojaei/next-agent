@@ -134,6 +134,13 @@ pub fn undo_last_step(store: &Store, task_id: &str) -> Result<UndoOutcome, UndoE
     store
         .mark_step_undone(task_id, last.seq)
         .map_err(|error| UndoError::Store(error.to_string()))?;
+    tracing::info!(
+        target: "agent",
+        task_id,
+        tool = last.tool.as_str(),
+        files = restored.len(),
+        "undo_step"
+    );
     Ok(UndoOutcome {
         seq: last.seq,
         call_id: last.call_id,

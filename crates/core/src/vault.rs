@@ -707,6 +707,19 @@ pub enum VaultError {
     Audit(StoreError),
 }
 
+impl VaultError {
+    /// A stable label for logs: the variant, never paths or messages.
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::NotFinished => "not_finished",
+            Self::BadTimestamp(_) => "bad_timestamp",
+            Self::Io(_) => "io",
+            Self::Audit(_) => "audit",
+        }
+    }
+}
+
 impl From<GraphError> for VaultError {
     fn from(e: GraphError) -> Self {
         match e {
@@ -769,6 +782,23 @@ impl VaultWriter {
     /// # Errors
     /// See [`VaultError`].
     pub fn document_task(
+        &self,
+        store: &Store,
+        doc: &TaskDoc,
+        summarizer: Option<&dyn Summarizer>,
+    ) -> Result<WriteOutcome, VaultError> {
+        let result = self.write_record(store, doc, summarizer);
+        let task_id = doc.meta.id.as_str();
+        match &result {
+            Ok(_) => tracing::info!(target: "vault", task_id, "vault_record_written"),
+            Err(error) => {
+                tracing::warn!(target: "vault", task_id, kind = error.kind(), "vault_record_failed");
+            }
+        }
+        result
+    }
+
+    fn write_record(
         &self,
         store: &Store,
         doc: &TaskDoc,

@@ -128,7 +128,15 @@ pub fn approval_respond(
     approval_id: String,
     choice: String,
 ) -> Result<(), String> {
-    service.approval_respond(&task_id, &approval_id, &choice)
+    service.approval_respond(&task_id, &approval_id, &choice)?;
+    tracing::info!(
+        target: "broker",
+        %task_id,
+        %approval_id,
+        reason = "desktop",
+        "approval_answered"
+    );
+    Ok(())
 }
 
 #[tauri::command]

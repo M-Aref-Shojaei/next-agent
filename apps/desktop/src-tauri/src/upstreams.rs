@@ -69,7 +69,7 @@ fn save(path: &Path, state: &WatchState) {
         return;
     };
     if let Err(error) = crate::boards::atomic_write(path, text.as_bytes()) {
-        eprintln!("[next-agent] upstream watch: {error}");
+        tracing::warn!(target: "upstreams", %error, "watch_state_not_saved");
     }
 }
 

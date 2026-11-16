@@ -304,15 +304,6 @@ impl SqliteBroker<'_> {
         request: &ToolRequest,
         floor: Option<&Floor>,
     ) -> BrokerOutcome {
-        let decided = |decision: &str, reason: &str| {
-            if let Some(ctx) = ctx {
-                ctx.events.emit(EventKind::PermissionDecided {
-                    call_id: call_id.to_string(),
-                    decision: decision.to_string(),
-                    reason: reason.to_string(),
-                });
-            }
-        };
         let policy_request = to_policy_request(request);
         let evaluation = explain_with(
             &policy_request,
@@ -321,6 +312,23 @@ impl SqliteBroker<'_> {
             &self.context,
             &RealFs,
         );
+        let rule_label = evaluation.rule;
+        let decided = |decision: &str, reason: &str| {
+            tracing::info!(
+                target: "broker",
+                tool = request.name(),
+                decision,
+                rule_kind = rule_label,
+                "tool_decision"
+            );
+            if let Some(ctx) = ctx {
+                ctx.events.emit(EventKind::PermissionDecided {
+                    call_id: call_id.to_string(),
+                    decision: decision.to_string(),
+                    reason: reason.to_string(),
+                });
+            }
+        };
         // File tools act on the path the policy actually judged, so a link
         // cannot point the tool somewhere other than what was approved.
         let resolved_request = with_resolved_path(request, evaluation.resolved_path.as_deref());
@@ -453,7 +461,7 @@ impl SqliteBroker<'_> {
         let captured = match snapshots.capture() {
             Ok(captured) => captured,
             Err(error) => {
-                tracing::warn!(%error, call_id, "step snapshot failed");
+                tracing::warn!(target: "broker", %error, "step_snapshot_failed");
                 return;
             }
         };
@@ -474,7 +482,9 @@ impl SqliteBroker<'_> {
                     });
                 }
             }
-            Err(error) => tracing::warn!(%error, call_id, "step snapshot not recorded"),
+            Err(error) => {
+                tracing::warn!(target: "broker", %error, "step_snapshot_not_recorded");
+            }
         }
     }
 
