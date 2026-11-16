@@ -18,10 +18,13 @@ use tokio::sync::watch;
 pub type Sink = Arc<dyn Fn(StreamMessage) + Send + Sync>;
 
 const VAULT_KEY: &str = "vault.path";
-/// UI setting names mapped to the core's settings keys. Everything else is rejected.
-const SETTING_KEYS: &[(&str, &str)] = &[
-    ("router.url", "router.base_url"),
-    ("router.model", "router.default_model"),
+/// UI setting names mapped to the core's settings keys, and whether a change
+/// rebuilds the router client. Everything else is rejected.
+const SETTING_KEYS: &[(&str, &str, bool)] = &[
+    ("router.url", "router.base_url", true),
+    ("router.model", "router.default_model", true),
+    // Settings → Diagnostics (diagnostics.rs): error, warn, info or debug.
+    ("logging.level", "logging.level", false),
 ];
 const DEFAULT_ROUTER_URL: &str = "http://127.0.0.1:20128/v1";
 
@@ -257,7 +260,7 @@ impl AppService {
     /// # Errors
     /// Returns a message for unknown keys, bad router URLs or database errors.
     pub fn setting_set(&self, key: &str, value: &str) -> Result<(), String> {
-        let stored = core_key(key)?;
+        let (stored, rebuilds_router) = setting(key)?;
         let value = if key == "router.url" {
             normalize_base_url(value)
                 .map_err(|_| "router URL must be an http or https URL".to_string())?
@@ -268,7 +271,9 @@ impl AppService {
         self.store()?
             .set_setting(stored, &encoded)
             .map_err(|e| e.to_string())?;
-        self.router_generation.send_modify(|g| *g += 1);
+        if rebuilds_router {
+            self.router_generation.send_modify(|g| *g += 1);
+        }
         Ok(())
     }
 
@@ -316,10 +321,15 @@ impl AppService {
 }
 
 fn core_key(key: &str) -> Result<&'static str, String> {
+    setting(key).map(|(core, _)| core)
+}
+
+/// `(core key, rebuilds the router)` for a UI setting name.
+fn setting(key: &str) -> Result<(&'static str, bool), String> {
     SETTING_KEYS
         .iter()
-        .find(|(ui, _)| *ui == key)
-        .map(|(_, core)| *core)
+        .find(|(ui, _, _)| *ui == key)
+        .map(|(_, core, router)| (*core, *router))
         .ok_or_else(|| format!("unknown setting `{key}`"))
 }
 

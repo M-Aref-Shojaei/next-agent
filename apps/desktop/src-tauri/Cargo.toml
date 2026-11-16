@@ -31,6 +31,10 @@ tokio = { version = "1", features = ["sync", "macros", "io-util", "rt", "time"] 
 coucou = { path = "../coucou/src-tauri" }
 next-agent-channels = { path = "../../../crates/channels" }
 next-agent-design = { path = "../../../crates/design" }
+# The diagnostics log (ADR-0013); `dirs` finds the app data folder before
+# Tauri starts, the same folder Tauri's `app_data_dir` uses (MIT/Apache-2.0).
+next-agent-diagnostics = { path = "../../../crates/diagnostics" }
+dirs = "=7.0.0"
 
 [dev-dependencies]
 tempfile = "3"

@@ -32,6 +32,7 @@ when you add a dependency that someone else ships, add a row here.
 - **Depend inward on contracts.** Callers import a trait, not an implementation type.
 - **One transport per adapter.** `rusqlite` only in `store.rs` (app state) and `crates/graph/src/index.rs` (the notes index, a separate rebuildable cache); HTTP (`reqwest`, `eventsource-stream`) and the OS keychain (`keyring`) only in `crates/core/src/router/` — the `http_fetch` tool reaches HTTP through the `HttpFetch` seam implemented there — plus the upstream watch's GitHub adapter, `crates/core/src/upstream/github.rs` (public, unauthenticated, read-only; Settings → Upstreams);
   `std::fs` never in `crates/permission-engine`.
+- **One log writer.** Only `crates/diagnostics` writes under `<app data>/logs/`; other code logs through plain `tracing` macros and gets the folder from `next_agent_diagnostics::logs_dir` ([[Logging]], [[ADR-0013 Local Diagnostics Log Without User Content]]).
 - **Conformance first.** Every new implementation of a seam runs the same suite as the
   existing ones before it is wired in.
 - **Pin upstream.** `upstream.lock.json` records version + owning adapter + last verified date.

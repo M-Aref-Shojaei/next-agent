@@ -27,6 +27,7 @@ flowchart LR
     next_agent_design["design<br/><small>crates/design</small>"]
     next_agent_macos_panel["macos-panel<br/><small>crates/macos-panel</small>"]
     next_agent_channels["channels<br/><small>crates/channels</small>"]
+    next_agent_diagnostics["diagnostics<br/><small>crates/diagnostics</small>"]
   end
   subgraph ts["TypeScript packages"]
     direction TB
@@ -60,6 +61,7 @@ flowchart LR
   next_agent_desktop --> coucou
   next_agent_desktop --> next_agent_channels
   next_agent_desktop --> next_agent_design
+  next_agent_desktop --> next_agent_diagnostics
   ts_desktop --> ts_contracts
   ts_desktop ==>|"IPC: invoke / Channel"| next_agent_desktop
   ts_policy <-.->|"rule parity (check-policy-parity)"| next_agent_permission_engine
@@ -81,6 +83,7 @@ flowchart LR
   class next_agent_design rust
   class next_agent_macos_panel rust
   class next_agent_channels rust
+  class next_agent_diagnostics rust
   class next_agent_desktop rust
   class coucou rust
   class coucou_hook rust
@@ -109,7 +112,8 @@ flowchart LR
 | design | Rust crate | `crates/design` | — | desktop backend (Tauri) | — |
 | macos-panel | Rust crate | `crates/macos-panel` | — | — | — |
 | channels | Rust crate | `crates/channels` | core, permission-engine | desktop backend (Tauri) | — |
-| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph, coucou backend (Tauri), channels, design | desktop UI | — |
+| diagnostics | Rust crate | `crates/diagnostics` | — | desktop backend (Tauri) | — |
+| desktop backend (Tauri) | Rust crate | `apps/desktop/src-tauri` | core, permission-engine, process-manager, graph, coucou backend (Tauri), channels, design, diagnostics | desktop UI | — |
 | coucou backend (Tauri) | Rust crate | `apps/desktop/coucou/src-tauri` | — | desktop backend (Tauri) | — |
 | coucou-hook backend (Tauri) | Rust crate | `apps/desktop/coucou/hook` | — | — | — |
 | desktop UI | TS package | `apps/desktop` | contracts, desktop backend (Tauri) | — | — |

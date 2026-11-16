@@ -5,6 +5,7 @@ pub mod channels;
 pub mod commands;
 pub mod coucou;
 pub mod design;
+pub mod diagnostics;
 pub mod gateway;
 pub mod learning;
 pub mod notes;
@@ -27,15 +28,32 @@ pub const PRODUCT_NAME: &str = "Next Agent";
 /// Identifier used by the OS for app data directories.
 pub const APP_IDENTIFIER: &str = "dev.nextagent.desktop";
 
+/// Open a URL or folder with the OS's own opener. No shell: `target` is one
+/// argument to `open`, `explorer` or `xdg-open`.
+pub(crate) fn open_with_os(target: impl AsRef<std::ffi::OsStr>) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("explorer");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(target).spawn().map(|_| ())
+}
+
 /// Create and manage the app's services, then start their background work.
 ///
 /// # Errors
 /// Returns an error if the data directory or a service cannot be created.
-fn manage_services(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+fn manage_services(
+    app: &mut tauri::App,
+    diagnostics: diagnostics::Diagnostics,
+) -> Result<(), Box<dyn std::error::Error>> {
     let dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&dir)?;
     let service = Arc::new(AppService::new(dir.join("next-agent.db"))?);
     app.manage(Arc::clone(&service));
+    diagnostics::apply_saved_level(&diagnostics, &service);
+    app.manage(diagnostics);
     let notes = Arc::new(notes::NotesService::new(dir.join("graph-index")));
     let handle = app.handle().clone();
     notes.set_listener(Arc::new(move |files| {
@@ -72,12 +90,14 @@ fn manage_services(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
 /// Panics if the Tauri runtime cannot start (unrecoverable at launch).
 #[allow(clippy::too_many_lines)] // Mostly the command list.
 pub fn run() {
+    // The diagnostics log first, so everything after it is recorded (ADR-0013).
+    let diagnostics = diagnostics::start();
     // The overlay is Coucou's Tauri app, vendored whole (ADR-0011): its
     // plugins and state, its setup, its commands and its run-event handling.
     let (builder, boot) = coucou_lib::builder(tauri::Builder::default());
     builder
         .setup(move |app| {
-            manage_services(app)?;
+            manage_services(app, diagnostics)?;
             coucou_lib::setup(app, boot)?;
             Ok(())
         })
@@ -181,11 +201,17 @@ pub fn run() {
             design::design_apply_style,
             design::design_convert,
             design::design_implement,
+            diagnostics::diag_recent,
+            diagnostics::diag_set_level,
+            diagnostics::diag_open_folder,
+            diagnostics::diag_export,
+            diagnostics::diag_log,
         ]))
         .build(tauri::generate_context!())
         .expect("error while running Next Agent")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                tracing::info!(target: "app", "app_stopping");
                 // Dev servers started by the Design Studio must not outlive the app.
                 app.state::<design::DesignState>().stop_all();
             }
