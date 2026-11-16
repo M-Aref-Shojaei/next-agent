@@ -135,13 +135,26 @@ pub fn post_paste(shift: bool) -> bool {
     } else {
         CGEventFlags::MaskCommand
     };
-    for down in [true, false] {
-        let Some(event) = CGEvent::new_keyboard_event(None, KEY_V, down) else {
-            return false;
-        };
-        CGEvent::set_flags(Some(&event), flags);
-        CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
-    }
+    post_key_pair(
+        |down| {
+            let event = CGEvent::new_keyboard_event(None, KEY_V, down)?;
+            CGEvent::set_flags(Some(&event), flags);
+            Some(event)
+        },
+        |event| CGEvent::post(CGEventTapLocation::HIDEventTap, Some(event)),
+    )
+}
+
+/// Build the key-down and key-up events first, then post both. Posting
+/// cannot fail, so once the down is posted the up always follows and no key
+/// or modifier is left held; if either event cannot be built, nothing is
+/// posted.
+fn post_key_pair<E>(mut make: impl FnMut(bool) -> Option<E>, mut post: impl FnMut(&E)) -> bool {
+    let (Some(down), Some(up)) = (make(true), make(false)) else {
+        return false;
+    };
+    post(&down);
+    post(&up);
     true
 }
 
@@ -197,6 +210,25 @@ mod tests {
         assert!((1..=12).contains(&month));
         assert!((1..=31).contains(&day));
         assert!(hour < 24 && minute < 60 && second < 61);
+    }
+
+    /// A key-down is only posted when its key-up exists too, so a failure
+    /// can never leave ⌘V held.
+    #[test]
+    fn a_key_down_is_never_posted_without_its_key_up() {
+        let mut posted = Vec::new();
+        let ok = post_key_pair(|down| down.then_some("down"), |e| posted.push(*e));
+        assert!(!ok);
+        assert!(posted.is_empty(), "{posted:?}");
+
+        let ok = post_key_pair(
+            |down| Some(if down { "down" } else { "up" }),
+            |e| {
+                posted.push(*e);
+            },
+        );
+        assert!(ok);
+        assert_eq!(posted, ["down", "up"]);
     }
 
     #[test]
