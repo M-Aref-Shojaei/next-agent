@@ -230,7 +230,13 @@ class AppStore {
           : outcome.action === "discard"
             ? "discarded"
             : "kept for later";
-      this.tasks = this.tasks.map((t) => (t.id === taskId ? settleReview(t, label) : t));
+      this.tasks = this.tasks.map((t) => {
+        if (t.id !== taskId) return t;
+        const settled = settleReview(t, label);
+        return outcome.notice
+          ? applyMessage(settled, { type: "notice", task_id: taskId, tone: "error", text: outcome.notice })
+          : settled;
+      });
       this.error = null;
     } catch (e) {
       this.error = String(e);

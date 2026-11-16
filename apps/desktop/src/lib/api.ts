@@ -81,6 +81,8 @@ export interface ReviewOutcome {
   action: DiffAction;
   commit: string | null;
   files: string[];
+  /** Set when the merge worked but the task record could not be updated. */
+  notice?: string | null;
 }
 
 export interface AgentProfileInfo {
