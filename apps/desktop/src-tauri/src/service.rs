@@ -617,6 +617,32 @@ mod tests {
         assert!(notice.contains("task record"), "{notice}");
     }
 
+    /// When step snapshots cannot be opened the task still runs, and the
+    /// timeline says per-step undo is off.
+    #[test]
+    fn a_task_without_step_snapshots_says_undo_is_off() {
+        let (dir, svc) = service();
+        let (_root, ws_id) = repo_workspace(dir.path(), &svc);
+        // A file where the snapshot folder would go.
+        std::fs::write(dir.path().join("snapshot"), "blocked").expect("block");
+        let (sink, log) = collector();
+        let task = run(&svc, &ws_id, "auto", sink);
+        let notices: Vec<String> = log
+            .lock()
+            .expect("lock")
+            .iter()
+            .filter_map(|m| match m {
+                StreamMessage::Notice { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            notices.iter().any(|n| n.contains("Undo is off")),
+            "{notices:?}"
+        );
+        assert_eq!(svc.task_undoable(&task).expect("count"), 0);
+    }
+
     #[test]
     fn auto_on_non_git_folder_falls_back_to_manual_and_asks() {
         let (dir, svc) = service();
