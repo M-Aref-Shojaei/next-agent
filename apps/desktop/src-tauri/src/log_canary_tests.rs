@@ -129,27 +129,25 @@ fn file_text(handle: &Handle) -> String {
         .collect()
 }
 
-/// Every entry in the files.
-fn entries(handle: &Handle) -> Vec<Value> {
-    file_text(handle)
+/// Asserts that no canary and no secret shape is in any log file or in the
+/// ring buffer, then returns every entry of the files (read once).
+fn assert_clean(handle: &Handle) -> Vec<Value> {
+    let files = file_text(handle);
+    let ring = serde_json::to_string(&handle.recent(&RecentFilter::default())).expect("json");
+    for (place, text) in [("log files", &files), ("ring buffer", &ring)] {
+        for line in text.lines() {
+            if let Some(needle) = NEEDLES.iter().find(|n| line.contains(*n)) {
+                panic!("{needle:?} reached the {place}: {line}");
+            }
+            if let Some(shape) = secret_shapes().iter().find(|s| s.is_match(line)) {
+                panic!("{shape} matched in the {place}: {line}");
+            }
+        }
+    }
+    files
         .lines()
         .map(|l| serde_json::from_str(l).expect("a JSON line"))
         .collect()
-}
-
-/// No canary and no secret shape in any log file or in the ring buffer.
-fn assert_clean(handle: &Handle) {
-    let ring = serde_json::to_string(&handle.recent(&RecentFilter::default())).expect("json");
-    for (place, text) in [("log files", file_text(handle)), ("ring buffer", ring)] {
-        for needle in NEEDLES {
-            let hit = text.lines().find(|l| l.contains(needle));
-            assert!(hit.is_none(), "{needle:?} reached the {place}: {hit:?}");
-        }
-        for shape in secret_shapes() {
-            let hit = text.lines().find(|l| shape.is_match(l));
-            assert!(hit.is_none(), "{shape} matched in the {place}: {hit:?}");
-        }
-    }
 }
 
 /// Whether an entry belongs to `id` (in its fields or its span).
@@ -157,13 +155,21 @@ fn of(entry: &Value, key: &str, id: &str) -> bool {
     entry["fields"][key] == id || entry["span"][key] == id
 }
 
-/// The names of the events that match `pred`.
-fn events_where(handle: &Handle, pred: impl Fn(&Value) -> bool) -> Vec<String> {
-    entries(handle)
+/// The names of the entries that match `pred`.
+fn events_where(entries: &[Value], pred: impl Fn(&Value) -> bool) -> Vec<String> {
+    entries
         .iter()
         .filter(|e| pred(e))
         .filter_map(|e| e["event"].as_str().map(str::to_string))
         .collect()
+}
+
+/// The first entry named `event` that matches `pred`.
+fn first<'a>(entries: &'a [Value], event: &str, pred: impl Fn(&Value) -> bool) -> &'a Value {
+    entries
+        .iter()
+        .find(|e| e["event"] == event && pred(e))
+        .unwrap_or_else(|| panic!("no {event} event"))
 }
 
 fn assert_has(events: &[String], expected: &[&str]) {
@@ -175,10 +181,18 @@ fn assert_has(events: &[String], expected: &[&str]) {
     }
 }
 
-/// Poll the log until `pred` holds for some set of events, or fail.
+/// Poll the ring buffer until `pred` holds, or fail.
 fn wait_for(handle: &Handle, what: &str, pred: impl Fn(&[Value]) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(30);
-    while !pred(&entries(handle)) {
+    loop {
+        let recent: Vec<Value> = handle
+            .recent(&RecentFilter::default())
+            .iter()
+            .map(|e| serde_json::to_value(e).expect("json"))
+            .collect();
+        if pred(&recent) {
+            return;
+        }
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -328,8 +342,8 @@ fn canary_task_through_the_gateway_with_tools_stays_out_of_the_log() {
         root.join(".next-agent/skills").join(SKILL).exists(),
         "the skill was created"
     );
-    assert_clean(log);
-    let mine = events_where(log, |e| of(e, "task_id", &task));
+    let entries = assert_clean(log);
+    let mine = events_where(&entries, |e| of(e, "task_id", &task));
     assert_has(
         &mine,
         &[
@@ -340,8 +354,10 @@ fn canary_task_through_the_gateway_with_tools_stays_out_of_the_log() {
             "task_finished",
         ],
     );
-    let all = events_where(log, |_| true);
-    assert_has(&all, &["memory_saved", "skill_changed"]);
+    assert_has(
+        &events_where(&entries, |_| true),
+        &["memory_saved", "skill_changed"],
+    );
 }
 
 /// A provider error whose body echoes the prompt and the key: the task
@@ -367,15 +383,13 @@ fn canary_provider_error_echoing_the_prompt_stays_out_of_the_log() {
 
     let task = start_task(&svc, &ws);
 
-    assert_clean(log);
-    let failed: Vec<Value> = entries(log)
-        .into_iter()
-        .filter(|e| of(e, "task_id", &task) && e["event"] == "provider_call_failed")
-        .collect();
-    assert!(!failed.is_empty(), "no provider_call_failed for {task}");
-    assert_eq!(failed[0]["fields"]["status"], 400, "{failed:?}");
+    let entries = assert_clean(log);
+    let failed = first(&entries, "provider_call_failed", |e| {
+        of(e, "task_id", &task)
+    });
+    assert_eq!(failed["fields"]["status"], 400, "{failed}");
     assert_has(
-        &events_where(log, |e| of(e, "task_id", &task)),
+        &events_where(&entries, |e| of(e, "task_id", &task)),
         &["task_started", "task_finished"],
     );
 }
@@ -385,11 +399,11 @@ fn telegram_ok(result: &Value) -> ResponseTemplate {
 }
 
 fn telegram_message(update: u64, from: &str, user: &str, text: &str) -> Value {
+    let id = from.parse::<u64>().expect("id");
     json!({ "update_id": update, "message": {
         "message_id": update, "date": 0, "text": text,
-        "from": { "id": from.parse::<u64>().expect("id"), "is_bot": false,
-                  "username": user, "first_name": "Canary" },
-        "chat": { "id": from.parse::<u64>().expect("id"), "type": "private" }
+        "from": { "id": id, "is_bot": false, "username": user, "first_name": "Canary" },
+        "chat": { "id": id, "type": "private" }
     }})
 }
 
@@ -510,9 +524,9 @@ async fn canary_channel_message_through_mock_telegram_stays_out_of_the_log() {
     .expect("wait");
     channels.delete(&id).await.expect("delete");
 
-    assert_clean(log);
+    let entries = assert_clean(log);
     assert_has(
-        &events_where(log, |e| of(e, "channel_id", &id)),
+        &events_where(&entries, |e| of(e, "channel_id", &id)),
         &[
             "channel_started",
             "message_in",
@@ -565,12 +579,12 @@ fn canary_notes_page_and_board_saves_stay_out_of_the_log() {
     assert!(boards::save(&vault, BOARD, "not json", Some(&saved)).is_err());
     assert!(boards::open(&vault, &format!("{BOARD} missing")).is_err());
 
-    // Give the watcher time to see the file.
-    std::thread::sleep(Duration::from_millis(1500));
-    assert_clean(log);
-    let all = events_where(log, |_| true);
+    wait_for(log, "the watcher's re-index", |recent| {
+        recent.iter().any(|e| e["event"] == "graph_reindexed")
+    });
+    let entries = assert_clean(log);
     assert_has(
-        &all,
+        &events_where(&entries, |_| true),
         &[
             "graph_indexed",
             "graph_reindexed",
@@ -606,14 +620,15 @@ fn canary_design_preview_refusals_stay_out_of_the_log() {
     assert!(ask(addr).starts_with("HTTP/1.1 502"));
     drop(proxy);
 
-    assert_clean(log);
-    let blocked: Vec<Value> = entries(log)
-        .into_iter()
-        .filter(|e| e["event"] == "preview_blocked" && e["fields"]["reason"] == "wrong_host")
-        .collect();
-    assert!(!blocked.is_empty(), "no preview_blocked");
-    assert_eq!(blocked[0]["fields"]["status"], 421);
-    assert_has(&events_where(log, |_| true), &["preview_upstream_down"]);
+    let entries = assert_clean(log);
+    let blocked = first(&entries, "preview_blocked", |e| {
+        e["fields"]["reason"] == "wrong_host"
+    });
+    assert_eq!(blocked["fields"]["status"], 421);
+    assert_has(
+        &events_where(&entries, |_| true),
+        &["preview_upstream_down"],
+    );
 }
 
 /// The memory editor (the user's own edit) and a cron job whose name and
@@ -645,14 +660,14 @@ fn canary_memory_editor_and_cron_run_stay_out_of_the_log() {
         .expect("dispatch");
     svc.task_wait(&task);
 
-    assert_clean(log);
-    assert_has(&events_where(log, |_| true), &["memory_saved"]);
+    let entries = assert_clean(log);
+    assert_has(&events_where(&entries, |_| true), &["memory_saved"]);
     assert_has(
-        &events_where(log, |e| of(e, "cron_id", &job.id)),
+        &events_where(&entries, |e| of(e, "cron_id", &job.id)),
         &["cron_fired"],
     );
     assert_has(
-        &events_where(log, |e| of(e, "task_id", &task)),
+        &events_where(&entries, |e| of(e, "task_id", &task)),
         &["task_started", "task_finished"],
     );
 }

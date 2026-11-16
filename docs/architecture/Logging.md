@@ -178,7 +178,7 @@ The review found no other leaks. The remaining free-text `error` fields hold dat
 
 The app from the main checkout was already running, so this worktree's build was not started; the UI was checked in the browser preview (Notes, Boards, Settings → Channels and Diagnostics, an overlay page: no console errors) and the backend by the headless tests. Its log (`~/Library/Application Support/dev.nextagent.desktop/logs/`, about 40 minutes, the build before this audit) held no user content. Its `info` was noisy:
 
-- 1,328 of 1,351 lines were `hook_event`, 1,275 of them `PreToolUse`/`PostToolUse`/`PostToolUseFailure` from Claude Code sessions: those kinds are now `debug` (`pipe.rs`); session-level kinds (`UserPromptSubmit`, `Stop`, `SubagentStart`/`Stop`, `PermissionRequest`) stay `info`.
+- 1,328 of 1,351 lines were `hook_event`, 1,275 of them `PreToolUse`/`PostToolUse`/`PostToolUseFailure` from Claude Code sessions: only session-level kinds (`SessionStart`/`End`, `UserPromptSubmit`, `Stop`, `StopFailure`, `Interrupt`, `SubagentStart`/`Stop`, `Notification`, `PreCompact`) stay `info`; the per-tool-call kinds and any kind not listed are `debug` (`pipe.rs`).
 - `db_opened` came three times at every start and once per task: now `debug`; `migration_applied` stays `info`.
 - `island_notch` wrote `kind: "[invalid]"` (a struct printed with `?`): now `notch` or `no_notch`.
 

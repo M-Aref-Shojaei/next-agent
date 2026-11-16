@@ -144,9 +144,13 @@ pub struct Hub {
 /// refusal): sent, then logged by size only, as task answers are.
 async fn reply(channel: &dyn Channel, state: &dyn ChannelState, message: &Inbound, text: &str) {
     if let Ok(count) = outbound::send_reply(channel, state, message, text).await {
-        let channel_id = &channel.config().id;
-        tracing::info!(channel_id = %channel_id, bytes = text.len(), count, "message_out");
+        log_out(&channel.config().id, text, count);
     }
+}
+
+/// A message sent to a channel: its size and parts, never its text.
+fn log_out(channel_id: &str, text: &str, count: usize) {
+    tracing::info!(channel_id = %channel_id, bytes = text.len(), count, "message_out");
 }
 
 /// How a sender is named in logs and access checks.
@@ -647,7 +651,7 @@ impl Hub {
             &delivery.text,
             None,
         );
-        tracing::info!(channel_id = %delivery.channel_id, bytes = delivery.text.len(), count = sent, "message_out");
+        log_out(&delivery.channel_id, &delivery.text, sent);
         Ok(sent)
     }
 
@@ -707,7 +711,7 @@ impl Hub {
         }
         match preview.finish(&text).await {
             Ok(_) => {
-                tracing::info!(channel_id = %channel_id, bytes = text.len(), count = 1, "message_out");
+                log_out(&channel_id, &text, 1);
                 self.log(&channel_id, "out", "message", &peer, &text, task_id.clone());
             }
             Err(error) => self.log(

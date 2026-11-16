@@ -161,22 +161,25 @@ fn flush(
     let Ok(mut idx) = index.lock() else { return };
     let started = Instant::now();
     // Counts and kinds only: a file's name is a page's name.
-    let failed = if full_sync {
-        files.clear();
-        usize::from(idx.sync(graph).is_err())
+    let (mode, failed) = if full_sync {
+        ("sync", usize::from(idx.sync(graph).is_err()))
     } else {
-        files
+        let failed = files
             .iter()
             .filter(|rel| idx.index_file(graph, rel).is_err())
-            .count()
+            .count();
+        ("files", failed)
     };
     drop(idx);
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let mode = if full_sync { "sync" } else { "files" };
     if failed > 0 {
         tracing::warn!(target: "notes", kind = "reindex", mode, count = failed, "watcher_error");
     }
     tracing::debug!(target: "notes", mode, files = files.len(), duration_ms, "graph_reindexed");
+    if full_sync {
+        // The listener hears "everything may have changed" as no files.
+        files.clear();
+    }
     if let Some(cb) = on_change {
         cb(&files);
     }

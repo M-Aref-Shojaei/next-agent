@@ -231,8 +231,15 @@ fn respond(client: &mut TcpStream, status: &str, kind: &str, body: &[u8]) -> io:
 
 /// A request the proxy refuses: the status and a constant reason, never the
 /// request's host, path or headers.
-fn refused(status: u16, reason: &'static str) {
+fn refuse(
+    client: &mut TcpStream,
+    status: u16,
+    phrase: &str,
+    reason: &'static str,
+    body: &[u8],
+) -> io::Result<()> {
     tracing::warn!(target: "design", status, reason, "preview_blocked");
+    respond(client, &format!("{status} {phrase}"), "text/plain", body)
 }
 
 #[allow(clippy::too_many_lines)] // one linear request → response path
@@ -246,17 +253,22 @@ fn handle(client: TcpStream, config: &Config) -> io::Result<()> {
     let target = parts.next().unwrap_or_default().to_string();
     let host = head.get("host").unwrap_or_default().to_ascii_lowercase();
     if !config.own_hosts.contains(&host) {
-        refused(421, "wrong_host");
-        return respond(
+        return refuse(
             &mut client,
-            "421 Misdirected Request",
-            "text/plain",
+            421,
+            "Misdirected Request",
+            "wrong_host",
             b"wrong host",
         );
     }
     if method.eq_ignore_ascii_case("CONNECT") || !target.starts_with('/') {
-        refused(400, "not_a_proxy");
-        return respond(&mut client, "400 Bad Request", "text/plain", b"not a proxy");
+        return refuse(
+            &mut client,
+            400,
+            "Bad Request",
+            "not_a_proxy",
+            b"not a proxy",
+        );
     }
     if target == BRIDGE_PATH || target.starts_with(&format!("{BRIDGE_PATH}?")) {
         return respond(
@@ -274,20 +286,20 @@ fn handle(client: TcpStream, config: &Config) -> io::Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     if head.get("transfer-encoding").is_some() {
-        refused(411, "chunked_body");
-        return respond(
+        return refuse(
             &mut client,
-            "411 Length Required",
-            "text/plain",
+            411,
+            "Length Required",
+            "chunked_body",
             b"chunked request bodies are not supported",
         );
     }
     if body_len > MAX_REQUEST_BODY {
-        refused(413, "body_too_large");
-        return respond(
+        return refuse(
             &mut client,
-            "413 Payload Too Large",
-            "text/plain",
+            413,
+            "Payload Too Large",
+            "body_too_large",
             b"too large",
         );
     }

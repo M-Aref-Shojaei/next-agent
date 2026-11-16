@@ -132,7 +132,7 @@ test("command_failed carries an error only for commands whose errors name no one
 /** `ui_error` kinds whose errors come from areas that never name people's work, plus the
  * global handlers' JavaScript exceptions (log.ts: an Error's message, never a command's string). */
 const SAFE_UI_ERROR_KINDS = new Set([
-  "app", "diagnostics", "providers", "settings", "upstreams", "usage", "overlay_updates", "mermaid", "boards",
+  "app", "diagnostics", "providers", "settings", "upstreams", "usage", "overlay_updates",
   "error", "unhandled_rejection",
 ]);
 
@@ -155,7 +155,4 @@ test("ui_error sends an error message only from areas whose errors name no one's
     if (kind === undefined || SAFE_UI_ERROR_KINDS.has(kind)) continue;
     assert.ok(!/\berror:/.test(fields), `${file}: ui_error kind ${kind} sends its error text`);
   }
-  // The boards page logs only an Error's name (a type), never the message.
-  const boards = calls.filter((c) => c.fields.includes('kind: "boards"'));
-  assert.ok(boards.every((c) => !c.fields.includes("String(")), "boards send no message");
 });

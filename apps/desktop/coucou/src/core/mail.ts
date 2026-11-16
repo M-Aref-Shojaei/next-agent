@@ -137,7 +137,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   } catch {
     // Next Agent: into the shared diagnostics log (ADR-0013), by command name only:
     // an overlay error can carry a provider's reply or a mail detail.
-    log.warn("overlay_command_failed", { command: cmd });
+    log.error("overlay_command_failed", { command: cmd });
     return null;
   }
 }
