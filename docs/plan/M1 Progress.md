@@ -145,3 +145,25 @@ Task ledger for [[M1 Vertical Slice]]. Update this note (and the step boxes ther
 - **Open:**
   - Design-system gaps the agents hit: Table, StatTile, a compact Banner, a disabled confirm on Dialog, a nullable bind on Select/TextField, and IconButton xs.
   - `coucou/src/settings/settings.css` still gives the remaining Coucou window its base styles.
+
+### 2026-11-16 — Logging system; overlay fixes; review bugs ([[Logging System Plan]], [[Overlay Fixes]])
+- **Diagnostics log** ([[ADR-0013 Local Diagnostics Log Without User Content]], [[Logging]]):
+  - `crates/diagnostics` writes `logs/next-agent-YYYY-MM-DD.jsonl`, keeps 14 days or 100 MB, and never sends anything.
+  - Only allowlisted fields are written, and every string is redacted.
+  - Settings → Diagnostics shows recent entries, sets the level, opens the log folder and exports a bug-report file.
+  - `make check` fails on forbidden or unknown log fields.
+  - Every area logs its events: router, tasks, broker, store, worktree, vault, channels, learning, cron, notes, boards, design, the UI and the overlay.
+  - The overlay's own log file is retired. 157 overlay messages were audited, and 12 that could carry user content were fixed.
+  - Six end-to-end canary tests prove that fake prompts, keys, tokens, names and paths never reach the log. The audit fixed further leaks: command error text from the UI, `ui_error` messages, and git stderr in the broker.
+- **Overlay:** the island is sized from the real notch (185 pt here), so the right-side pills no longer sit under it. The pills show the logo mark tinted per agent. The macOS relay now accepts hook events (a `getpeereid` fix).
+- **Brand:** the owner's logo is the app, Dock, tray and menu-bar icon, plus the brand tokens; the notch orb uses the logo colours.
+- **Review bugs fixed:** keychain errors no longer trip the circuit breaker; a pairing-storage error no longer overwrites pending codes; a call cancelled before it starts is audited as deny; there are notices for a vault write failure and for undo being off; `post_paste` always releases Command; one output ceiling per provider.
+- **Tests:** 1529 Rust and 871 node pass; clippy `-D warnings`, fmt, `make check`, svelte-check and the build are clean.
+- **Not verified:**
+  - Hover over the real notch, and the overlay windows sending `diag_log`, in the running app.
+  - Windows and Linux builds.
+- **Open (owner):**
+  - The audit-write failure policy.
+  - Channel dedupe failing open.
+  - The Gemini budget estimate default.
+  - Whether the remaining orb spots (greeting, island mascot, hub header) should use the logo mark.
