@@ -6,6 +6,7 @@ use super::*;
 use crate::llm::ChatMessage;
 use crate::router::combo::CooldownPolicy;
 use crate::router::providers::MemoryKeys;
+use crate::router::settings::SecretError;
 use crate::store::ComboRow;
 use serde_json::json;
 use std::fmt::Write as _;
@@ -2254,5 +2255,42 @@ async fn budgets_fail_closed_when_spend_cannot_be_read() {
     let broken = gateway.with_usage(Arc::new(BrokenSpend));
     let error = run(&broken, request("alpha/m")).await.0.unwrap_err();
     assert!(error.to_string().contains("could not be read"), "{error}");
+    assert_eq!(hits(&servers[0]).await, 0);
+}
+
+/// A keychain that cannot be read.
+struct LockedKeys;
+
+impl KeySource for LockedKeys {
+    fn get(&self, _connection_id: &str) -> Result<Option<String>, SecretError> {
+        Err(SecretError("keychain locked".into()))
+    }
+    fn set(&self, _connection_id: &str, _key: &str) -> Result<(), SecretError> {
+        Ok(())
+    }
+    fn delete(&self, _connection_id: &str) -> Result<(), SecretError> {
+        Ok(())
+    }
+}
+
+/// A local keychain error is a config problem, not a provider failure: it
+/// never opens the provider's circuit breaker and sends nothing.
+#[tokio::test]
+async fn keychain_errors_do_not_open_the_circuit_breaker() {
+    let (servers, connections) = providers(&["alpha"]).await;
+    let (gateway, _) = db_gateway(connections, vec![], GatewaySettings::default());
+    let gateway = Gateway {
+        keys: Arc::new(LockedKeys),
+        ..gateway
+    };
+    for _ in 0..5 {
+        let error = run(&gateway, request("alpha/m")).await.0.unwrap_err();
+        assert!(matches!(error, LlmError::Config(_)), "{error}");
+        assert!(error.to_string().contains("keychain locked"), "{error}");
+    }
+    assert_eq!(
+        gateway.state().breakers.state("alpha"),
+        breaker::BreakerState::Closed
+    );
     assert_eq!(hits(&servers[0]).await, 0);
 }

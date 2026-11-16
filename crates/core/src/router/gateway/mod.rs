@@ -555,6 +555,9 @@ enum Outcome {
     },
     /// The account has no key; try the next one without penalty.
     NoKey(String),
+    /// The local keychain could not be read: a config problem on this
+    /// machine, not a provider failure, so the breaker is left alone.
+    KeyUnavailable(LlmError),
     /// Connection failure or a stream that broke before any content.
     Transport(LlmError),
     /// Broke after content reached the caller: cannot fall back.
@@ -836,6 +839,10 @@ impl Gateway {
                             "no API key stored for {name}; add one in Settings → Providers"
                         )));
                     }
+                    Outcome::KeyUnavailable(error) => {
+                        tracing::warn!(target: "router", provider = %account.provider, kind = "keychain", error = %error, "API key could not be read");
+                        last_error = Some(error);
+                    }
                     Outcome::Http { status, error } => {
                         tracing::warn!(target: "router", provider = %target.label(), status, "attempt failed");
                         match status {
@@ -920,7 +927,9 @@ impl Gateway {
             Outcome::Http { status, .. } if *status >= 500 => {
                 breakers.failure(provider);
             }
-            Outcome::Http { status: 429, .. } | Outcome::NoKey(_) => breakers.release(provider),
+            Outcome::Http { status: 429, .. } | Outcome::NoKey(_) | Outcome::KeyUnavailable(_) => {
+                breakers.release(provider);
+            }
             // Any answer, even a request-scoped 4xx, shows the provider is up.
             Outcome::Done(_) | Outcome::Empty(_) | Outcome::Http { .. } => {
                 breakers.success(provider);
@@ -1428,7 +1437,12 @@ impl Gateway {
         let started = Instant::now();
         let key = match self.keys.get(&account.id) {
             Ok(key) => key.filter(|k| !k.is_empty()),
-            Err(error) => return Outcome::Transport(LlmError::Config(error.to_string())),
+            Err(error) => {
+                return Outcome::KeyUnavailable(LlmError::Config(format!(
+                    "could not read the API key for {}: {error}",
+                    account.name
+                )));
+            }
         };
         if account.needs_key && key.is_none() {
             return Outcome::NoKey(account.name.clone());
