@@ -12,11 +12,6 @@
       "reason": "seq and problem (free-text error) on event sink failures (Wave 2, task 4)."
     },
     {
-      "path": "crates/core/src/learning/skills.rs",
-      "max": 1,
-      "reason": "root: a skills folder path (Wave 2, task 5)."
-    },
-    {
       "path": "crates/core/src/router/breaker.rs",
       "max": 1,
       "reason": "trips on breaker_opened (Wave 2, task 3)."

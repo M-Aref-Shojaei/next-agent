@@ -83,6 +83,33 @@ impl Supervised {
     }
 }
 
+/// The health states as the log shows them.
+fn status_of(state: HealthState) -> &'static str {
+    match state {
+        HealthState::Starting => "starting",
+        HealthState::Connected => "connected",
+        HealthState::Reconnecting => "reconnecting",
+        HealthState::Failed => "failed",
+        HealthState::Stopped => "stopped",
+    }
+}
+
+/// Log a health change by its status only: the detail can echo a provider's text.
+fn log_health(channel_id: &str, state: HealthState) {
+    let status = status_of(state);
+    if matches!(state, HealthState::Reconnecting | HealthState::Failed) {
+        tracing::warn!(channel_id = %channel_id, status, "channel_health");
+    } else {
+        tracing::info!(channel_id = %channel_id, status, "channel_health");
+    }
+}
+
+/// Publish a health snapshot and log it.
+fn publish(tx: &watch::Sender<Health>, channel_id: &str, health: Health) {
+    log_health(channel_id, health.state);
+    let _ = tx.send(health);
+}
+
 /// Run `channel` until stopped, restarting it after transient errors.
 #[must_use]
 pub fn supervise(
@@ -92,6 +119,9 @@ pub fn supervise(
 ) -> Supervised {
     let (health_tx, health) = watch::channel(Health::new(HealthState::Starting, "starting", 0));
     let (shutdown, mut shutdown_rx) = watch::channel(false);
+    let channel_id = channel.config().id.clone();
+    let channel_kind = channel.config().kind.clone();
+    tracing::info!(channel_id = %channel_id, channel_kind = %channel_kind, "channel_started");
     let join = tokio::spawn(async move {
         let health_tx = Arc::new(health_tx);
         let mut delay = backoff.initial;
@@ -100,29 +130,42 @@ pub fn supervise(
             let started = tokio::time::Instant::now();
             let hook_tx = Arc::clone(&health_tx);
             let hook_restarts = restarts;
+            let hook_id = channel_id.clone();
             let connected = Box::new(move || {
                 hook_tx.send_if_modified(|h| {
                     if h.state == HealthState::Connected {
                         return false;
                     }
                     *h = Health::new(HealthState::Connected, "receiving messages", hook_restarts);
+                    log_health(&hook_id, h.state);
                     true
                 });
             });
             let outcome = tokio::select! {
                 result = channel.start(inbound.clone(), connected) => result,
                 _ = shutdown_rx.changed() => {
-                    let _ = health_tx.send(Health::new(HealthState::Stopped, "stopped", restarts));
+                    publish(&health_tx, &channel_id, Health::new(HealthState::Stopped, "stopped", restarts));
+                    tracing::info!(channel_id = %channel_id, channel_kind = %channel_kind, "channel_stopped");
                     return;
                 }
             };
             let wait = match outcome {
                 Ok(()) => {
-                    let _ = health_tx.send(Health::new(HealthState::Stopped, "stopped", restarts));
+                    publish(
+                        &health_tx,
+                        &channel_id,
+                        Health::new(HealthState::Stopped, "stopped", restarts),
+                    );
+                    tracing::info!(channel_id = %channel_id, channel_kind = %channel_kind, "channel_stopped");
                     return;
                 }
                 Err(ChannelError::Fatal(message)) => {
-                    let _ = health_tx.send(Health::new(HealthState::Failed, message, restarts));
+                    publish(
+                        &health_tx,
+                        &channel_id,
+                        Health::new(HealthState::Failed, message, restarts),
+                    );
+                    tracing::info!(channel_id = %channel_id, channel_kind = %channel_kind, "channel_stopped");
                     return;
                 }
                 Err(ChannelError::Transient {
@@ -136,11 +179,15 @@ pub fn supervise(
                         .map_or(delay, Duration::from_secs)
                         .min(backoff.max.max(delay));
                     restarts += 1;
-                    let _ = health_tx.send(Health::new(
-                        HealthState::Reconnecting,
-                        format!("{message}; retrying in {}s", wait.as_secs().max(1)),
-                        restarts,
-                    ));
+                    publish(
+                        &health_tx,
+                        &channel_id,
+                        Health::new(
+                            HealthState::Reconnecting,
+                            format!("{message}; retrying in {}s", wait.as_secs().max(1)),
+                            restarts,
+                        ),
+                    );
                     delay = (delay * 2).min(backoff.max);
                     wait
                 }
@@ -148,7 +195,8 @@ pub fn supervise(
             tokio::select! {
                 () = tokio::time::sleep(wait) => {}
                 _ = shutdown_rx.changed() => {
-                    let _ = health_tx.send(Health::new(HealthState::Stopped, "stopped", restarts));
+                    publish(&health_tx, &channel_id, Health::new(HealthState::Stopped, "stopped", restarts));
+                    tracing::info!(channel_id = %channel_id, channel_kind = %channel_kind, "channel_stopped");
                     return;
                 }
             }

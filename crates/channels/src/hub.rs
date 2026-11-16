@@ -351,6 +351,7 @@ impl Hub {
         }
 
         self.log(channel_id, "in", "message", &peer, &message.text, None);
+        tracing::info!(channel_id = %channel_id, bytes = message.text.len(), count = 1, "message_in");
         let mut origin = format!("{} · {}", config.name, channel.pairing_label(&message));
         if message.kind() == ChatKind::Group {
             let _ = write!(origin, " in group {}", message.chat_id);
@@ -397,6 +398,15 @@ impl Hub {
                     DmAccess::Deny(reason) => Err(reason),
                     DmAccess::NeedsPairing => {
                         let outcome = self.request_pairing(channel, message);
+                        let decision = match outcome {
+                            PairingOutcome::Issued(_) => Some("issued"),
+                            PairingOutcome::Pending(_) => None,
+                            PairingOutcome::Full => Some("full"),
+                            PairingOutcome::Unavailable => Some("unavailable"),
+                        };
+                        if let Some(decision) = decision {
+                            tracing::info!(channel_id = %channel_id, decision, "pairing_requested");
+                        }
                         // Answer only when a code is issued: repeats and a
                         // full queue stay silent, so a flood of unpaired
                         // senders cannot spend the bot's rate limit.
@@ -479,12 +489,9 @@ impl Hub {
         let channel_id = &channel.config().id;
         // A read error must not look like an empty list: saving over it
         // would drop every other sender's pending code.
-        let mut pending = match self.state.pairings(channel_id) {
-            Ok(pending) => pending,
-            Err(error) => {
-                tracing::warn!(%channel_id, kind = "pairing_read", %error, "pending pairings could not be read");
-                return PairingOutcome::Unavailable;
-            }
+        let Ok(mut pending) = self.state.pairings(channel_id) else {
+            tracing::warn!(%channel_id, kind = "pairing_read", "pending pairings could not be read");
+            return PairingOutcome::Unavailable;
         };
         let template = PairingRequest {
             channel_id: channel_id.clone(),
@@ -501,9 +508,9 @@ impl Hub {
             (self.clock)(),
             &mut pairing::random_code,
         );
-        if let Err(error) = self.state.set_pairings(channel_id, &pending) {
+        if self.state.set_pairings(channel_id, &pending).is_err() {
             // An unsaved code could never be approved: do not hand it out.
-            tracing::warn!(%channel_id, kind = "pairing_write", %error, "pending pairings could not be saved");
+            tracing::warn!(%channel_id, kind = "pairing_write", "pending pairings could not be saved");
             return PairingOutcome::Unavailable;
         }
         outcome
@@ -564,6 +571,8 @@ impl Hub {
         } else {
             "pairing denied"
         };
+        let decision = if approve { "approved" } else { "denied" };
+        tracing::info!(%channel_id, decision, "pairing_resolved");
         self.log(
             channel_id,
             "system",
@@ -635,6 +644,7 @@ impl Hub {
             &delivery.text,
             None,
         );
+        tracing::info!(channel_id = %delivery.channel_id, bytes = delivery.text.len(), count = sent, "message_out");
         Ok(sent)
     }
 
@@ -693,7 +703,10 @@ impl Hub {
             self.log(&channel_id, "system", "error", &peer, &outcome.answer, None);
         }
         match preview.finish(&text).await {
-            Ok(_) => self.log(&channel_id, "out", "message", &peer, &text, task_id.clone()),
+            Ok(_) => {
+                tracing::info!(channel_id = %channel_id, bytes = text.len(), count = 1, "message_out");
+                self.log(&channel_id, "out", "message", &peer, &text, task_id.clone());
+            }
             Err(error) => self.log(
                 &channel_id,
                 "out",

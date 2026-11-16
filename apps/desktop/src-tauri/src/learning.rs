@@ -299,7 +299,7 @@ impl AppService {
             ..SessionRow::default()
         };
         SessionRecorder::open(self.db_path(), &row)
-            .inspect_err(|error| tracing::warn!(%error, "session store unavailable"))
+            .inspect_err(|_| tracing::warn!("session store unavailable"))
             .ok()
     }
 
@@ -449,8 +449,8 @@ impl AppService {
         match SessionRecorder::open(self.db_path(), &session) {
             Ok(recorder) => executor = executor.with_transcript(Box::new(recorder)),
             // The review still runs; only its transcript is not kept.
-            Err(error) => {
-                tracing::warn!(task_id = %id, kind = "transcript_recorder", %error, "review transcript will not be recorded");
+            Err(_) => {
+                tracing::warn!(task_id = %id, kind = "transcript_recorder", "review transcript will not be recorded");
             }
         }
         let tools = LearningTools::new(Box::new(local_tools()), learning);
@@ -612,7 +612,10 @@ impl AppService {
         skills::validate_name(name)?;
         self.store()?
             .skill_set_pinned(root, name, pinned, sessions::now())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        let kind = if pinned { "pin" } else { "unpin" };
+        tracing::info!(kind, "skill_changed");
+        Ok(())
     }
 
     /// Move a skill to `.archive/` (never deletes).
@@ -629,7 +632,9 @@ impl AppService {
                 "archived",
                 sessions::now(),
             )
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        tracing::info!(kind = "archive", "skill_changed");
+        Ok(())
     }
 
     pub fn skill_restore(&self, workspace_id: &str, root: &str, name: &str) -> Result<(), String> {
@@ -637,7 +642,9 @@ impl AppService {
         skills::restore(&path, name)?;
         self.store()?
             .skill_set_state(root, name, "active", sessions::now())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        tracing::info!(kind = "restore", "skill_changed");
+        Ok(())
     }
 
     /// Run the curator over every workspace's skills and the vault's.
@@ -697,6 +704,7 @@ impl AppService {
             }
         }
         let _ = self.store()?.set_setting(CURATOR_KEY, &now.to_string());
+        tracing::info!(count = report.checked, "curator_run");
         Ok(report)
     }
 
@@ -716,8 +724,8 @@ impl AppService {
                 }
             }
             Some(last) if now - last >= skills::CURATOR_INTERVAL_HOURS * 3_600 => {
-                if let Err(error) = self.curator_run() {
-                    tracing::warn!(%error, "skills curator failed");
+                if self.curator_run().is_err() {
+                    tracing::warn!("skills curator failed");
                 }
             }
             Some(_) => {}
@@ -769,7 +777,8 @@ impl AppService {
         let now = sessions::now();
         // The mode is checked again here, not only when the job was saved:
         // a row edited behind the app's back must not run with more power.
-        let outcome = if matches!(job.mode.as_str(), "plan" | "manual" | "auto") {
+        let allowed = matches!(job.mode.as_str(), "plan" | "manual" | "auto");
+        let outcome = if allowed {
             let request = TaskRequest {
                 workspace_id: job.workspace_id.clone(),
                 prompt: job.prompt.clone(),
@@ -786,6 +795,16 @@ impl AppService {
         } else {
             Err(format!("cron jobs never run in `{}` mode", job.mode))
         };
+        if outcome.is_ok() {
+            tracing::info!(cron_id = %job.id, "cron_fired");
+        } else {
+            let reason = if allowed {
+                "task_not_started"
+            } else {
+                "mode_not_allowed"
+            };
+            tracing::warn!(cron_id = %job.id, reason, "cron_failed");
+        }
         let (status, error, task) = match &outcome {
             Ok(task_id) => ("started", None, Some(task_id.as_str())),
             Err(error) => ("error", Some(error.as_str()), None),
@@ -866,8 +885,8 @@ pub fn start_scheduler(app: AppHandle, service: Arc<AppService>) {
             service.maybe_curate();
             loop {
                 for result in service.cron_tick(&|job| cron_sink(&app, job)) {
-                    if let Err(error) = result {
-                        tracing::warn!(%error, "cron run did not start");
+                    if result.is_err() {
+                        tracing::warn!(kind = "cron_tick", "cron run did not start");
                     }
                 }
                 std::thread::sleep(TICK);

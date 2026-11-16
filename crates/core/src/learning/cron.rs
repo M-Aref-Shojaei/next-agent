@@ -738,6 +738,7 @@ pub fn tick(store: &Store, now: i64) -> Result<Vec<DueRun>, String> {
             continue;
         }
         let Ok(tz) = zone(job.timezone.as_deref()) else {
+            tracing::warn!(cron_id = %job.id, reason = "unknown_time_zone", "cron_failed");
             claim(store, &job.id, slot, None, "error", false);
             record_run(
                 store,
@@ -752,6 +753,7 @@ pub fn tick(store: &Store, now: i64) -> Result<Vec<DueRun>, String> {
         let schedule = match parse_schedule(&job.schedule, job.created_at, &tz) {
             Ok(schedule) => schedule,
             Err(error) => {
+                tracing::warn!(cron_id = %job.id, reason = "bad_schedule", "cron_failed");
                 claim(store, &job.id, slot, None, "error", false);
                 record_run(store, &job.id, now, "error", Some(&error), None);
                 continue;
@@ -796,6 +798,7 @@ pub fn tick(store: &Store, now: i64) -> Result<Vec<DueRun>, String> {
                 lateness,
             });
         } else {
+            tracing::info!(cron_id = %job.id, reason = "missed_window", "cron_skipped");
             let note = format!("missed by {lateness}s (catch-up window {window}s)");
             record_run(store, &job.id, now, "missed", Some(&note), None);
         }
@@ -809,8 +812,8 @@ pub fn tick(store: &Store, now: i64) -> Result<Vec<DueRun>, String> {
 fn claim(store: &Store, id: &str, slot: i64, next: Option<i64>, state: &str, runs: bool) -> bool {
     store
         .cron_claim(id, slot, next, state, runs)
-        .unwrap_or_else(|error| {
-            tracing::warn!(cron_id = %id, kind = "cron_claim", %error, "cron slot could not be claimed; skipping it");
+        .unwrap_or_else(|_| {
+            tracing::warn!(cron_id = %id, kind = "cron_claim", "cron slot could not be claimed; skipping it");
             false
         })
 }
@@ -825,8 +828,8 @@ pub fn record_run(
     error: Option<&str>,
     task: Option<&str>,
 ) {
-    if let Err(write) = store.cron_record_run(id, at, status, error, task) {
-        tracing::warn!(cron_id = %id, kind = "cron_record_run", status, error = %write, "cron run could not be recorded");
+    if store.cron_record_run(id, at, status, error, task).is_err() {
+        tracing::warn!(cron_id = %id, kind = "cron_record_run", status, "cron run could not be recorded");
     }
 }
 

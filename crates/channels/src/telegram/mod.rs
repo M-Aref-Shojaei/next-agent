@@ -50,8 +50,8 @@ impl TelegramChannel {
         poll: Duration,
     ) -> Result<Self, ChannelError> {
         Ok(Self {
+            api: TelegramApi::new(base_url, token, poll)?.for_channel(&config.id),
             config,
-            api: TelegramApi::new(base_url, token, poll)?,
             me: Mutex::new(None),
         })
     }
