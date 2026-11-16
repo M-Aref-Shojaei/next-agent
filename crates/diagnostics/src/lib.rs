@@ -190,9 +190,18 @@ impl Inner {
 
     /// Stamp, write and remember one entry.
     pub(crate) fn emit(&self, mut entry: LogEntry) {
+        /// Clears `BUSY` on every exit, unwinding included, so a panic
+        /// inside the log does not silence this thread for good.
+        struct Busy;
+        impl Drop for Busy {
+            fn drop(&mut self) {
+                BUSY.with(|b| b.set(false));
+            }
+        }
         if BUSY.with(|b| b.replace(true)) {
             return;
         }
+        let _busy = Busy;
         let (ts, date) = time::stamp(SystemTime::now());
         entry.ts = ts;
         if let Ok(line) = serde_json::to_string(&entry) {
@@ -206,8 +215,6 @@ impl Inner {
             ring.pop_front();
         }
         ring.push_back(entry);
-        drop(ring);
-        BUSY.with(|b| b.set(false));
     }
 
     fn flush(&self) {
@@ -269,6 +276,21 @@ pub fn init(config: Config) -> Result<Handle, InitError> {
     Ok(handle)
 }
 
+/// A panic's source file: our own repo-relative sources (`crates/core/src/
+/// store.rs`) are kept as they are; anything else (a dependency under the
+/// home folder) is redacted.
+fn panic_file(file: &str) -> String {
+    let ours = (file.starts_with("crates/") || file.starts_with("apps/"))
+        && file
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/_.-".contains(&b));
+    if ours {
+        file.to_string()
+    } else {
+        redact(file)
+    }
+}
+
 fn log_panic(inner: &Inner, info: &std::panic::PanicHookInfo<'_>) {
     let payload = info
         .payload()
@@ -285,7 +307,7 @@ fn log_panic(inner: &Inner, info: &std::panic::PanicHookInfo<'_>) {
             .and_then(|rest| rest.split('/').next())
             .unwrap_or("external");
         fields.insert("crate".into(), krate.into());
-        fields.insert("file".into(), redact(file).into());
+        fields.insert("file".into(), panic_file(file).into());
         fields.insert("line".into(), location.line().into());
     }
     inner.emit(LogEntry {
@@ -436,6 +458,7 @@ fn resanitize(entry: LogEntry) -> LogEntry {
         // The panic hook's own fields (crate, file, line) are not tracing fields.
         if panic && matches!(name.as_str(), "crate" | "file" | "line") {
             let value = match value {
+                Value::String(s) if name == "file" => Value::String(panic_file(&s)),
                 Value::String(s) => Value::String(redact(&s)),
                 other => other,
             };

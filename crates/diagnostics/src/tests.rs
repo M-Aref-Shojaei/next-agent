@@ -407,6 +407,7 @@ fn panics_are_logged_redacted_and_flushed() {
     assert_eq!(entry["event"], "panic");
     assert_eq!(entry["level"], "error");
     assert_eq!(entry["fields"]["crate"], "diagnostics");
+    assert_eq!(entry["fields"]["file"], "crates/diagnostics/src/tests.rs");
     assert!(entry["fields"]["line"].as_u64().unwrap() > 0);
     assert!(entry["message"]
         .as_str()

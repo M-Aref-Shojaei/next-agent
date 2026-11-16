@@ -76,6 +76,11 @@ static HOMES: LazyLock<Regex> =
 static PATH: LazyLock<Regex> =
     LazyLock::new(|| re(r#"(^|[\s"'(=,\[])((?:~|[A-Za-z]:)?[/\\][^\s"'<>(),\[\]]*)"#));
 
+/// A relative path (`pages/My plan.md`, `a/b/c`): a word, then at least one
+/// separator. Same groups as [`PATH`].
+static RELATIVE_PATH: LazyLock<Regex> =
+    LazyLock::new(|| re(r#"(^|[\s"'(=,\[])([\w.…-]+(?:[/\\][^\s"'<>(),\[\]/\\]+)+[/\\]?)"#));
+
 static HEX: LazyLock<Regex> = LazyLock::new(|| re(r"\b[0-9a-fA-F]{32,}\b"));
 static BASE64: LazyLock<Regex> = LazyLock::new(|| re(r"[A-Za-z0-9+/_=-]{40,}"));
 
@@ -117,7 +122,12 @@ pub fn redact(text: &str) -> String {
     out = HOMES.replace_all(&out, "~").into_owned();
     out = PATH
         .replace_all(&out, |c: &Captures| {
-            format!("{}{}", &c[1], shorten_path(&c[2]))
+            format!("{}{}", &c[1], shorten_path(&c[2], false))
+        })
+        .into_owned();
+    out = RELATIVE_PATH
+        .replace_all(&out, |c: &Captures| {
+            format!("{}{}", &c[1], shorten_path(&c[2], true))
         })
         .into_owned();
     out = HEX.replace_all(&out, SECRET).into_owned();
@@ -137,34 +147,55 @@ pub fn redact(text: &str) -> String {
     truncate(&out)
 }
 
-/// `~/code/app/src/main.rs` → `~/…/*.rs (depth 4)`. A path of one segment
-/// (`/tmp`, `~/x`) is kept.
-fn shorten_path(path: &str) -> String {
-    let (root, rest) = if let Some(rest) = path.strip_prefix('~') {
-        ("~", rest)
+/// `~/code/app/src/main.rs` → `~/…/*.rs (depth 4)`; relative
+/// `pages/plan.md` → `…/*.md (depth 2)`. Kept: a one-segment absolute path
+/// (`/tmp`), a two-segment relative one without a file extension
+/// (`openai/gpt-4o`, `text/html`), and an already shortened path.
+fn shorten_path(path: &str, relative: bool) -> String {
+    let (root, rest) = if relative {
+        ("…", path)
+    } else if let Some(rest) = path.strip_prefix('~') {
+        ("~/…", rest)
     } else if path.as_bytes().get(1) == Some(&b':') {
         (&path[..2], &path[2..])
     } else {
-        ("", path)
+        ("/…", path)
     };
     let segments: Vec<&str> = rest.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
-    // Already shortened (`~/…/*.rs`): redaction must be idempotent.
-    if segments.len() < 2 || segments.contains(&"…") {
+    // Exactly the shape this function writes (`~/…/*.rs`, `~/…`): redaction
+    // must be idempotent. Any other path with a `…` segment is shortened.
+    let shortened = segments.first() == Some(&"…")
+        && (segments.len() == 1 || (segments.len() == 2 && segments[1].starts_with("*.")));
+    let ext = segments.last().and_then(|last| extension(last));
+    let keep = if relative {
+        segments.len() < 3 && ext.is_none()
+    } else {
+        segments.len() < 2
+    };
+    if keep || shortened {
         return path.to_string();
     }
+    let root = if root.ends_with(':') {
+        format!("{root}/…")
+    } else {
+        root.to_string()
+    };
     let depth = segments.len();
-    let last = segments[depth - 1];
-    match last.rsplit_once('.') {
-        Some((stem, ext))
-            if !stem.is_empty()
-                && !ext.is_empty()
-                && ext.len() <= 8
-                && ext.bytes().all(|b| b.is_ascii_alphanumeric()) =>
-        {
-            format!("{root}/…/*.{ext} (depth {depth})")
-        }
-        _ => format!("{root}/… (depth {depth})"),
+    match ext {
+        Some(ext) => format!("{root}/*.{ext} (depth {depth})"),
+        None => format!("{root} (depth {depth})"),
     }
+}
+
+/// A file extension: up to 8 ASCII letters and digits, at least one letter,
+/// after a non-empty stem (`5` in `claude-3.5` is not one).
+fn extension(segment: &str) -> Option<&str> {
+    let (stem, ext) = segment.rsplit_once('.')?;
+    let ok = !stem.is_empty()
+        && (1..=8).contains(&ext.len())
+        && ext.bytes().all(|b| b.is_ascii_alphanumeric())
+        && ext.bytes().any(|b| b.is_ascii_alphabetic());
+    ok.then_some(ext)
 }
 
 fn truncate(text: &str) -> String {
@@ -260,6 +291,26 @@ mod tests {
             "~/… (depth 2) plan.docx"
         );
         assert_eq!(redact("in /tmp"), "in /tmp");
+    }
+
+    #[test]
+    fn relative_paths_shrink_but_model_names_and_mime_types_stay() {
+        assert_eq!(
+            redact("read pages/My-diary.md failed"),
+            "read …/*.md (depth 2) failed"
+        );
+        assert_eq!(redact("in notes/2026/secret"), "in … (depth 3)");
+        for kept in ["openai/gpt-4o", "anthropic/claude-3.5", "text/html", "5/10"] {
+            assert_eq!(redact(kept), kept);
+        }
+    }
+
+    #[test]
+    fn a_planted_ellipsis_segment_does_not_skip_shortening() {
+        let out = redact("/Users/x/…/secret-folder/plan.md");
+        assert_eq!(out, "~/…/*.md (depth 3)");
+        let out = redact("…/secret-folder/plan.md");
+        assert!(!out.contains("secret-folder"), "{out}");
     }
 
     #[test]
