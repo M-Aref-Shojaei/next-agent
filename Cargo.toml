@@ -8,6 +8,7 @@ members = [
   "crates/design",
   "crates/macos-panel",
   "crates/channels",
+  "crates/diagnostics",
   "apps/desktop/src-tauri",
   # Coucou's Tauri app and its hook relay, vendored whole (ADR-0011).
   "apps/desktop/coucou/src-tauri",
