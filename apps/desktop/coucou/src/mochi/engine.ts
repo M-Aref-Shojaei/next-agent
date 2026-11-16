@@ -193,6 +193,8 @@ export class BotEngine {
   isMini = false;
   /** Solid body colour for mini bots / integration pills (null = Mochi gradient). */
   bodyColor: RGB | null = null;
+  // Next Agent: lets a caller (the pills' mini bots) draw its own body in place of the orb, with the same size and motion.
+  bodyDrawer: ((x: CanvasRenderingContext2D, r: number, color: RGB, alpha: number) => void) | null = null;
   /**
    * A new Coucou waits (whats-new/whats-new.ts): while Mochi is idle or asleep
    * he wears the up-arrow badge. The island turns his body blue alongside.
@@ -806,7 +808,9 @@ export class BotEngine {
     if (this.tilt !== 0) x.rotate(this.tilt);
     x.scale(this.sx, this.sy);
     const tinted = this.bodyColor ?? mix3(C.idle, this.col, Math.min(1, this.tint * 1.2));
-    drawOrb(x, R * 0.98, tinted, 0.25 + this.tint * 0.5, 1 - this.morph * 0.6);
+    // Next Agent: a caller's own body (the logo mark on pills) replaces the orb.
+    if (this.bodyDrawer) this.bodyDrawer(x, R * 0.98, tinted, 1 - this.morph * 0.6);
+    else drawOrb(x, R * 0.98, tinted, 0.25 + this.tint * 0.5, 1 - this.morph * 0.6);
     x.restore();
 
     if (this.badge && this.badgeS > 0.01 && this.morph < 0.25) {
