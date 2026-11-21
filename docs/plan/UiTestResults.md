@@ -12,7 +12,7 @@ Results of the Playwright UI test pipeline. Each run produces a row in the table
 
 | Run | Date | Commit | Change | Diff summary | Status | Reviewer |
 |-----|------|--------|--------|--------------|--------|----------|
-| — | — | — | — | — | pending | — |
+| local-2026-11-21 | 2026-11-21 | uncommitted | Honest structured diff review + LLM summaries + Playwright CI fixes | Read-only structured hunks; gateway JSON summaries with fallback; Node 22.6, Vite 1420, deterministic smoke tests | approved | User |
 
 ## How to review
 

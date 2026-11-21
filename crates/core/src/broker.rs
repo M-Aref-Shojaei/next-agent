@@ -582,7 +582,9 @@ fn with_resolved_path(request: &ToolRequest, resolved: Option<&Path>) -> ToolReq
         | ToolRequest::ListDir { path }
         | ToolRequest::Write { path, .. }
         | ToolRequest::ApplyPatch { path, .. }
-        | ToolRequest::Edit { path, .. } => *path = resolved.to_path_buf(),
+        | ToolRequest::Edit { path, .. }
+        | ToolRequest::Search { path, .. } => *path = resolved.to_path_buf(),
+        ToolRequest::Exec { cwd, .. } => *cwd = resolved.to_path_buf(),
         _ => {}
     }
     out
@@ -923,6 +925,35 @@ mod tests {
         );
         assert_eq!(outcome.decision, "ask");
         assert!(!outcome.result.ok);
+    }
+
+    #[test]
+    fn evaluated_search_and_exec_paths_are_rewritten_before_execution() {
+        let root = std::env::temp_dir().join(format!("na-broker-path-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("root");
+        let store = Store::open_in_memory().expect("store");
+        let context = context_for(root.clone(), "ws_path".into(), None);
+        let mut broker =
+            SqliteBroker::new(&store, Mode::BypassPermissions, context).with_executor(StubExecutor);
+        let resolved = root.canonicalize().expect("canonical root");
+        assert_eq!(
+            with_resolved_path(
+                &ToolRequest::Search {
+                    pattern: "x".into(),
+                    path: root.join(".")
+                },
+                Some(&resolved)
+            ),
+            ToolRequest::Search {
+                pattern: "x".into(),
+                path: resolved.clone()
+            }
+        );
+        assert_eq!(
+            with_resolved_path(&exec("pwd", &root.join(".")), Some(&resolved)),
+            exec("pwd", &resolved)
+        );
+        let _ = &mut broker;
     }
 
     #[test]

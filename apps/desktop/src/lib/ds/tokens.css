@@ -91,6 +91,29 @@
   /* Layout */
   --content-max-width: 880px;
   --settings-nav-width: 200px;
+
+  /* Coding Agent Design System v0.2 semantic aliases. Feature code uses
+     these names; existing component tokens remain the compatibility layer. */
+  --color-bg-canvas: var(--color-bg);
+  --color-bg-surface: var(--color-surface);
+  --color-bg-elevated: var(--color-surface-raised);
+  --color-bg-hover: var(--color-surface-hover);
+  --color-border-default: var(--color-border);
+  --color-text-primary: var(--color-text);
+  --color-text-secondary-v02: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-tertiary);
+  --color-accent-primary: var(--color-accent);
+  --color-status-success: var(--color-ok);
+  --color-status-warning: var(--color-warn);
+  --color-status-error: var(--color-danger);
+  --color-status-info: var(--color-info);
+  --color-focus-ring: var(--color-focus);
+  --shell-titlebar-height: 44px;
+  --shell-activity-rail-width: 56px;
+  --shell-left-sidebar-width: 248px;
+  --shell-inspector-width: 320px;
+  --shell-bottom-panel-height: 220px;
+  --shell-statusbar-height: 28px;
 }
 
 @media (prefers-reduced-motion: reduce) {

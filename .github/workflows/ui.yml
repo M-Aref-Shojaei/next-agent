@@ -28,10 +28,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Node.js 20
+      - name: Install Node.js 22.6
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.6
           cache: pnpm
 
       - name: Enable corepack (pnpm)
@@ -40,13 +40,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Playwright browsers
-        working-directory: apps/desktop
-        run: npx playwright install chromium
-
       - name: Build frontend for tests
         working-directory: apps/desktop
         run: pnpm build
+
+      - name: Install Playwright browsers
+        working-directory: apps/desktop
+        run: npx playwright install chromium
 
       - name: Run Playwright tests
         working-directory: apps/desktop

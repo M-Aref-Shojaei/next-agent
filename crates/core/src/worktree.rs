@@ -143,6 +143,8 @@ pub enum WorktreeError {
     MergeConflict { files: Vec<String> },
     /// No worktree exists for this task.
     NotFound(TaskId),
+    /// Caller-supplied worktree metadata does not match repository state.
+    InvalidIdentity { task_id: TaskId, reason: String },
     /// Any other failing git invocation.
     Git { command: String, stderr: String },
 }
@@ -159,6 +161,7 @@ impl WorktreeError {
             Self::DirtyMainTree { .. } => "dirty_main_tree",
             Self::MergeConflict { .. } => "merge_conflict",
             Self::NotFound(_) => "not_found",
+            Self::InvalidIdentity { .. } => "invalid_identity",
             Self::Git { .. } => "git",
         }
     }
@@ -188,6 +191,9 @@ impl fmt::Display for WorktreeError {
             }
             Self::MergeConflict { files } => write!(f, "merge conflict in: {}", files.join(", ")),
             Self::NotFound(id) => write!(f, "no worktree for task {id}"),
+            Self::InvalidIdentity { task_id, reason } => {
+                write!(f, "invalid worktree identity for task {task_id}: {reason}")
+            }
             Self::Git { command, stderr } => write!(f, "git {command} failed: {}", stderr.trim()),
         }
     }
@@ -450,7 +456,50 @@ impl GitCli {
         }))
     }
 
+    fn validate_identity(wt: &TaskWorktree) -> Result<()> {
+        let repo = wt
+            .repo_root
+            .canonicalize()
+            .map_err(|_| WorktreeError::InvalidIdentity {
+                task_id: wt.task_id.clone(),
+                reason: "repository root is unavailable".into(),
+            })?;
+        if repo != wt.repo_root
+            || wt.branch != branch_name(&wt.task_id)
+            || wt.root != repo.join(WORKTREE_DIR).join(wt.task_id.as_str())
+            || !wt.root.is_dir()
+        {
+            return Err(WorktreeError::InvalidIdentity {
+                task_id: wt.task_id.clone(),
+                reason: "repo, root, task, or branch metadata does not match expected worktree"
+                    .into(),
+            });
+        }
+        let actual_branch = git(&wt.root, &["branch", "--show-current"])?;
+        if actual_branch.trim() != wt.branch {
+            return Err(WorktreeError::InvalidIdentity {
+                task_id: wt.task_id.clone(),
+                reason: "worktree is not checked out on recorded branch".into(),
+            });
+        }
+        let recorded_base = Self::base_of(&repo, &wt.branch)?;
+        if recorded_base != wt.base_commit
+            || !run_git(
+                &repo,
+                &["cat-file", "-e", &format!("{}^{{commit}}", wt.base_commit)],
+            )?
+            .ok
+        {
+            return Err(WorktreeError::InvalidIdentity {
+                task_id: wt.task_id.clone(),
+                reason: "base commit metadata is stale or invalid".into(),
+            });
+        }
+        Ok(())
+    }
+
     fn cleanup(wt: &TaskWorktree) -> Result<()> {
+        Self::validate_identity(wt)?;
         let repo = &wt.repo_root;
         if wt.root.exists() {
             let path = wt.root.to_string_lossy().into_owned();
@@ -585,6 +634,7 @@ impl WorktreeProvider for GitCli {
     }
 
     fn checkpoint(&self, wt: &TaskWorktree, message: &str) -> Result<Option<String>> {
+        Self::validate_identity(wt)?;
         git(&wt.root, &["add", "-A"])?;
         if run_git(&wt.root, &["diff", "--cached", "--quiet"])?.ok {
             return Ok(None);
@@ -610,6 +660,7 @@ impl WorktreeProvider for GitCli {
     }
 
     fn diff(&self, wt: &TaskWorktree) -> Result<StructuredDiff> {
+        Self::validate_identity(wt)?;
         let range = format!("{}...{}", wt.base_commit, wt.branch);
         let raw = git(
             &wt.repo_root,
@@ -628,6 +679,9 @@ impl WorktreeProvider for GitCli {
     }
 
     fn merge(&self, wt: &TaskWorktree, options: &MergeOptions) -> Result<MergeOutcome> {
+        if let Err(error) = Self::validate_identity(wt) {
+            return Err(error);
+        }
         let result = Self::merge_branch(wt, options);
         match &result {
             Ok(outcome) => tracing::info!(
@@ -647,11 +701,16 @@ impl WorktreeProvider for GitCli {
     }
 
     fn discard(&self, wt: &TaskWorktree) -> Result<()> {
+        if !wt.root.exists() && !Self::branch_exists(&wt.repo_root, &wt.branch)? {
+            return Ok(());
+        }
+        Self::validate_identity(wt)?;
         Self::cleanup(wt)?;
         tracing::info!(target: "worktree", task_id = %wt.task_id, "worktree_discarded");
         Ok(())
     }
     fn keep(&self, wt: &TaskWorktree) -> Result<()> {
+        Self::validate_identity(wt)?;
         self.checkpoint(wt, &format!("next-agent: checkpoint {}", wt.task_id))?;
         Ok(())
     }
@@ -684,13 +743,17 @@ impl WorktreeProvider for GitCli {
                 continue;
             };
             let base_commit = Self::base_of(&repo, &branch)?;
-            out.push(TaskWorktree {
+            let candidate = TaskWorktree {
                 task_id,
                 repo_root: repo.clone(),
                 root: path,
                 branch,
                 base_commit,
-            });
+            };
+            if Self::validate_identity(&candidate).is_err() {
+                continue;
+            }
+            out.push(candidate);
         }
         Ok(out)
     }
@@ -1220,6 +1283,31 @@ mod tests {
         assert_eq!(again, wt);
         assert_eq!(GitCli.list(t.path()).unwrap(), vec![wt.clone()]);
         assert_eq!(GitCli.find(t.path(), &id).unwrap(), Some(wt));
+    }
+
+    #[test]
+    fn identity_validation_rejects_tampered_branch_metadata() {
+        let t = init_repo();
+        let id = tid("identity");
+        let wt = GitCli.ensure_task_worktree(t.path(), &id).unwrap();
+        let mut tampered = wt.clone();
+        tampered.branch = "next-agent/auto-other".into();
+        let err = GitCli.checkpoint(&tampered, "must reject").unwrap_err();
+        assert!(matches!(err, WorktreeError::InvalidIdentity { .. }));
+        assert!(wt.root.exists());
+        GitCli.discard(&wt).unwrap();
+    }
+
+    #[test]
+    fn identity_validation_rejects_stale_base_metadata() {
+        let t = init_repo();
+        let id = tid("stale-base");
+        let wt = GitCli.ensure_task_worktree(t.path(), &id).unwrap();
+        let mut tampered = wt.clone();
+        tampered.base_commit = "deadbeef".into();
+        let err = GitCli.diff(&tampered).unwrap_err();
+        assert!(matches!(err, WorktreeError::InvalidIdentity { .. }));
+        GitCli.discard(&wt).unwrap();
     }
 
     #[test]

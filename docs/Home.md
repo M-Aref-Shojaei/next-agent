@@ -12,6 +12,8 @@ A local-first AI workstation: coding agents working on a local repo, a Markdown 
 - [[M1 Vertical Slice]] — step-by-step task breakdown for the first milestone
 - [[M1 Progress]] — live task ledger (what is done, tested, and deviated)
 - [[Overlay Fixes]]: notch hover hides the right-side pills; logo mark on the pills (agent-ready tasks)
+- [[Coding Agent Design System v0.2]] — authoritative UX specification
+- [[Design System v0.2 Implementation]] — Phase 0 audit, Phase 1 plan, and review gates
 - [[Design Spec v0.2 Plan]]: adopt the owner's design spec v0.2 ([[Design Spec v0.2]]): tokens, fonts, app shell with 7 modes, Code and Source Control, install; 5 waves, 16 agents
 - [[Logging System Plan]]: one local diagnostics log for the whole app, with no user content (prompts, notes, files, messages, keys); 3 waves, 8 agents
 - [[Built-in Upstreams Plan]]: waves for building 9Router, opencode, Hermes, OpenClaw, Coucou, Logseq and the Excalidraw design board into the app

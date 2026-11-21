@@ -307,8 +307,25 @@ impl LocalTools {
         command: &str,
         cwd: &Path,
     ) -> ToolResult {
+        // Resolve and revalidate immediately before spawning: a path can be swapped after
+        // request construction, so never pass an untrusted spelling to current_dir.
+        let resolved_cwd = match cwd.canonicalize() {
+            Ok(path) if path.is_dir() => path,
+            Ok(path) => {
+                return ToolResult::error(
+                    call_id,
+                    format!("exec cwd is not a directory: {}", path.display()),
+                )
+            }
+            Err(error) => {
+                return ToolResult::error(
+                    call_id,
+                    format!("could not resolve exec cwd {}: {error}", cwd.display()),
+                )
+            }
+        };
         let mut child = match shell(command)
-            .current_dir(cwd)
+            .current_dir(&resolved_cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -833,6 +850,22 @@ mod tests {
         );
         assert!(!failed.ok);
         assert_eq!(failed.exit_code, Some(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_rejects_unresolvable_cwd() {
+        let dir = temp_dir("cwd");
+        let missing = dir.join("missing");
+        let result = LocalTools::new().execute(
+            "c",
+            &ToolRequest::Exec {
+                command: "pwd".into(),
+                cwd: missing,
+            },
+        );
+        assert!(!result.ok);
+        assert!(result.output.contains("could not resolve exec cwd"));
     }
 
     #[cfg(unix)]

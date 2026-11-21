@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sideBySide, diffStats } from "../src/lib/diff.ts";
+import { sideBySide, diffStats, type DiffFile } from "../src/lib/diff.ts";
 
 test("sideBySide pairs context lines correctly", () => {
   const hunk = {
@@ -24,12 +24,13 @@ test("sideBySide pairs context lines correctly", () => {
   assert.equal(rows[0].left.text, "line a");
   assert.equal(rows[0].right.text, "line a");
 
-  // Second row: removed vs added
-  assert.ok(!rows[1].right || !rows[1].left); // depends on implementation
+  // Second row: removed line paired with its replacement.
+  assert.equal(rows[1].left?.text, "old line b");
+  assert.equal(rows[1].right?.text, "new line B");
 });
 
 test("diffStats counts additions and removals", () => {
-  const files = [
+  const files: DiffFile[] = [
     {
       path: "a.txt",
       status: "modified" as const,

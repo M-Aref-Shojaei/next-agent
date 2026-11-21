@@ -21,7 +21,7 @@ function walk(dir) {
     if (entry === "node_modules" || entry === "target" || entry.startsWith(".")) continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) walk(full);
-    else if (patterns.some((p) => p.test(entry))) {
+    else if (!full.startsWith(join("apps", "desktop", "tests", "ui")) && patterns.some((p) => p.test(entry))) {
       const folder = dirname(full);
       if (SUITES[folder]) suites.set(folder, [...(suites.get(folder) ?? []), full]);
       else files.push(full);

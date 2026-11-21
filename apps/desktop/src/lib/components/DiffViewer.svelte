@@ -3,7 +3,7 @@
   import { Badge, Banner, Button } from "$lib/ds/index.ts";
   import MergeEditor from "./MergeEditor.svelte";
   import type { DiffFileStatus } from "$lib/diff.ts";
-  import { diffStats, sideBySide, type DiffViewerProps } from "$lib/diff.ts";
+  import { diffStats, type DiffViewerProps } from "$lib/diff.ts";
   let { files, branch, onAction, outcome }: DiffViewerProps = $props();
   const stats = $derived(diffStats(files));
   let busy = $state(false);
@@ -18,13 +18,6 @@
     }
   }
 
-  function handleAccept(hunks: number[]) {
-    console.log("Accepted hunks:", hunks);
-  }
-
-  function handleReject(hunks: number[]) {
-    console.log("Rejected hunks:", hunks);
-  }
 </script>
 
 <section class="diff" aria-label="Diff reviewer">
@@ -50,13 +43,7 @@
         {#if file.binary}
           <p class="muted">Binary file.</p>
         {:else}
-          <!-- Simplified merge editor: click lines to accept/reject, then Accept/Reject all -->
-          <MergeEditor
-            oldText={file.hunks.map(h => h.lines.filter(l => l.kind !== "add").map(l => l.text).join("\n")).join("\n---\n")}
-            newText={file.hunks.map(h => h.lines.filter(l => l.kind !== "remove").map(l => l.text).join("\n")).join("\n---\n")}
-            onAccept={handleAccept}
-            onReject={handleReject}
-          />
+          <MergeEditor hunks={file.hunks} />
         {/if}
       </details>
     {/each}
