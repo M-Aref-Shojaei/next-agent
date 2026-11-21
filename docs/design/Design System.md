@@ -11,6 +11,7 @@ The one design system for every Next Agent screen. Decision and trade-offs: [[AD
 - **Code:** `apps/desktop/src/lib/ds/`: `tokens.css` holds the tokens; the components are exported from `index.ts`.
 - **Living style guide:** Settings → Design system (`/settings/design-system`). It shows every token and every component state, with a Light/Dark preview switch.
 - **Guard:** `scripts/check-design-tokens.mjs` runs in `make check`.
+- **Next version:** the owner's [[Design Spec v0.2]] is being adopted under [[Design Spec v0.2 Plan]]. Tooling choices: [[ADR-0014 Design Spec v0.2 Without Storybook, Radix or Tailwind]].
 
 ## The rule
 
