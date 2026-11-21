@@ -1,6 +1,7 @@
 <script lang="ts">
   // Side-by-side reviewer for an auto-mode task's worktree branch.
   import { Badge, Banner, Button } from "$lib/ds/index.ts";
+  import MergeEditor from "./MergeEditor.svelte";
   import type { DiffFileStatus } from "$lib/diff.ts";
   import { diffStats, sideBySide, type DiffViewerProps } from "$lib/diff.ts";
   let { files, branch, onAction, outcome }: DiffViewerProps = $props();
@@ -15,6 +16,14 @@
     } finally {
       busy = false;
     }
+  }
+
+  function handleAccept(hunks: number[]) {
+    console.log("Accepted hunks:", hunks);
+  }
+
+  function handleReject(hunks: number[]) {
+    console.log("Rejected hunks:", hunks);
   }
 </script>
 
@@ -41,20 +50,13 @@
         {#if file.binary}
           <p class="muted">Binary file.</p>
         {:else}
-          {#each file.hunks as hunk, h (h)}
-            <table class="hunk" aria-label="Changes at line {hunk.newStart}">
-              <tbody>
-                {#each sideBySide(hunk) as row, r (r)}
-                  <tr>
-                    <td class="num">{row.left?.line ?? ""}</td>
-                    <td class="code {row.left?.kind ?? 'blank'}">{row.left?.text ?? ""}</td>
-                    <td class="num">{row.right?.line ?? ""}</td>
-                    <td class="code {row.right?.kind ?? 'blank'}">{row.right?.text ?? ""}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          {/each}
+          <!-- Simplified merge editor: click lines to accept/reject, then Accept/Reject all -->
+          <MergeEditor
+            oldText={file.hunks.map(h => h.lines.filter(l => l.kind !== "add").map(l => l.text).join("\n")).join("\n---\n")}
+            newText={file.hunks.map(h => h.lines.filter(l => l.kind !== "remove").map(l => l.text).join("\n")).join("\n---\n")}
+            onAccept={handleAccept}
+            onReject={handleReject}
+          />
         {/if}
       </details>
     {/each}
@@ -68,10 +70,4 @@
   .row { display: flex; gap: var(--space-1-5); flex-wrap: wrap; }
   summary { cursor: pointer; font-family: var(--font-mono); word-break: break-all; }
   summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
-  .hunk { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: var(--space-1); font-family: var(--font-mono); }
-  .num { width: 2.5em; color: var(--color-text-tertiary); text-align: right; padding-right: var(--space-1); user-select: none; vertical-align: top; }
-  .code { white-space: pre-wrap; word-break: break-all; padding: 0 var(--space-1); vertical-align: top; }
-  .code.add { background: var(--color-ok-subtle); }
-  .code.remove { background: var(--color-danger-subtle); }
-  .code.blank { background: var(--color-surface-sunken); }
 </style>
