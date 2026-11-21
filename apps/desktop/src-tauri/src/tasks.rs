@@ -11,7 +11,8 @@ use crate::wire::{envelope, StreamMessage};
 use next_agent_core::builtin::RoleResolver;
 use next_agent_core::profiles::{load_profiles, AgentProfile};
 use next_agent_core::router::ReqwestFetcher;
-use next_agent_core::vault::{FileStat, TaskDoc, TaskMeta, VaultWriter};
+use next_agent_core::llm::{ChatMessage, ChatRequest, CompletionClient};
+use next_agent_core::vault::{FileStat, Summarizer, Summary, TaskDoc, TaskFacts, TaskMeta, VaultWriter};
 use next_agent_core::worktree::WorktreeError;
 use next_agent_core::{
     context_for, spawn_task_with, AgentEvent, AgentExecutor, AgentStep, Approval, BuiltinExecutor,
@@ -93,6 +94,50 @@ pub struct FinishedTask {
 }
 
 type Calls = Arc<Mutex<Vec<(String, ToolRequest)>>>;
+
+const MAX_TASK_SUMMARY_BYTES: usize = 8 * 1024;
+
+struct GatewayTaskSummarizer {
+    client: Arc<dyn CompletionClient>,
+}
+
+#[derive(serde::Deserialize)]
+struct SummaryJson {
+    summary: String,
+    #[serde(default)]
+    follow_ups: Vec<String>,
+}
+
+impl Summarizer for GatewayTaskSummarizer {
+    fn summarize(&self, doc: &TaskDoc, facts: &TaskFacts) -> Result<Summary, String> {
+        let request = ChatRequest {
+            model: String::new(),
+            messages: vec![
+                ChatMessage::system("Return only JSON: {\"summary\": string, \"follow_ups\": string[]}. Keep summary 2-5 sentences and follow_ups short. No markdown."),
+                ChatMessage::user(format!(
+                    "Summarize completed task. task={:?}; status={:?}; mode={}; files={:?}; commands={:?}; tool_calls={}; allowed={}; denied={}; asked={}; note={:?}",
+                    doc.meta.prompt, facts.status, doc.meta.mode, facts.files, facts.commands,
+                    facts.tool_calls, facts.allowed, facts.denied, facts.asked, facts.agent_note
+                )),
+            ],
+            tools: Vec::new(),
+        };
+        let completion = self.client.complete(&request, &mut |_| {}).map_err(|e| e.to_string())?;
+        if completion.content.len() > MAX_TASK_SUMMARY_BYTES {
+            return Err("task summary response too large".into());
+        }
+        let parsed: SummaryJson = serde_json::from_str(completion.content.trim())
+            .map_err(|e| format!("invalid task summary JSON: {e}"))?;
+        let summary = parsed.summary.trim().to_string();
+        if summary.is_empty() || parsed.follow_ups.iter().any(|item| item.trim().is_empty()) {
+            return Err("task summary JSON contains empty fields".into());
+        }
+        Ok(Summary {
+            summary,
+            follow_ups: parsed.follow_ups,
+        })
+    }
+}
 
 /// Builds a scripted task's steps once its sandbox root (the task worktree)
 /// is known.
@@ -813,8 +858,15 @@ impl AppService {
             diff_stats: task.diff_stats.clone(),
         };
         let store = self.open_store()?;
+        let summarizer = self
+            .gateway("summary")
+            .or_else(|_| self.chat_gateway())
+            .ok()
+            .map(|gateway| GatewayTaskSummarizer {
+                client: Arc::new(gateway.with_session(task.meta.id.to_string())),
+            });
         let outcome = VaultWriter::new(vault)
-            .document_task(&store, &doc, None)
+            .document_task(&store, &doc, summarizer.as_ref().map(|s| s as &dyn Summarizer))
             .map_err(|e| e.to_string())?;
         Ok(Some(outcome.record_path.display().to_string()))
     }

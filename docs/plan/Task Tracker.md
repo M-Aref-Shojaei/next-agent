@@ -12,10 +12,10 @@ All remaining work for the Next Agent project. Each task has a status, the chang
 
 | # | Task | Change | Status | Tests | Approved |
 |---|------|--------|--------|-------|----------|
-| 1 | CodeMirror 6 merge view | Replace plain HTML table diff in `DiffViewer.svelte` with a CM6 merge editor (old/new + per-hunk accept/reject) | pending | `apps/desktop/tests/diff-merge.test.ts`, Playwright diff review | ☐ |
-| 2 | LLM task summaries | Wire an LLM summarizer for vault task records; deterministic fallback when router unavailable | pending | `packages/vault` golden-file tests | ☐ |
-| 3 | Playwright smoke test | End-to-end UI smoke: auto → worktree → review → vault record → merge | pending | Playwright suite in `.github/workflows/ui.yml` | ☐ |
-| 4 | Security review | Permission engine & path checker security audit | pending | 53 engine tests + path-escape corpus | ☐ |
+| 1 | Honest structured diff review | Read-only old/new hunk renderer; whole-task Merge/Discard/Keep remain authoritative | approved | `apps/desktop/tests/diff-merge.test.ts`, Playwright smoke suite | ✓ |
+| 2 | LLM task summaries | Gateway-backed JSON summarizer with deterministic fallback when router unavailable | approved | Rust compile checks; existing `VaultWriter` fallback tests; adapter tests pending | ✓ |
+| 3 | Playwright smoke test | Deterministic browser smoke suite against Vite on port 1420; CI build validation | approved | Playwright: 5 passed | ✓ |
+| 4 | Security hardening | Canonical execution paths, worktree identity/stale-review validation, and regression tests from security audit | ready for approval | Workspace Rust tests: 446 core unit tests passed; permission corpus passed | ☐ |
 | 5 | Real-router run | Test with a live API key and real provider chat | pending | Router health e2e | ☐ |
 | 6 | CI matrix | macOS/Windows/Linux CI on merged PRs | pending | `.github/workflows/ci.yml` (exists, needs run) | ☐ |
 

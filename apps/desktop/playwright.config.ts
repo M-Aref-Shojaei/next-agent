@@ -11,7 +11,7 @@ export default defineConfig({
     ["json", { outputFile: "test-results/results.json" }],
   ],
   use: {
-    baseURL: "http://localhost:4173",
+    baseURL: "http://localhost:1420",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -19,7 +19,7 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
   ],
   webServer: {
-    command: "pnpm tauri dev",
+    command: "pnpm dev -- --host 0.0.0.0",
     url: "http://localhost:1420",
     timeout: 60000,
     reuseExistingServer: !process.env.CI,
