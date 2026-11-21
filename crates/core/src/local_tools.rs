@@ -300,7 +300,22 @@ impl LocalTools {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    fn resolve_exec_cwd(call_id: &str, cwd: &Path) -> Result<std::path::PathBuf, ToolResult> {
+        // Resolve and revalidate immediately before spawning: a path can be swapped after
+        // request construction, so never pass an untrusted spelling to current_dir.
+        match cwd.canonicalize() {
+            Ok(path) if path.is_dir() => Ok(path),
+            Ok(path) => Err(ToolResult::error(
+                call_id,
+                format!("exec cwd is not a directory: {}", path.display()),
+            )),
+            Err(error) => Err(ToolResult::error(
+                call_id,
+                format!("could not resolve exec cwd {}: {error}", cwd.display()),
+            )),
+        }
+    }
+
     fn run_command(
         &self,
         ctx: &RunContext<'_>,
@@ -308,22 +323,9 @@ impl LocalTools {
         command: &str,
         cwd: &Path,
     ) -> ToolResult {
-        // Resolve and revalidate immediately before spawning: a path can be swapped after
-        // request construction, so never pass an untrusted spelling to current_dir.
-        let resolved_cwd = match cwd.canonicalize() {
-            Ok(path) if path.is_dir() => path,
-            Ok(path) => {
-                return ToolResult::error(
-                    call_id,
-                    format!("exec cwd is not a directory: {}", path.display()),
-                )
-            }
-            Err(error) => {
-                return ToolResult::error(
-                    call_id,
-                    format!("could not resolve exec cwd {}: {error}", cwd.display()),
-                )
-            }
+        let resolved_cwd = match Self::resolve_exec_cwd(call_id, cwd) {
+            Ok(path) => path,
+            Err(result) => return result,
         };
         let mut child = match shell(command)
             .current_dir(&resolved_cwd)
@@ -620,7 +622,6 @@ fn kill_tree(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
     use crate::events::Collector;
 
     fn temp_dir(tag: &str) -> PathBuf {

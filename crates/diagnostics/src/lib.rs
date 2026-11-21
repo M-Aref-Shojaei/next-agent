@@ -15,7 +15,7 @@ mod time;
 mod writer;
 
 use layer::is_event_name;
-pub use redact::redact;
+pub use redact::{redact, MAX_CHARS};
 pub use tracing::Level;
 
 use serde::{Deserialize, Serialize};

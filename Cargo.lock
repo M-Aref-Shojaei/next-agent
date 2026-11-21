@@ -3314,6 +3314,7 @@ dependencies = [
  "ignore",
  "jiff",
  "keyring",
+ "next-agent-diagnostics",
  "next-agent-graph",
  "next-agent-permission-engine",
  "next-agent-process-manager",

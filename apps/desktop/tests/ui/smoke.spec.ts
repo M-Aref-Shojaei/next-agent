@@ -8,6 +8,14 @@ test.describe("Next Agent smoke tests", () => {
     await expect(page.locator("main, [role='main']").first()).toBeVisible();
   });
 
+  test("activity rail exposes seven keyboard-accessible modes", async ({ page }) => {
+    await page.goto("/");
+    const rail = page.getByRole("navigation", { name: "Activity modes" });
+    await expect(rail).toBeVisible();
+    await expect(rail.getByRole("link")).toHaveCount(7);
+    await expect(rail.getByRole("link", { name: "Chat" })).toHaveAttribute("aria-current", "page");
+  });
+
   test("navigate to settings", async ({ page }) => {
     await page.goto("/settings");
     

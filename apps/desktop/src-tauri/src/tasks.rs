@@ -882,6 +882,103 @@ impl AppService {
 }
 
 /// `workdir` inside the sandbox root (must exist; no escaping it).
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod task_summarizer_tests {
+    use super::*;
+    use next_agent_core::llm::{Completion, LlmError};
+    use next_agent_core::task::TaskStatus;
+
+    struct TestClient(Result<Completion, LlmError>);
+
+    impl CompletionClient for TestClient {
+        fn complete(
+            &self,
+            _request: &ChatRequest,
+            _on_delta: &mut dyn FnMut(&str),
+        ) -> Result<Completion, LlmError> {
+            self.0.clone()
+        }
+    }
+
+    fn doc() -> TaskDoc {
+        TaskDoc {
+            meta: TaskMeta {
+                id: TaskId::from_seed("summary-test"),
+                title: None,
+                prompt: "Test task".into(),
+                workspace: "workspace".into(),
+                workspace_root: None,
+                mode: "build".into(),
+                branch: String::new(),
+                base: String::new(),
+                merged: false,
+                model: "test".into(),
+                started: String::new(),
+                finished: String::new(),
+            },
+            events: Vec::new(),
+            calls: Vec::new(),
+            diff_stats: Vec::new(),
+        }
+    }
+
+    fn facts() -> TaskFacts {
+        TaskFacts {
+            status: TaskStatus::Completed,
+            files: Vec::new(),
+            commands: Vec::new(),
+            decisions: Vec::new(),
+            tool_calls: 0,
+            allowed: 0,
+            denied: 0,
+            asked: 0,
+            agent_note: None,
+        }
+    }
+
+    fn summarize(content: impl Into<String>) -> Result<Summary, String> {
+        GatewayTaskSummarizer {
+            client: Arc::new(TestClient(Ok(Completion {
+                content: content.into(),
+                ..Completion::default()
+            }))),
+        }
+        .summarize(&doc(), &facts())
+    }
+
+    #[test]
+    fn accepts_valid_json_and_defaults_follow_ups() {
+        let result = summarize(r#" { "summary": "Finished task." } "#).expect("valid summary");
+        assert_eq!(result.summary, "Finished task.");
+        assert_eq!(result.follow_ups, Vec::<String>::new());
+    }
+
+    #[test]
+    fn rejects_malformed_empty_and_empty_follow_up() {
+        assert!(summarize("not json").is_err());
+        assert!(summarize(r#"{"summary":"   "}"#).is_err());
+        assert!(summarize(r#"{"summary":"Done","follow_ups":[" "]}"#).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_response() {
+        assert_eq!(
+            summarize("x".repeat(MAX_TASK_SUMMARY_BYTES + 1)).unwrap_err(),
+            "task summary response too large"
+        );
+    }
+
+    #[test]
+    fn propagates_client_failure() {
+        let result = GatewayTaskSummarizer {
+            client: Arc::new(TestClient(Err(LlmError::Unavailable("offline".into())))),
+        }
+        .summarize(&doc(), &facts());
+        assert_eq!(result.unwrap_err(), "router unreachable: offline");
+    }
+}
+
 fn start_dir(root: &Path, workdir: Option<&str>) -> Result<PathBuf, String> {
     let Some(dir) = workdir.filter(|d| !d.trim().is_empty()) else {
         return Ok(root.to_path_buf());

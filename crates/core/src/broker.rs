@@ -237,18 +237,25 @@ impl<'a> SqliteBroker<'a> {
         Ok(())
     }
 
-    fn audit(&self, request: &ToolRequest, decision: &'static str, reason: &str) {
-        let target = describe(request);
-        let entry =
-            AuditEntry::new(self.mode.label(), request.kind(), &target, decision).reason(reason);
-        let entry = match &self.task_id {
+    fn audit(
+        &self,
+        request: &ToolRequest,
+        decision: &'static str,
+        reason: &str,
+    ) -> Result<(), StoreError> {
+        // Audit rows are persisted independently of diagnostics, so apply the
+        // same bounded redaction before secrets can reach SQLite.
+        let target = next_agent_diagnostics::redact(&describe(request));
+        let reason = next_agent_diagnostics::redact(reason);
+        let action = next_agent_diagnostics::redact(request.kind());
+        let mode = next_agent_diagnostics::redact(self.mode.label());
+        let entry = AuditEntry::new(&mode, &action, &target, decision).reason(&reason);
+        let task = self.task_id.as_deref().map(next_agent_diagnostics::redact);
+        let entry = match task.as_deref() {
             Some(task) => entry.task(task),
             None => entry,
         };
-        // A failed audit write must not silently upgrade a denial into a run,
-        // but it also must not block an allowed action. Callers see the miss
-        // through `last_audit_hash` in the UI's verification view.
-        let _ = self.store.append_audit(&entry);
+        self.store.append_audit(&entry).map(|_| ())
     }
 }
 
@@ -342,7 +349,7 @@ impl SqliteBroker<'_> {
             }
             Decision::Deny { reason } => {
                 decided("deny", &reason);
-                self.audit(request, "deny", &reason);
+                let _ = self.audit(request, "deny", &reason);
                 return BrokerOutcome {
                     decision: "deny",
                     reason: reason.clone(),
@@ -364,7 +371,11 @@ impl SqliteBroker<'_> {
                     .map_or("user", |approver| approver.answered_by());
                 match choice {
                     Some(Approval::Allow) => {
-                        self.audit(request, "allow", &format!("approved once by {by}"));
+                        if let Err(error) =
+                            self.audit(request, "allow", &format!("approved once by {by}"))
+                        {
+                            return audit_failure(call_id, &error);
+                        }
                         reason
                     }
                     Some(Approval::AlwaysForWorkspace) => {
@@ -372,7 +383,7 @@ impl SqliteBroker<'_> {
                         reason
                     }
                     Some(Approval::Deny) => {
-                        self.audit(request, "deny", &format!("{by} declined the approval"));
+                        let _ = self.audit(request, "deny", &format!("{by} declined the approval"));
                         return BrokerOutcome {
                             decision: "deny",
                             reason: "user declined the approval".into(),
@@ -381,7 +392,7 @@ impl SqliteBroker<'_> {
                     }
                     // Fail closed: no approval channel means no side effect.
                     None => {
-                        self.audit(request, "ask", &reason);
+                        let _ = self.audit(request, "ask", &reason);
                         return BrokerOutcome {
                             decision: "ask",
                             reason: reason.clone(),
@@ -399,7 +410,7 @@ impl SqliteBroker<'_> {
         // but before the tool ran: it never ran, so it is no allow.
         if ctx.is_some_and(RunContext::is_cancelled) {
             let reason = "cancelled before the tool started";
-            self.audit(request, "deny", reason);
+            let _ = self.audit(request, "deny", reason);
             return BrokerOutcome {
                 decision: "deny",
                 reason: reason.into(),
@@ -408,7 +419,9 @@ impl SqliteBroker<'_> {
         }
 
         if noteworthy(self.mode, &evaluation) {
-            self.audit(request, "allow", &reason);
+            if let Err(error) = self.audit(request, "allow", &reason) {
+                return audit_failure(call_id, &error);
+            }
         }
 
         let result = if let Some(ctx) = ctx {
@@ -503,7 +516,7 @@ impl SqliteBroker<'_> {
         } else {
             "approved once by user (no narrow workspace rule possible)"
         };
-        self.audit(request, "allow", note);
+        let _ = self.audit(request, "allow", note);
     }
 
     /// Record the user's answer in the task timeline, not only the audit
@@ -563,6 +576,18 @@ impl SqliteBroker<'_> {
 
 /// Audit-worthy outcomes: everything in bypass, anything outside the sandbox,
 /// and any command that needed a person.
+fn audit_failure(call_id: &str, error: &StoreError) -> BrokerOutcome {
+    tracing::error!(target: "broker", error = %error, "required_audit_failed");
+    BrokerOutcome {
+        decision: "deny",
+        reason: "required audit persistence failed".into(),
+        result: ToolResult::error(
+            call_id,
+            "operation blocked: required audit persistence failed",
+        ),
+    }
+}
+
 fn noteworthy(mode: Mode, evaluation: &next_agent_permission_engine::Evaluation) -> bool {
     mode.sandbox_unlocked()
         || evaluation.zone.is_some_and(|zone| zone != Zone::Inside)
@@ -1153,5 +1178,37 @@ mod tests {
     #[test]
     fn self_check_passes() {
         assert!(self_check());
+    }
+
+    #[test]
+    fn required_audit_failure_blocks_noteworthy_side_effect() {
+        let store = Store::open_in_memory().expect("store");
+        store.fail_audit_writes_for_test();
+        let mut broker = broker(&store, Mode::BypassPermissions);
+        let outcome = broker.handle(
+            "c1",
+            &ToolRequest::Exec {
+                command: "touch secret.txt".into(),
+                cwd: "/work/project".into(),
+            },
+        );
+        assert_eq!(outcome.decision, "deny");
+        assert!(!outcome.result.ok);
+    }
+
+    #[test]
+    fn audit_fields_redact_secrets_and_bound_length() {
+        let store = Store::open_in_memory().expect("store");
+        let mut broker = broker(&store, Mode::BypassPermissions);
+        let request = ToolRequest::Network {
+            url: "https://user:pw@example.com/path?token=sk-ant-abcdefghijklmnop".into(),
+        };
+        let outcome = broker.handle("c1", &request);
+        assert!(outcome.result.ok);
+        let row = store.audit_row_for_test().expect("audit row");
+        assert!(!row.0.contains("user:pw"));
+        assert!(!row.0.contains("sk-ant-"));
+        assert!(row.0.chars().count() <= next_agent_diagnostics::MAX_CHARS);
+        assert!(row.1.chars().count() <= next_agent_diagnostics::MAX_CHARS);
     }
 }
