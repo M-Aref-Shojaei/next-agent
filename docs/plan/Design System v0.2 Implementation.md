@@ -26,8 +26,8 @@ Source specification: [[Coding Agent Design System v0.2]]. Existing app stack re
 | Add v0.2 semantic token aliases | in progress | Dark/light themes expose canvas, surface, elevated, hover, status, focus names |
 | Add shell geometry tokens | in progress | Shell dimensions come from semantic tokens |
 | Implement persistent activity rail | pending | Keyboard-accessible Chat/Code/Agents/Knowledge/Design/Source Control/Monitor navigation |
-| Implement command palette | pending | Cmd/Ctrl+K; risky commands show side-effect preview |
-| Add responsive inspector/bottom panel primitives | ready for approval | Reusable right/bottom panel with responsive collapse below 1440px and 900px |
+| Implement command palette | ready for approval | Cmd/Ctrl+K opens navigation palette; no side-effect commands exposed |
+| Add responsive inspector/bottom panel primitives | pending | Collapsible below 1440px; no unusable editor widths |
 | Add token/component preview matrix | pending | Light/dark, density, and viewport states visible in style guide |
 
 ## Review gates

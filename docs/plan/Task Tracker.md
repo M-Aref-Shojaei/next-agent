@@ -18,7 +18,7 @@ All remaining work for the Next Agent project. Each task has a status, the chang
 | 4 | Security hardening | Canonical execution paths, worktree identity/stale-review validation, and regression tests from security audit | ready for approval | Workspace Rust tests: 446 core unit tests passed; permission corpus passed | ☐ |
 | 5 | Real-router run | Test with a live API key and real provider chat | pending | Router health e2e | ☐ |
 | 6 | CI matrix | macOS/Windows/Linux CI on merged PRs | pending | `.github/workflows/ci.yml` (exists, needs run) | ☐ |
-| 11 | Responsive panel primitives | Reusable inspector/bottom panel with responsive layout | ready for approval | `pnpm check`; `pnpm build`; design-token check | ☐ |
+| 9 | Command palette | Cmd/Ctrl+K opens route palette; navigation-only actions expose no unsupported side effects | in progress | Focused UI test; `pnpm check`; `pnpm build` | ☐ |
 
 ## Definition of done (M1)
 
