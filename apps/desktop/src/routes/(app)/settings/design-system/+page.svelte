@@ -49,10 +49,20 @@
 
   // Theme preview: forces data-theme on <html> while this page is open.
   let theme = $state<"system" | "light" | "dark">("system");
+  let density = $state<"comfortable" | "compact">("comfortable");
+  let viewport = $state<"wide" | "narrow">("wide");
   $effect(() => {
     const root = document.documentElement;
     if (theme !== "system") root.dataset.theme = theme;
     return () => delete root.dataset.theme;
+  });
+  $effect(() => {
+    document.documentElement.dataset.density = density;
+    document.documentElement.dataset.viewport = viewport;
+    return () => {
+      delete document.documentElement.dataset.density;
+      delete document.documentElement.dataset.viewport;
+    };
   });
 
   // Component demo state
@@ -120,7 +130,19 @@
       bind:value={theme}
       options={[{ value: "system", label: "System" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]}
     />
+    <SegmentedControl label="Density" size="sm" bind:value={density} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} />
+    <SegmentedControl label="Viewport" size="sm" bind:value={viewport} options={[{ value: "wide", label: "Wide" }, { value: "narrow", label: "Narrow" }]} />
   {/snippet}
+
+  <SettingsSection id="preview" title="Preview matrix" description="Check component states across theme, density, and viewport settings.">
+    {#snippet footer()}
+      <div class="preview-matrix" aria-label="Design system preview matrix">
+        <div class="preview-card"><span class="status-dot"></span><strong>Ready</strong><small>Interactive state</small></div>
+        <div class="preview-card"><span class="status-dot warn"></span><strong>Needs review</strong><small>Warning state</small></div>
+        <div class="preview-card"><span class="status-dot danger"></span><strong>Blocked</strong><small>Error state</small></div>
+      </div>
+    {/snippet}
+  </SettingsSection>
 
   <!-- ───────────── Tokens ───────────── -->
   <SettingsSection id="colour" title="Colour" description="Semantic colour tokens: --color-<name>. Old names (--bg, --panel, --muted, --accent …) alias these.">
@@ -539,6 +561,15 @@
   .small { margin: 0; font-size: var(--font-size-sm); }
   code { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
 
+  :global([data-density="compact"]) .preview-card { padding: var(--space-2); }
+  :global([data-density="comfortable"]) .preview-card { padding: var(--space-4); }
+  :global([data-viewport="narrow"]) .preview-matrix { grid-template-columns: 1fr; }
+  .preview-matrix { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+  .preview-card { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-2); align-items: center; border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-elevated); }
+  .preview-card small { grid-column: 2; color: var(--color-text-secondary); }
+  .status-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--color-status-success); }
+  .status-dot.warn { background: var(--color-status-warning); }
+  .status-dot.danger { background: var(--color-status-error); }
   .colour-groups { display: grid; gap: var(--space-4); }
   .colour-group h3 { font-size: var(--font-size-sm); margin-bottom: var(--space-2); color: var(--color-text); }
   .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: var(--space-2); }
