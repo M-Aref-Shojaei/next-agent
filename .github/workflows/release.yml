@@ -42,10 +42,10 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Node.js 24
+      - name: Set up Node.js 20 LTS
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
           cache: pnpm
 
       - name: Enable corepack (pnpm)
@@ -103,19 +103,17 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             build-essential \
-            curl \
             libssl-dev \
-            libegl1-mesa \
-            libgtk-3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libayatana-appindicator3-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Node.js 24
+      - name: Set up Node.js 20 LTS
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
           cache: pnpm
 
       - name: Enable corepack (pnpm)
@@ -156,10 +154,10 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Node.js 24
+      - name: Set up Node.js 20 LTS
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
           cache: pnpm
 
       - name: Enable corepack (pnpm)
