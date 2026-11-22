@@ -54,6 +54,7 @@ jobs:
             build-essential \
             libssl-dev \
             libasound2-dev \
+            libgtk-layer-shell-dev \
             librsvg2-dev \
             libayatana-appindicator3-dev
 
@@ -146,6 +147,7 @@ jobs:
             build-essential \
             libssl-dev \
             libasound2-dev \
+            libgtk-layer-shell-dev \
             librsvg2-dev \
             libayatana-appindicator3-dev
 
