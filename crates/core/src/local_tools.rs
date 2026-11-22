@@ -620,6 +620,7 @@ fn kill_tree(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::events::Collector;
 
     fn temp_dir(tag: &str) -> PathBuf {
