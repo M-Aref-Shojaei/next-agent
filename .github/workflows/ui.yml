@@ -37,19 +37,19 @@ jobs:
         uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: corepack pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build frontend for tests
         working-directory: apps/desktop
-        run: corepack pnpm build
+        run: pnpm build
 
       - name: Install Playwright browsers
         working-directory: apps/desktop
-        run: corepack pnpm exec playwright install chromium
+        run: pnpm exec playwright install chromium
 
       - name: Run Playwright tests
         working-directory: apps/desktop
-        run: corepack pnpm exec playwright test --project=chromium
+        run: pnpm exec playwright test --project=chromium
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
