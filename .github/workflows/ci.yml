@@ -77,8 +77,10 @@ jobs:
         with:
           node-version: 24
 
-      - name: Enable corepack (pnpm)
-        run: corepack enable
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
       - name: Get pnpm store path
         if: hashFiles('pnpm-lock.yaml') != ''
@@ -169,8 +171,10 @@ jobs:
         with:
           node-version: 24
 
-      - name: Enable corepack (pnpm)
-        run: corepack enable
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
       - name: Install JS dependencies
         if: hashFiles('pnpm-lock.yaml') != ''
