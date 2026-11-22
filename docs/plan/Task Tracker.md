@@ -17,7 +17,7 @@ All remaining work for the Next Agent project. Each task has a status, the chang
 | 3 | Playwright smoke test | Deterministic browser smoke suite against Vite on port 1420; CI build validation | approved | Playwright: 5 passed | ✓ |
 | 4 | Security hardening | Canonical execution paths, worktree identity/stale-review validation, and regression tests from security audit | ready for approval | Workspace Rust tests: 446 core unit tests passed; permission corpus passed | ☐ |
 | 5 | Real-router run | Test with a live API key and real provider chat | pending | Router health e2e | ☐ |
-| 6 | CI matrix | macOS/Windows/Linux CI on merged PRs | pending | `.github/workflows/ci.yml` (exists, needs run) | ☐ |
+| 6 | CI matrix | macOS/Windows/Linux CI on merged PRs | ready for approval | PR #6: formatting, Linux ALSA dependency, Windows Tauri CLI; CI rerun pending | ☐ |
 
 ## Definition of done (M1)
 
