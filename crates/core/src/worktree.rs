@@ -335,11 +335,19 @@ fn nul_list(s: &str) -> Vec<String> {
         .collect()
 }
 
+fn canonical_path(path: &Path) -> std::io::Result<PathBuf> {
+    let path = path.canonicalize()?;
+    #[cfg(windows)]
+    if let Some(path) = path.to_str().and_then(|path| path.strip_prefix(r"\\?\")) {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(path)
+}
+
 impl GitCli {
     /// Validate `repo_root` is the toplevel of a repo with at least one commit.
     fn open_repo(repo_root: &Path) -> Result<PathBuf> {
-        let canonical = repo_root
-            .canonicalize()
+        let canonical = canonical_path(repo_root)
             .map_err(|_| WorktreeError::NotAGitRepo(repo_root.to_path_buf()))?;
         let out = run_git(&canonical, &["rev-parse", "--show-toplevel"])?;
         if !out.ok {
@@ -457,13 +465,10 @@ impl GitCli {
     }
 
     fn validate_identity(wt: &TaskWorktree) -> Result<()> {
-        let repo = wt
-            .repo_root
-            .canonicalize()
-            .map_err(|_| WorktreeError::InvalidIdentity {
-                task_id: wt.task_id.clone(),
-                reason: "repository root is unavailable".into(),
-            })?;
+        let repo = canonical_path(&wt.repo_root).map_err(|_| WorktreeError::InvalidIdentity {
+            task_id: wt.task_id.clone(),
+            reason: "repository root is unavailable".into(),
+        })?;
         if repo != wt.repo_root
             || wt.branch != branch_name(&wt.task_id)
             || wt.root != repo.join(WORKTREE_DIR).join(wt.task_id.as_str())
@@ -801,8 +806,7 @@ impl ShadowRepo {
     /// # Errors
     /// [`WorktreeError::NotAGitRepo`] if `work_tree` does not exist, or git failures.
     pub fn open(data_dir: &Path, work_tree: &Path, scope: &str) -> Result<Self> {
-        let work_tree = work_tree
-            .canonicalize()
+        let work_tree = canonical_path(work_tree)
             .map_err(|_| WorktreeError::NotAGitRepo(work_tree.to_path_buf()))?;
         let git_dir = Self::location(data_dir, &work_tree, scope);
         let repo = Self { git_dir, work_tree };
