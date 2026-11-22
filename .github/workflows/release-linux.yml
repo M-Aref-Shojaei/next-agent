@@ -3,7 +3,7 @@ name: Release Linux
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: ["release/**"]
   push:
     tags: ["v*"]
 
