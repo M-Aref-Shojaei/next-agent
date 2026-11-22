@@ -32,25 +32,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.6
-          cache: pnpm
 
       - name: Enable corepack (pnpm)
         run: corepack enable && corepack prepare pnpm@10 --activate
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: corepack pnpm install --frozen-lockfile
 
       - name: Build frontend for tests
         working-directory: apps/desktop
-        run: pnpm build
+        run: corepack pnpm build
 
       - name: Install Playwright browsers
         working-directory: apps/desktop
-        run: npx playwright install chromium
+        run: corepack pnpm exec playwright install chromium
 
       - name: Run Playwright tests
         working-directory: apps/desktop
-        run: npx playwright test --project=chromium
+        run: corepack pnpm exec playwright test --project=chromium
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
