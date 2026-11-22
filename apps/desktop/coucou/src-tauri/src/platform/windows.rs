@@ -698,6 +698,7 @@ pub fn pick_folder(app: &AppHandle, start: Option<&str>, title: &str) -> Option<
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod claude_launch_tests {
     use super::open_claude_with;
     use std::cell::RefCell;
