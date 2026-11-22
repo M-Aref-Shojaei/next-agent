@@ -222,17 +222,17 @@ mod tests {
             b.failure("p");
         }
         assert_eq!(b.cooldown(1), Duration::from_millis(30));
-        std::thread::sleep(Duration::from_millis(40));
+        std::thread::sleep(Duration::from_millis(50));
         assert_eq!(b.permit("p"), Permit::Probe);
         assert_eq!(
             b.failure("p"),
             BreakerState::Open,
             "half-open failure re-trips"
         );
-        // Second trip: 60 ms, so still open after 40 ms.
-        std::thread::sleep(Duration::from_millis(40));
+        // Second trip: 60 ms; verify before cooldown expiry, then after it.
+        std::thread::sleep(Duration::from_millis(10));
         assert_eq!(b.state("p"), BreakerState::Open);
-        std::thread::sleep(Duration::from_millis(30));
+        std::thread::sleep(Duration::from_millis(70));
         assert_eq!(b.state("p"), BreakerState::HalfOpen);
         assert_eq!(b.cooldown(2), Duration::from_millis(60));
         assert_eq!(b.cooldown(9), Duration::from_millis(90), "capped");

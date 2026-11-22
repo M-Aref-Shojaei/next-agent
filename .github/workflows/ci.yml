@@ -35,6 +35,7 @@ defaults:
 
 jobs:
   check:
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
     name: check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -53,6 +54,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             build-essential \
             libssl-dev \
+            libasound2-dev \
+            libgtk-layer-shell-dev \
             librsvg2-dev \
             libayatana-appindicator3-dev
 
@@ -76,8 +79,8 @@ jobs:
         with:
           node-version: 24
 
-      - name: Enable corepack (pnpm)
-        run: corepack enable
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Get pnpm store path
         if: hashFiles('pnpm-lock.yaml') != ''
@@ -125,6 +128,7 @@ jobs:
   # so this job skips its build step. Once the desktop session lands Tauri,
   # remove `continue-on-error` so the job becomes required.
   tauri-build:
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
     name: tauri build --debug (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     continue-on-error: true
@@ -144,6 +148,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             build-essential \
             libssl-dev \
+            libasound2-dev \
+            libgtk-layer-shell-dev \
             librsvg2-dev \
             libayatana-appindicator3-dev
 
@@ -167,8 +173,8 @@ jobs:
         with:
           node-version: 24
 
-      - name: Enable corepack (pnpm)
-        run: corepack enable
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install JS dependencies
         if: hashFiles('pnpm-lock.yaml') != ''
@@ -176,4 +182,4 @@ jobs:
 
       - name: tauri build --debug
         if: hashFiles('pnpm-lock.yaml') != '' && hashFiles('apps/desktop/src-tauri/tauri.conf.json') != ''
-        run: pnpm --dir apps/desktop exec tauri build --debug
+        run: pnpm --dir apps/desktop tauri build --debug

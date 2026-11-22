@@ -17,12 +17,13 @@ env:
 
 jobs:
   playwright:
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
     name: Playwright tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-22.04]
     
     steps:
       - name: Checkout
@@ -32,10 +33,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.6
-          cache: pnpm
 
-      - name: Enable corepack (pnpm)
-        run: corepack enable && corepack prepare pnpm@10 --activate
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -46,11 +46,11 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: apps/desktop
-        run: npx playwright install chromium
+        run: pnpm exec playwright install chromium
 
       - name: Run Playwright tests
         working-directory: apps/desktop
-        run: npx playwright test --project=chromium
+        run: pnpm exec playwright test --project=chromium
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

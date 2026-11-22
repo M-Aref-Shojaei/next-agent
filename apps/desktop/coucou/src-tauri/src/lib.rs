@@ -1189,7 +1189,7 @@ fn create_island_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> 
         .closable(false)
         .additional_browser_args(BROWSER_ARGS);
     #[cfg(target_os = "linux")]
-    let builder = builder.focusable(false).visible_on_all_workspaces(true).visible(false).drag_and_drop(true);
+    let builder = builder.visible_on_all_workspaces(true).visible(false);
     #[cfg(not(target_os = "linux"))]
     let builder = builder.visible(cfg!(windows)).disable_drag_drop_handler();
     builder.build()
