@@ -9,10 +9,12 @@ use crate::review::{diff_dto, ReviewOutcome};
 use crate::service::{mode_name, parse_mode, AppService, Sink, TaskRequest};
 use crate::wire::{envelope, StreamMessage};
 use next_agent_core::builtin::RoleResolver;
+use next_agent_core::llm::{ChatMessage, ChatRequest, CompletionClient};
 use next_agent_core::profiles::{load_profiles, AgentProfile};
 use next_agent_core::router::ReqwestFetcher;
-use next_agent_core::llm::{ChatMessage, ChatRequest, CompletionClient};
-use next_agent_core::vault::{FileStat, Summarizer, Summary, TaskDoc, TaskFacts, TaskMeta, VaultWriter};
+use next_agent_core::vault::{
+    FileStat, Summarizer, Summary, TaskDoc, TaskFacts, TaskMeta, VaultWriter,
+};
 use next_agent_core::worktree::WorktreeError;
 use next_agent_core::{
     context_for, spawn_task_with, AgentEvent, AgentExecutor, AgentStep, Approval, BuiltinExecutor,
@@ -122,7 +124,10 @@ impl Summarizer for GatewayTaskSummarizer {
             ],
             tools: Vec::new(),
         };
-        let completion = self.client.complete(&request, &mut |_| {}).map_err(|e| e.to_string())?;
+        let completion = self
+            .client
+            .complete(&request, &mut |_| {})
+            .map_err(|e| e.to_string())?;
         if completion.content.len() > MAX_TASK_SUMMARY_BYTES {
             return Err("task summary response too large".into());
         }
@@ -866,7 +871,11 @@ impl AppService {
                 client: Arc::new(gateway.with_session(task.meta.id.to_string())),
             });
         let outcome = VaultWriter::new(vault)
-            .document_task(&store, &doc, summarizer.as_ref().map(|s| s as &dyn Summarizer))
+            .document_task(
+                &store,
+                &doc,
+                summarizer.as_ref().map(|s| s as &dyn Summarizer),
+            )
             .map_err(|e| e.to_string())?;
         Ok(Some(outcome.record_path.display().to_string()))
     }

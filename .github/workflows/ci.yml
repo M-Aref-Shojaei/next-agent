@@ -53,6 +53,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             build-essential \
             libssl-dev \
+            libasound2-dev \
             librsvg2-dev \
             libayatana-appindicator3-dev
 
@@ -144,6 +145,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             build-essential \
             libssl-dev \
+            libasound2-dev \
             librsvg2-dev \
             libayatana-appindicator3-dev
 
@@ -176,4 +178,4 @@ jobs:
 
       - name: tauri build --debug
         if: hashFiles('pnpm-lock.yaml') != '' && hashFiles('apps/desktop/src-tauri/tauri.conf.json') != ''
-        run: pnpm --dir apps/desktop exec tauri build --debug
+        run: pnpm --dir apps/desktop tauri build --debug
