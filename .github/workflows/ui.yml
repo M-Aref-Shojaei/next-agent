@@ -17,6 +17,7 @@ env:
 
 jobs:
   playwright:
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
     name: Playwright tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:

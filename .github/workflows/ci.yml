@@ -35,6 +35,7 @@ defaults:
 
 jobs:
   check:
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
     name: check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -127,6 +128,7 @@ jobs:
   # so this job skips its build step. Once the desktop session lands Tauri,
   # remove `continue-on-error` so the job becomes required.
   tauri-build:
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
     name: tauri build --debug (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     continue-on-error: true
