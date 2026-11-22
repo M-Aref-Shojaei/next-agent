@@ -300,6 +300,7 @@ impl LocalTools {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn run_command(
         &self,
         ctx: &RunContext<'_>,

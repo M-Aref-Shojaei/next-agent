@@ -679,9 +679,7 @@ impl WorktreeProvider for GitCli {
     }
 
     fn merge(&self, wt: &TaskWorktree, options: &MergeOptions) -> Result<MergeOutcome> {
-        if let Err(error) = Self::validate_identity(wt) {
-            return Err(error);
-        }
+        Self::validate_identity(wt)?;
         let result = Self::merge_branch(wt, options);
         match &result {
             Ok(outcome) => tracing::info!(
