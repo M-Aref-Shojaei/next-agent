@@ -808,7 +808,11 @@ impl ShadowRepo {
     pub fn open(data_dir: &Path, work_tree: &Path, scope: &str) -> Result<Self> {
         let work_tree = canonical_path(work_tree)
             .map_err(|_| WorktreeError::NotAGitRepo(work_tree.to_path_buf()))?;
-        let git_dir = Self::location(data_dir, &work_tree, scope);
+        let data_dir = canonical_path(data_dir).map_err(|e| WorktreeError::Git {
+            command: "canonicalize data directory".into(),
+            stderr: e.to_string(),
+        })?;
+        let git_dir = Self::location(&data_dir, &work_tree, scope);
         let repo = Self { git_dir, work_tree };
         if !repo.git_dir.join("HEAD").exists() {
             std::fs::create_dir_all(&repo.git_dir).map_err(|e| WorktreeError::Git {
