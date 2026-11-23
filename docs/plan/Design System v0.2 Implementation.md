@@ -28,7 +28,7 @@ Source specification: [[Coding Agent Design System v0.2]]. Existing app stack re
 | Implement persistent activity rail | in progress | Keyboard-accessible Chat/Code/Agents/Knowledge/Design/Source Control/Monitor navigation |
 | Implement command palette | pending | Cmd/Ctrl+K; risky commands show side-effect preview |
 | Add responsive inspector/bottom panel primitives | pending | Collapsible below 1440px; no unusable editor widths |
-| Add token/component preview matrix | pending | Light/dark, density, and viewport states visible in style guide |
+| Add token/component preview matrix | ready for approval | Light/dark, density, and viewport controls plus status-state cards visible in style guide |
 
 ## Review gates
 
