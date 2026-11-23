@@ -5,6 +5,7 @@
   import { shouldCycleMode } from "$lib/shortcuts.ts";
   import { Banner, Button, Icon } from "$lib/ds/index.ts";
   import Sidebar from "$lib/components/Sidebar.svelte";
+  import ActivityRail from "$lib/components/ActivityRail.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
 
   let { children } = $props();
@@ -32,6 +33,7 @@
 <svelte:window {onkeydown} />
 
 <div class="shell">
+  <ActivityRail />
   <div class="topbar">
     <Button variant="ghost" size="sm" aria-expanded={navOpen} aria-controls="app-sidebar" onclick={() => (navOpen = !navOpen)}>
       {#snippet icon()}<Icon name={navOpen ? "x" : "more"} size={16} />{/snippet}
@@ -53,7 +55,7 @@
   .shell {
     --sidebar-width: calc(var(--settings-nav-width) + var(--space-8));
     display: grid;
-    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: var(--shell-rail, 56px) var(--sidebar-width) minmax(0, 1fr);
     grid-template-rows: 1fr auto;
     height: 100vh;
   }
@@ -63,7 +65,8 @@
 
   /* Narrow: one column; the sidebar becomes a drawer under the top bar. */
   @media (max-width: 640px) {
-    .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+    .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
+    .shell :global(.rail) { grid-column: 1; grid-row: 2; }
     .topbar { display: block; padding: var(--space-1) var(--space-2); border-bottom: var(--border-width) solid var(--color-border); background: var(--color-surface-sunken); }
     .side { display: none; max-height: 60vh; }
     .side.open { display: flex; }

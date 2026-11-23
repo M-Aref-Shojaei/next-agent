@@ -783,6 +783,24 @@ impl Store {
     ///
     /// # Errors
     /// Returns [`StoreError`] if the query fails.
+    #[cfg(test)]
+    pub(crate) fn fail_audit_writes_for_test(&self) {
+        self.conn
+            .execute_batch("CREATE TRIGGER fail_audit_writes BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END")
+            .expect("install audit failure trigger");
+    }
+
+    #[cfg(test)]
+    pub(crate) fn audit_row_for_test(&self) -> Result<(String, String), StoreError> {
+        Ok(self
+            .conn
+            .query_row("SELECT target, reason FROM audit_log LIMIT 1", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?)
+    }
+
+    /// # Errors
+    /// Returns [`StoreError`] if the query fails.
     pub fn last_audit_hash(&self) -> Result<Option<String>, StoreError> {
         let mut statement = self
             .conn
