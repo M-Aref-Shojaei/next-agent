@@ -37,6 +37,13 @@ jobs:
   check:
     name: shared codebase checks
     runs-on: ubuntu-22.04
+    env:
+      # Test binaries include Tauri and the vendored overlay. Bound linker load
+      # on the hosted runner and avoid caching debug symbols and incremental data.
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,8 +108,13 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: cargo test
-        run: cargo test --workspace --all-targets -- --test-threads=1
+      - name: Compile Rust tests
+        timeout-minutes: 35
+        run: cargo test --locked --workspace --all-targets --no-run
+
+      - name: Run Rust tests
+        timeout-minutes: 15
+        run: cargo test --locked --workspace --all-targets -- --test-threads=1
 
       - name: TypeScript tests
         run: node scripts/test.mjs
