@@ -402,8 +402,8 @@ impl AppService {
     }
 
     /// The gateway for the `chat` role when it can serve a request, or the
-    /// reason it cannot. An implicit legacy router (`router.url`) must also be
-    /// reachable, as before; built-in providers need only a key.
+    /// reason it cannot. Check legacy router health when it is the only usable
+    /// route for chat; other routes are tried by the gateway itself.
     pub(crate) fn chat_gateway(&self) -> Result<Gateway, String> {
         self.role_gateway("chat")
     }
@@ -417,25 +417,27 @@ impl AppService {
             format!("no default model or {role} role is set in Settings → Providers")
         })?;
         let keys = keys();
-        let usable = |target: &Target| {
-            config
-                .accounts(&target.provider)
-                .into_iter()
-                .find(|account| {
-                    !account.needs_key
-                        || keys
-                            .get(&account.id)
-                            .ok()
-                            .flatten()
-                            .is_some_and(|k| !k.is_empty())
-                })
-        };
-        let Some(account) = plan.targets.iter().find_map(usable) else {
+        let mut usable = plan
+            .targets
+            .iter()
+            .flat_map(|target| config.accounts(&target.provider))
+            .filter(|account| {
+                !account.needs_key
+                    || keys
+                        .get(&account.id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|k| !k.is_empty())
+            });
+        let Some(first) = usable.next() else {
             return Err(format!(
                 "no provider for the {role} model has an API key (Settings → Providers)"
             ));
         };
-        if account.id == LEGACY_ROUTER_ID {
+        if role == "chat"
+            && first.id == LEGACY_ROUTER_ID
+            && !usable.any(|account| account.id != LEGACY_ROUTER_ID)
+        {
             let healthy = self
                 .health()
                 .is_some_and(|h| h.status == "ok" || h.status == "degraded");
@@ -699,10 +701,11 @@ impl AppService {
                 connection.models.clone()
             };
             for model in suggested {
-                let value = format!("{}/{model}", connection.provider);
+                let label = format!("{}/{model} ({})", connection.provider, connection.name);
+                let value = Target::for_suggestion(connection, &model).label();
                 if !out.iter().any(|t| t.value == value) {
                     out.push(TargetDto {
-                        label: format!("{value} ({})", connection.name),
+                        label,
                         value,
                         kind: "model".into(),
                     });
@@ -1028,6 +1031,61 @@ mod tests {
         assert!(svc.chat_gateway().unwrap_err().contains("not reachable"));
         let settings = RouterSettings::load(&svc.store().expect("store")).expect("load");
         assert_eq!(settings.default_model.as_deref(), Some("gpt-x"));
+    }
+
+    #[test]
+    fn unreachable_legacy_router_does_not_prevent_native_fallback() {
+        let (_dir, svc) = service();
+        svc.setting_set("router.model", "gpt-x")
+            .expect("legacy model");
+        svc.gateway_connection_save(&ConnectionInput {
+            provider: "ollama".into(),
+            ..ConnectionInput::default()
+        })
+        .expect("local provider");
+        svc.gateway_combo_save(&ComboDto {
+            name: "legacy with fallback".into(),
+            models: vec!["9router/gpt-x".into(), "ollama/llama3.2".into()],
+            ..ComboDto::default()
+        })
+        .expect("combo");
+        let mut settings = GatewaySettings {
+            default_model: Some("legacy with fallback".into()),
+            ..GatewaySettings::default()
+        };
+        settings
+            .roles
+            .insert("review".into(), "9router/gpt-x".into());
+        svc.gateway_settings_set(&settings).expect("settings");
+        assert!(svc.chat_gateway().is_ok());
+        assert!(svc.role_gateway("review").is_ok());
+    }
+
+    #[test]
+    fn targets_distinguish_custom_and_explicit_router_connections() {
+        let (_dir, svc) = service();
+        for provider in ["custom", "9router"] {
+            for (port, name) in [(8000, "First endpoint"), (8001, "Second endpoint")] {
+                let connection = svc
+                    .gateway_connection_save(&ConnectionInput {
+                        provider: provider.into(),
+                        base_url: format!("http://127.0.0.1:{port}/v1"),
+                        name: name.into(),
+                        models: vec!["vendor/model".into()],
+                        ..ConnectionInput::default()
+                    })
+                    .expect("connection");
+                assert!(svc
+                    .gateway_targets()
+                    .expect("targets")
+                    .iter()
+                    .any(|target| {
+                        target.value == format!("connection:{}/vendor/model", connection.id)
+                            && target.label == format!("{provider}/vendor/model ({name})")
+                    }));
+            }
+        }
+        assert_eq!(svc.gateway_targets().expect("targets").len(), 4);
     }
 
     /// The real agent, end to end, on a built-in provider (no external router):

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { page } from "$app/state";
   import { log } from "$lib/log.ts";
   import { onMount } from "svelte";
   import { api } from "$lib/api.ts";
@@ -32,7 +33,7 @@
   let combos = $state<Combo[]>([]);
   let targets = $state<GatewayTarget[]>([]);
   let settings = $state<GatewaySettings>(defaultSettings());
-  let tests = $state<Record<string, ConnectionTest | "running">>({});
+  let tests = $state.raw<Record<string, { result: ConnectionTest | null } | undefined>>({});
   let catalog = $state<CatalogStatus>({ models: 0, updatedAt: null });
   let cacheEntries = $state(0);
   let refreshing = $state(false);
@@ -45,6 +46,14 @@
   });
   let form = $state(blankConnection());
   const formPreset = $derived(presets.find((p) => p.id === form.provider));
+  const savedConnection = $derived(connections.find((conn) => conn.id === form.id));
+  const formTest = $derived(tests[form.id]?.result);
+  const canImportModels = $derived(
+    savedConnection?.provider === form.provider &&
+    savedConnection.baseUrlOverride.trim() === form.baseUrl.trim() &&
+    !form.apiKey.trim() && !form.clearKey &&
+    formTest?.ok && formTest.models.length > 0,
+  );
 
   // Combo form.
   const blankCombo = () => ({
@@ -67,7 +76,10 @@
     // Every role gets an editable entry; "off" ones are dropped on save.
     for (const role of ROLES) settings.reasoning[role] ??= { effort: "off", maxTokens: null };
   }
-  onMount(() => void load().catch(fail));
+  onMount(() => {
+    if (page.url.searchParams.get("provider") === "9router") form.provider = "9router";
+    void load().catch(fail);
+  });
 
   function fail(e: unknown) {
     log.warn("ui_error", { kind: "providers", error: String(e) });
@@ -95,19 +107,29 @@
   function editConnection(conn: ProviderConnection) {
     form = {
       id: conn.id, provider: conn.provider, name: conn.name, baseUrl: conn.baseUrlOverride,
-      models: conn.models.join(", "), priority: conn.priority, isActive: conn.isActive, apiKey: "", clearKey: false,
+      models: conn.models.join("\n"), priority: conn.priority, isActive: conn.isActive, apiKey: "", clearKey: false,
     };
+  }
+
+  function importTestedModels() {
+    if (!canImportModels || !formTest) return;
+    form.models = [...new Set([...connectionModels(), ...formTest.models])].join("\n");
+  }
+
+  function connectionModels(): string[] {
+    return form.models.split("\n").map((name) => name.trim()).filter(Boolean);
   }
 
   function saveConnection(event: SubmitEvent) {
     event.preventDefault();
     const input = {
       id: form.id || undefined, provider: form.provider, name: form.name, baseUrl: form.baseUrl,
-      models: parseList(form.models), priority: Number(form.priority), isActive: form.isActive,
+      models: connectionModels(), priority: Number(form.priority), isActive: form.isActive,
       apiKey: form.apiKey, clearKey: form.clearKey,
     };
     void attempt(async () => {
-      await api.gatewayConnectionSave(input);
+      const saved = await api.gatewayConnectionSave(input);
+      tests = { ...tests, [saved.id]: undefined };
       form = blankConnection();
     }, "Connection saved. Keys are stored in the OS keychain.");
   }
@@ -115,17 +137,22 @@
   function removeConnection(conn: ProviderConnection) {
     void attempt(async () => {
       await api.gatewayConnectionDelete(conn.id);
+      tests = { ...tests, [conn.id]: undefined };
+      if (form.id === conn.id) form = blankConnection();
     }, `Removed ${conn.name} and its stored key.`);
   }
 
   async function testConnection(conn: ProviderConnection) {
-    tests = { ...tests, [conn.id]: "running" };
+    const run = { result: null };
+    tests = { ...tests, [conn.id]: run };
+    let result: ConnectionTest;
     try {
-      tests = { ...tests, [conn.id]: await api.gatewayConnectionTest(conn.id) };
+      result = await api.gatewayConnectionTest(conn.id);
     } catch (e) {
       log.warn("ui_error", { kind: "providers", error: String(e) });
-      tests = { ...tests, [conn.id]: { ok: false, detail: String(e), models: [] } };
+      result = { ok: false, detail: String(e), models: [] };
     }
+    if (tests[conn.id] === run) tests = { ...tests, [conn.id]: { result } };
   }
 
   function saveSettings(event: SubmitEvent, done: string) {
@@ -241,31 +268,32 @@
 
   {#if message}<Banner tone={failed ? "danger" : "info"}>{message}</Banner>{/if}
 
-  <SettingsSection id="conns" title="Connections" description="Several connections for the same provider act as accounts: the lowest priority is tried first and the next takes over after auth errors or rate limits.">
+  <SettingsSection id="conns" title="Connections" description="Provider-wide models try accounts in priority order. Suggested 9Router and custom models use the named connection. Add them to a combo to configure fallback.">
     {#if connections.length === 0}
       <p class="note">No providers yet. Add one below. The local Ollama and LM Studio presets need no key.</p>
     {:else}
       <List bordered={false} label="Connections">
         {#each connections as conn (conn.id)}
-          {@const result = tests[conn.id]}
+          {@const test = tests[conn.id]}
+          {@const result = test?.result}
           <ListRow
             title={conn.name}
-            description="{conn.provider} · key {conn.hasKey ? 'stored' : conn.needsKey ? 'missing' : 'not needed'} · priority {conn.priority}"
+            description="{conn.provider} · key {conn.hasKey ? 'stored' : conn.needsKey ? 'missing' : 'optional, unset'} · priority {conn.priority}"
             disabled={!conn.isActive}
           >
             <code>{conn.baseUrl}</code>
             {#if !conn.isActive}<Badge size="sm">off</Badge>{/if}
-            {#if result}
-              <span class="result {result === 'running' ? '' : result.ok ? 'ok' : 'bad'}" role="status">
-                {result === "running" ? "Testing…" : result.detail}
-                {#if result !== "running" && result.models.length}
+            {#if test}
+              <span class="result {result ? result.ok ? 'ok' : 'bad' : ''}" role="status">
+                {result?.detail ?? "Testing…"}
+                {#if result?.models.length}
                   <span class="muted"> · {result.models.slice(0, 8).join(", ")}{result.models.length > 8 ? "…" : ""}</span>
                 {/if}
               </span>
             {/if}
             {#snippet actions()}
               <Button size="sm" variant="ghost" onclick={() => editConnection(conn)} aria-label="Edit {conn.name}">Edit</Button>
-              <Button size="sm" variant="ghost" onclick={() => testConnection(conn)} aria-label="Test {conn.name}">Test</Button>
+              <Button size="sm" variant="ghost" disabled={!!test && !result} onclick={() => testConnection(conn)} aria-label="Test {conn.name}">Test</Button>
               <Button size="sm" variant="danger" onclick={() => removeConnection(conn)} aria-label="Remove {conn.name}">Remove</Button>
             {/snippet}
           </ListRow>
@@ -275,7 +303,13 @@
   </SettingsSection>
 
   <form onsubmit={saveConnection}>
-    <SettingsSection title={form.id ? "Edit connection" : "Add a connection"}>
+    <SettingsSection
+      id="connection-form"
+      title={form.id ? "Edit connection" : "Add a connection"}
+      description={form.provider === "9router"
+        ? "Add your 9Router endpoint, then test the saved connection. Edit it to import discovered model IDs and save them. Pick a default model to use 9Router for chat."
+        : undefined}
+    >
       {#snippet actions()}
         {#if form.id}<Button onclick={() => (form = blankConnection())}>Cancel</Button>{/if}
         <Button type="submit" variant="primary">{form.id ? "Save changes" : "Add connection"}</Button>
@@ -286,16 +320,19 @@
       <SettingsRow label="Name">
         {#snippet children(c)}<TextField id={c.id} bind:value={form.name} placeholder={formPreset?.label ?? ""} />{/snippet}
       </SettingsRow>
-      <SettingsRow label="Base URL">
-        {#snippet children(c)}<TextField id={c.id} mono bind:value={form.baseUrl} placeholder={formPreset?.baseUrl ?? ""} />{/snippet}
+      <SettingsRow label="Base URL" description={form.provider === "9router" ? "Use the API URL ending in /v1." : undefined}>
+        {#snippet children(c)}<TextField id={c.id} aria-describedby={c.describedby} mono bind:value={form.baseUrl} placeholder={formPreset?.baseUrl ?? ""} />{/snippet}
       </SettingsRow>
-      <SettingsRow label="Models">
-        {#snippet children(c)}<TextField id={c.id} bind:value={form.models} placeholder={formPreset?.models.join(", ") || "model-a, model-b"} />{/snippet}
+      <SettingsRow label="Models" description={canImportModels ? "Review one model ID per line, then save to add them to model suggestions." : "Enter one model ID per line."}>
+        {#snippet children(c)}
+          <TextArea id={c.id} aria-describedby={c.describedby} bind:value={form.models} placeholder={formPreset?.models.join("\n") || "model-a\nmodel-b"} rows={2} mono />
+          {#if canImportModels}<Button size="sm" onclick={importTestedModels}>Import tested models</Button>{/if}
+        {/snippet}
       </SettingsRow>
-      <SettingsRow label="API key">
+      <SettingsRow label="API key" description={form.provider === "9router" ? "Enter a 9Router API key if your server requires one." : undefined}>
         {#snippet children(c)}
           <TextField
-            id={c.id} type="password" autocomplete="off" mono bind:value={form.apiKey}
+            id={c.id} aria-describedby={c.describedby} type="password" autocomplete="off" mono bind:value={form.apiKey}
             placeholder={form.id ? "Leave blank to keep the stored key" : formPreset?.needsKey ? "Required" : "Optional"}
           />
         {/snippet}
@@ -319,7 +356,7 @@
   </datalist>
 
   <form onsubmit={(e) => saveSettings(e, "Models saved.")}>
-    <SettingsSection id="roles" title="Default model and roles" description="Write provider/model (for example anthropic/claude-sonnet-4-5) or a combo name. Empty roles use the chat role, then the default model.">
+    <SettingsSection id="roles" title="Default model and roles" description="Choose a suggested model or enter a provider/model or combo name. Suggestions for 9Router and custom endpoints select a specific connection. Empty roles use the chat role, then the default model.">
       {#snippet actions()}<Button type="submit" variant="primary">Save models</Button>{/snippet}
       <SettingsRow label="Default model">
         {#snippet children(c)}<TextField id={c.id} list="targets" placeholder="provider/model or combo" bind:value={settings.defaultModel} />{/snippet}

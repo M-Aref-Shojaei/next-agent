@@ -21,6 +21,7 @@ const presets: ProviderPreset[] = [
   { id: "anthropic", label: "Anthropic", kind: "anthropic", baseUrl: "https://api.anthropic.com/v1", needsKey: true, models: ["claude-sonnet-4-5"] },
   { id: "gemini", label: "Google Gemini", kind: "gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", needsKey: true, models: ["gemini-2.5-flash"] },
   { id: "ollama", label: "Ollama (local)", kind: "openai", baseUrl: "http://127.0.0.1:11434/v1", needsKey: false, models: ["llama3.2"] },
+  { id: "9router", label: "9Router (external, optional)", kind: "openai", baseUrl: "http://127.0.0.1:20128/v1", needsKey: false, models: [] },
   { id: "custom", label: "Custom (OpenAI-compatible)", kind: "openai", baseUrl: "http://127.0.0.1:8000/v1", needsKey: false, models: [] },
 ];
 const connections: ProviderConnection[] = [];
@@ -337,7 +338,8 @@ export const mockApi: Api = {
     const conn = connections.find((c) => c.id === id);
     if (!conn) throw `unknown connection ${id}`;
     if (conn.needsKey && !keyed.has(id)) return { ok: false, detail: "no API key stored", models: [] };
-    return { ok: true, detail: "mock: 2 models available", models: ["model-a", "model-b"] };
+    const models = conn.provider === "9router" ? ["ocg/coder", "alias,variant"] : ["model-a", "model-b"];
+    return { ok: true, detail: "mock: 2 models available", models };
   },
   async gatewayCombos() {
     return [...combos];
@@ -364,11 +366,13 @@ export const mockApi: Api = {
   async gatewayTargets() {
     return [
       ...combos.map((c) => ({ value: c.name, label: `${c.name} (combo)`, kind: "combo" as const })),
-      ...connections.flatMap((c) =>
-        (c.models.length ? c.models : (presets.find((p) => p.id === c.provider)?.models ?? [])).map((m) => ({
-          value: `${c.provider}/${m}`, label: `${c.provider}/${m} (${c.name})`, kind: "model" as const,
-        })),
-      ),
+      ...connections.filter((c) => c.isActive).flatMap((c) => {
+        const address = c.provider === "9router" || c.provider === "custom" ? `connection:${c.id}` : c.provider;
+        const models = c.models.length ? c.models : presets.find((p) => p.id === c.provider)?.models ?? [];
+        return models.map((model) => ({
+          value: `${address}/${model}`, label: `${c.provider}/${model} (${c.name})`, kind: "model" as const,
+        }));
+      }),
     ];
   },
   async usageSummary(days) {

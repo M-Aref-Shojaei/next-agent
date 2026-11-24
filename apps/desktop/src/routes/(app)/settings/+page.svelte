@@ -43,7 +43,7 @@
     event.preventDefault();
     try {
       await api.settingSet("router.url", routerUrl);
-      message = "Router URL saved.";
+      message = "Legacy router URL saved.";
     } catch (e) {
       log.warn("ui_error", { kind: "settings", error: String(e) });
       message = String(e);
@@ -83,10 +83,15 @@
       <a class="go" href="/settings/providers">Providers →</a>
       <a class="go" href="/usage">Usage →</a>
     {/snippet}
+    <SettingsRow label="9Router" description="Connect a 9Router server and choose which model to use.">
+      {#snippet children()}
+        <a class="go" href="/settings/providers?provider=9router#connection-form">Set up 9Router</a>
+      {/snippet}
+    </SettingsRow>
     <form onsubmit={saveRouter}>
       <SettingsRow
-        label="External router (optional)"
-        description="Only needed for an external OpenAI-compatible router such as 9Router; the built-in gateway works without it."
+        label="Legacy router URL"
+        description="Used by existing configurations with a legacy default model. For new external routers or to change a saved provider connection, use Providers."
       >
         {#snippet children(ctl)}
           <TextField id={ctl.id} aria-describedby={ctl.describedby} mono placeholder="Base URL" bind:value={routerUrl} />
