@@ -665,10 +665,11 @@ mod tests {
     #[test]
     fn watcher_picks_up_outside_edits_and_notifies() {
         let (_dir, notes, graph) = opened();
-        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
-        let sink = Arc::clone(&seen);
+        let (sink, changes) = std::sync::mpsc::channel();
         notes.set_listener(Arc::new(move |files| {
-            sink.lock().expect("lock").extend(files);
+            if files.is_empty() || files.iter().any(|f| f == "pages/From Logseq.md") {
+                let _ = sink.send(());
+            }
         }));
         notes
             .open(&graph.display().to_string(), false)
@@ -687,16 +688,9 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(100));
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !seen
-            .lock()
-            .expect("lock")
-            .iter()
-            .any(|f| f == "pages/From Logseq.md")
-        {
-            assert!(Instant::now() < deadline, "listener not called");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        changes
+            .recv_timeout(Duration::from_secs(5))
+            .expect("listener not called");
     }
 
     #[test]

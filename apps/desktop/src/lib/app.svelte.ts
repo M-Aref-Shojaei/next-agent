@@ -3,7 +3,7 @@
 import { log } from "./log.ts";
 import type { ModeName } from "@next-agent/contracts";
 import { goto } from "$app/navigation";
-import { api, type RouterHealthReport, type Workspace } from "./api.ts";
+import { api, type RouterHealthReport, type Workspace, type WorkspaceDiscovery } from "./api.ts";
 import { onOverlaySettingsRequest } from "./overlay-settings.ts";
 import type { DiffAction } from "./diff.ts";
 import { cycleMode } from "./modes.ts";
@@ -23,6 +23,10 @@ export type RouterHealth = "ok" | "degraded" | "down" | "unknown";
 class AppStore {
   workspaces = $state<Workspace[]>([]);
   activeWorkspaceId = $state<string | null>(null);
+  projectDiscovery = $state.raw<WorkspaceDiscovery | null>(null);
+  projectDiscoveryLoading = $state(false);
+  projectDiscoveryError = $state<string | null>(null);
+  private discoveryRequest = 0;
   tasks = $state<TaskState[]>([]);
   activeTaskId = $state<string | null>(null);
   mode = $state<ModeName>("manual");
@@ -82,8 +86,12 @@ class AppStore {
       // Optional: channels are an extra way in.
     }
     try {
-      this.workspaces = await api.workspaceList();
-      this.activeWorkspaceId ??= this.workspaces[0]?.id ?? null;
+      const saved = await api.workspaceList();
+      const current = new Set(this.workspaces.map((entry) => entry.id));
+      this.workspaces = [...this.workspaces, ...saved.filter((entry) => !current.has(entry.id))];
+      if (!this.activeWorkspaceId && this.workspaces[0]) {
+        this.selectWorkspace(this.workspaces[0].id);
+      }
     } catch (e) {
       log.warn("ui_error", { kind: "app", error: String(e) });
       this.error = String(e);
@@ -91,14 +99,22 @@ class AppStore {
   }
 
   async openWorkspace(path: string): Promise<boolean> {
+    return this.registerWorkspace(() => api.workspaceOpen(path.trim()));
+  }
+
+  async createWorkspace(parent: string, name: string): Promise<boolean> {
+    return this.registerWorkspace(() => api.workspaceCreate(parent.trim(), name.trim()));
+  }
+
+  private async registerWorkspace(register: () => Promise<Workspace>): Promise<boolean> {
     try {
-      const ws = await api.workspaceOpen(path);
-      this.workspaces = await api.workspaceList();
-      this.activeWorkspaceId = ws.id;
+      const ws = await register();
+      this.workspaces = [ws, ...this.workspaces.filter((entry) => entry.id !== ws.id)];
+      this.selectWorkspace(ws.id);
       this.error = null;
       return true;
     } catch (e) {
-      log.warn("ui_error", { kind: "workspace_open" });
+      log.warn("ui_error", { kind: "workspace_registration" });
       this.error = String(e);
       return false;
     }
@@ -106,6 +122,24 @@ class AppStore {
 
   selectWorkspace(id: string): void {
     this.activeWorkspaceId = id;
+    this.projectDiscovery = null;
+    void this.refreshProjectDiscovery();
+  }
+
+  async refreshProjectDiscovery(): Promise<void> {
+    const id = this.activeWorkspaceId;
+    if (!id) return;
+    const request = ++this.discoveryRequest;
+    this.projectDiscoveryLoading = true;
+    this.projectDiscoveryError = null;
+    try {
+      const discovered = await api.workspaceDiscover(id);
+      if (request === this.discoveryRequest) this.projectDiscovery = discovered;
+    } catch (error) {
+      if (request === this.discoveryRequest) this.projectDiscoveryError = String(error);
+    } finally {
+      if (request === this.discoveryRequest) this.projectDiscoveryLoading = false;
+    }
   }
   selectTask(id: string): void {
     this.activeTaskId = id;

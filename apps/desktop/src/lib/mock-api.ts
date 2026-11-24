@@ -46,6 +46,7 @@ const mockDay = (offset: number, cost: number, requests: number): UsageTotals =>
 });
 
 const workspaces: Workspace[] = [];
+const newProjects = new Set<string>();
 const settings = new Map<string, string>([["router.url", "http://127.0.0.1:20128/v1"]]);
 let vault: string | null = null;
 const waiting = new Map<string, (choice: ApprovalChoice) => void>();
@@ -213,6 +214,37 @@ export const mockApi: Api = {
   },
   async workspaceList() {
     return [...workspaces];
+  },
+  async workspaceCreate(parent, name) {
+    if (!parent || !name || name === "." || name === ".." || /[\\/:]/.test(name)) {
+      throw new Error("Choose a parent folder and enter a valid project name.");
+    }
+    const path = `${parent.replace(/[\\/]+$/, "")}/${name}`;
+    if (workspaces.some((ws) => ws.path === path)) throw new Error("Project folder already exists.");
+    const ws = await mockApi.workspaceOpen(path);
+    newProjects.add(ws.id);
+    return ws;
+  },
+  async workspaceDiscover(workspaceId) {
+    const ws = workspaces.find((workspace) => workspace.id === workspaceId);
+    if (!ws) throw new Error("Unknown project");
+    if (newProjects.has(workspaceId)) {
+      return { agentInstructions: null, designMd: null, tokensCss: null, vaultPath: null, files: [], truncated: false };
+    }
+    return {
+      agentInstructions: "AGENTS.md",
+      designMd: "DESIGN.md",
+      tokensCss: "tokens.css",
+      vaultPath: `${ws.path}/vault`,
+      files: [
+        { name: "src", children: [{ name: "main.ts", children: null }] },
+        ...["AGENTS.md", "DESIGN.md", "tokens.css"].map((name) => ({ name, children: null })),
+      ],
+      truncated: false,
+    };
+  },
+  async showOpenFilePicker() {
+    return null;
   },
   async vaultSet(path) {
     vault = path;

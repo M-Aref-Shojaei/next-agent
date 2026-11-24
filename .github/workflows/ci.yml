@@ -37,6 +37,13 @@ jobs:
   check:
     name: shared codebase checks
     runs-on: ubuntu-22.04
+    env:
+      # Test binaries include Tauri and the vendored overlay. Bound linker load
+      # on the hosted runner and avoid caching debug symbols and incremental data.
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,8 +108,30 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: cargo test
-        run: cargo test --workspace --all-targets -- --test-threads=1
+      - name: Compile Rust tests
+        timeout-minutes: 35
+        run: cargo test --locked --workspace --all-targets --no-run
+
+      - name: Run Rust tests
+        timeout-minutes: 10
+        env:
+          GIT_AUTHOR_NAME: Next Agent CI
+          GIT_AUTHOR_EMAIL: ci@example.invalid
+          GIT_COMMITTER_NAME: Next Agent CI
+          GIT_COMMITTER_EMAIL: ci@example.invalid
+        run: |
+          # Keep test processes in their own session so runner diagnostics survive
+          # a stalled subprocess or a test exercising process-group cancellation.
+          setsid --wait timeout --kill-after=20s 5m \
+            cargo test --locked --workspace --all-targets -- --test-threads=1 2>&1 | tee rust-test.log
+
+      - name: Keep Rust test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-log
+          path: rust-test.log
+          if-no-files-found: ignore
 
       - name: TypeScript tests
         run: node scripts/test.mjs

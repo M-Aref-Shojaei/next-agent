@@ -3,14 +3,11 @@
   import { page } from "$app/state";
   import { app } from "$lib/app.svelte.ts";
   import { upstreams } from "$lib/upstreams.svelte.ts";
-  import { Badge, BrandMark, Button, List, ListRow, StatusDot, TextField } from "$lib/ds/index.ts";
+  import { Badge, BrandMark, List, ListRow, StatusDot } from "$lib/ds/index.ts";
   import type { Tone } from "$lib/ds/types.ts";
+  import ProjectActions from "./ProjectActions.svelte";
+  import ProjectConnections from "./ProjectConnections.svelte";
   onMount(() => void upstreams.init());
-  let path = $state("");
-  async function open(event: SubmitEvent) {
-    event.preventDefault();
-    if (await app.openWorkspace(path)) path = "";
-  }
 
   const TASK_TONE: Record<string, Tone> = { running: "info", completed: "ok", failed: "danger" };
   const LINKS = [
@@ -26,20 +23,20 @@
 
 <nav class="sidebar" aria-label="Workspaces and tasks">
   <a class="brand" href="/"><BrandMark size={24} /><span>Next Agent</span></a>
-  <h2>Workspaces</h2>
+  <h2>Projects</h2>
+  <ProjectActions />
   {#if app.workspaces.length}
-    <List bordered={false} label="Workspaces">
+    <List bordered={false} label="Projects">
       {#each app.workspaces as ws (ws.id)}
         <ListRow title={ws.name} tooltip={ws.path} selectedAs="current" selected={ws.id === app.activeWorkspaceId} onclick={() => app.selectWorkspace(ws.id)} />
       {/each}
     </List>
   {:else}
-    <p class="muted">No workspace yet</p>
+    <p class="muted">No projects yet</p>
   {/if}
-  <form onsubmit={open}>
-    <TextField size="sm" label="Workspace folder path" hideLabel placeholder="/path/to/project" mono bind:value={path} />
-    <Button size="sm" type="submit">Open</Button>
-  </form>
+  {#if app.activeWorkspaceId}
+    {#key app.activeWorkspaceId}<ProjectConnections />{/key}
+  {/if}
 
   <h2>Tasks</h2>
   {#if app.tasks.length}
@@ -99,7 +96,5 @@
     color: var(--color-text-secondary);
   }
   p { margin: 0; font-size: var(--font-size-sm); }
-  form { display: flex; gap: var(--space-1-5); align-items: center; }
-  form :global(.ds-input) { min-width: 0; }
   .links { margin-top: auto; }
 </style>

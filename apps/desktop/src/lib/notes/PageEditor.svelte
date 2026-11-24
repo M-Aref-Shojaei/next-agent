@@ -70,10 +70,10 @@
     // Only a change to this page's file (or an unknown one) is worth a re-read. `view` is read
     // untracked: the reload writes it, and tracking it would re-run this effect forever.
     const file = untrack(() => view?.file);
-    if (v > 0 && current && (!file || changed.includes(file))) void load(current, "idle");
+    if (v > 0 && current && (!changed.length || !file || changed.includes(file))) void load(current, "idle");
   });
 
-  onDestroy(() => void outliner.flush());
+  onDestroy(() => notes.finishEditor(outliner.flush()));
 
   const extra = $derived((view?.properties ?? []).filter((p) => !isHiddenProperty(p.key) && p.key !== "title"));
   const missing = $derived(view !== null && view.file === null && !saved);

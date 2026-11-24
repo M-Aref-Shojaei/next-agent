@@ -30,7 +30,8 @@ Rules:
   - Windows: `windows-latest`
   - Linux: `ubuntu-22.04`
 - Run platform validation on release pull requests and manual workflow runs.
-- Publish assets only from approved `v*` tag runs.
+- Platform validation uploads workflow artifacts. The shared Release workflow publishes the installers for all three platforms from an approved `v*` tag only.
+- Before tagging the approved commit, verify that the tag matches both `apps/desktop/package.json` and `apps/desktop/src-tauri/tauri.conf.json`.
 - Never merge or publish while required checks fail or remain pending.
 
 ## Before opening a pull request

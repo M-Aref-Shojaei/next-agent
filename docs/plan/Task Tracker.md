@@ -18,7 +18,9 @@ All remaining work for the Next Agent project. Each task has a status, the chang
 | 4 | Security hardening | Canonical execution paths, worktree identity/stale-review validation, and regression tests from security audit | ready for approval | Workspace Rust tests: 446 core unit tests passed; permission corpus passed | ☐ |
 | 5 | Real-router run | Test with a live API key and real provider chat | pending | Router health e2e | ☐ |
 | 6 | CI matrix | macOS/Windows/Linux CI on merged PRs | pending | `.github/workflows/ci.yml` (exists, needs run) | ☐ |
-| 11 | Responsive panel primitives | Reusable inspector/bottom panel with responsive layout | ready for approval | `pnpm check`; `pnpm build`; design-token check | ☐ |
+| 9 | Command palette | Cmd/Ctrl+K opens route navigation and Notes retains its search shortcut | ready for approval | Playwright keyboard and focus tests passed; desktop type check and build passed | ☐ |
+| 10 | Project setup and discovery | Open an existing folder or create a new project, then show its agent instructions, design files, vault graph and file tree | ready for approval | 3 focused Rust tests and 10 Chromium tests passed; `pnpm verify`, Clippy and desktop frontend build passed | ☐ |
+| 11 | Pull request and release | Fix actionable PR failures, verify required checks and publish through the approved release workflow | awaiting CI and owner approval | Release dry run verified tag/version matching and missing-installer handling; hosted release matrix pending | ☐ |
 
 ## Definition of done (M1)
 

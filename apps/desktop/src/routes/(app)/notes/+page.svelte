@@ -1,7 +1,8 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { onDestroy, onMount } from "svelte";
+  import { untrack } from "svelte";
+  import { app } from "$lib/app.svelte.ts";
   import { Banner, Button, Card, Icon, Kbd, SegmentedControl, TextField } from "$lib/ds/index.ts";
   import AllPages from "$lib/notes/AllPages.svelte";
   import { provideNotes } from "$lib/notes/ctx.ts";
@@ -24,8 +25,14 @@
     version: () => notes.version,
   });
 
-  onMount(() => void notes.init());
-  onDestroy(() => notes.destroy());
+  const projectVault = $derived(app.projectDiscovery?.vaultPath ?? null);
+  const discoveringProject = $derived(app.projectDiscoveryLoading && !app.projectDiscovery);
+  $effect(() => {
+    if (discoveringProject) return;
+    const vault = projectVault;
+    untrack(() => void notes.init(vault));
+    return () => notes.destroy();
+  });
 
   function onkeydown(event: KeyboardEvent) {
     if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
@@ -50,7 +57,7 @@
 <svelte:window {onkeydown} />
 
 <div class="notes">
-  {#if notes.phase === "loading"}
+  {#if discoveringProject || notes.phase === "loading"}
     <p class="center muted">Opening notes…</p>
   {:else if notes.phase === "choose"}
     <form class="center" onsubmit={(e) => { e.preventDefault(); void notes.choose(folder); }}>
@@ -77,7 +84,7 @@
       <Card title="Notes could not open">
         <div class="stack">
           <Banner tone="danger">{notes.message}</Banner>
-          <Button onclick={() => void notes.init()}>Try again</Button>
+          <Button onclick={() => void notes.init(projectVault)}>Try again</Button>
         </div>
       </Card>
     </div>

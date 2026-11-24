@@ -9,6 +9,7 @@ pub mod diagnostics;
 pub mod gateway;
 pub mod learning;
 pub mod notes;
+mod projects;
 pub mod review;
 pub mod service;
 pub mod tasks;
@@ -107,6 +108,9 @@ pub fn run() {
         .invoke_handler(coucou_lib::invoke_handler(tauri::generate_handler![
             commands::workspace_open,
             commands::workspace_list,
+            commands::workspace_create,
+            commands::workspace_discover,
+            commands::show_open_file_picker,
             commands::vault_set,
             commands::vault_get,
             commands::setting_get,
