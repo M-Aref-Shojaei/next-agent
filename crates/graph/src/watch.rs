@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::event::{AccessKind, AccessMode};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::index::Index;
 use crate::layout::{Graph, GraphError, CONFIG_PATH, JOURNALS_DIR, PAGES_DIR};
@@ -42,10 +43,24 @@ impl GraphWatcher {
         on_change: Option<OnChange>,
     ) -> Result<Self, GraphError> {
         let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
-        let mut watcher = notify::recommended_watcher(move |event| {
-            let _ = tx.send(event);
-        })
-        .map_err(io_error)?;
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                // Linux reports read opens, including reads from our own index
+                // pass. They must not trigger or extend the debounce window.
+                if !event.as_ref().is_ok_and(|event| {
+                    matches!(
+                        event.kind,
+                        EventKind::Access(
+                            AccessKind::Open(_)
+                                | AccessKind::Read
+                                | AccessKind::Close(AccessMode::Read)
+                        )
+                    )
+                }) {
+                    let _ = tx.send(event);
+                }
+            })
+            .map_err(io_error)?;
         watcher
             .watch(graph.root(), RecursiveMode::Recursive)
             .map_err(io_error)?;
