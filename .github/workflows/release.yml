@@ -1,274 +1,115 @@
-# Release pipeline for Next Agent.
-#
-# Triggers on every push to main (i.e. after a PR is merged).
-# Builds the Tauri app on macOS, Linux and Windows, then creates (or updates)
-# a GitHub release tagged v<version> with all platform installers attached.
-#
-# Version is read from apps/desktop/package.json. Bump that field when you
-# want a new release; the workflow tags and releases automatically.
-
 name: Release
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: short
+concurrency:
+  group: release-${{ github.ref }}
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  # ------------------------------------------------------------------
-  # Build per platform
-  # ------------------------------------------------------------------
-  build-macos:
-    name: Build macOS
-    runs-on: macos-latest
-    outputs:
-      version: ${{ steps.get-version.outputs.version }}
-      artifact: ${{ steps.package.outputs.artifact }}
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS
+            runner: macos-latest
+            installers: target/release/bundle/dmg/*.dmg
+          - platform: Linux
+            runner: ubuntu-22.04
+            installers: |
+              target/release/bundle/appimage/*.AppImage
+              target/release/bundle/deb/*.deb
+              target/release/bundle/rpm/*.rpm
+          - platform: Windows
+            runner: windows-latest
+            installers: |
+              target/release/bundle/msi/*.msi
+              target/release/bundle/nsis/*.exe
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up Node.js 20 LTS
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Enable corepack (pnpm)
-        run: corepack enable && corepack prepare pnpm@10 --activate
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend
-        working-directory: apps/desktop
-        run: pnpm build
-
-      - name: Build Tauri app (release)
-        working-directory: apps/desktop
-        run: pnpm tauri build
-
-      - name: Get version from package.json
-        id: get-version
-        run: |
-          VERSION=$(node -e "console.log(require('./apps/desktop/package.json').version)")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Package macOS .app and .dmg
-        id: package
-        run: |
-          # Zip the .app bundle (GitHub release assets must be single files)
-          cd target/release/bundle/macos
-          zip -r -X "../Next-Agent-macOS-aarch64.app.zip" "Next Agent.app"
-          echo "artifact=$(pwd)/../Next-Agent-macOS-aarch64.app.zip" >> "$GITHUB_OUTPUT"
-          # Also expose the DMG path if it exists
-          if [ -f "../dmg/Next Agent_${VERSION}_aarch64.dmg" ]; then
-            echo "dmg=$(pwd)/../dmg/Next Agent_${VERSION}_aarch64.dmg" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: next-agent-macos
-          path: |
-            target/release/bundle/macos/Next Agent.app/
-            target/release/bundle/dmg/
-
-  build-linux:
-    name: Build Linux
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.get-version.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Linux system dependencies
+      - uses: actions/checkout@v4
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            libssl-dev \
-            librsvg2-dev \
-            libayatana-appindicator3-dev
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up Node.js 20 LTS
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Enable corepack (pnpm)
-        run: corepack enable && corepack prepare pnpm@10 --activate
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend
-        working-directory: apps/desktop
-        run: pnpm build
-
-      - name: Build Tauri app (release)
-        working-directory: apps/desktop
-        run: pnpm tauri build
-
-      - name: Get version from package.json
-        id: get-version
+            libwebkit2gtk-4.1-dev build-essential libssl-dev libasound2-dev \
+            libgtk-layer-shell-dev librsvg2-dev libayatana-appindicator3-dev
+      - name: Read Rust channel
+        id: toolchain
         run: |
-          VERSION=$(node -e "console.log(require('./apps/desktop/package.json').version)")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+          channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' rust-toolchain.toml)"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
         with:
-          name: next-agent-linux
-          path: target/release/bundle/**/*
-
-  build-windows:
-    name: Build Windows
-    runs-on: windows-latest
-    outputs:
-      version: ${{ steps.get-version.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up Node.js 20 LTS
-        uses: actions/setup-node@v4
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
-
-      - name: Enable corepack (pnpm)
-        run: corepack enable && corepack prepare pnpm@10 --activate
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend
-        working-directory: apps/desktop
-        run: pnpm build
-
-      - name: Build Tauri app (release)
-        working-directory: apps/desktop
-        run: pnpm tauri build
-
-      - name: Get version from package.json
-        id: get-version
+      - name: Verify release version
         run: |
-          $VERSION = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-          echo "version=$VERSION" >> $env:GITHUB_OUTPUT
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+          node --input-type=module <<'JS'
+          import { readFileSync } from "node:fs";
+          const read = (path) => JSON.parse(readFileSync(path, "utf8"));
+          const app = read("apps/desktop/package.json").version;
+          const bundle = read("apps/desktop/src-tauri/tauri.conf.json").version;
+          if (app !== bundle || process.env.GITHUB_REF_NAME !== `v${app}`) {
+            throw new Error("The release tag must match both desktop versions.");
+          }
+          JS
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/desktop tauri build
+      - uses: actions/upload-artifact@v4
         with:
-          name: next-agent-windows
-          path: target/release/bundle/**/*
+          name: next-agent-${{ matrix.platform }}
+          path: ${{ matrix.installers }}
+          if-no-files-found: error
 
-  # ------------------------------------------------------------------
-  # Create / update GitHub release
-  # ------------------------------------------------------------------
-  release:
-    name: Create GitHub Release
-    needs: [build-macos, build-linux, build-windows]
+  publish:
+    name: Publish installers
+    needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
+          pattern: next-agent-*
           path: dist
-          merge-multiple: true
-
-      - name: List downloaded assets
-        run: find dist -type f | sort
-
-      - name: Get version
-        run: |
-          VERSION=$(node -e "console.log(require('./apps/desktop/package.json').version)")
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Generate release notes from commits
-        id: notes
-        run: |
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -n "$PREVIOUS_TAG" ]; then
-            LOG=$(git log "$PREVIOUS_TAG..HEAD" --pretty=format:"- %s (%h)")
-          else
-            LOG=$(git log --pretty=format:"- %s (%h)" -n 50)
-          fi
-          {
-            echo "## Next Agent v${VERSION}"
-            echo ""
-            echo "Local-first, cross-platform AI workstation — coding agents, Markdown knowledge vault, auditable permission engine."
-            echo ""
-            echo "### Installers"
-            echo "- macOS: Next Agent.app / Next Agent_${VERSION}_aarch64.dmg"
-            echo "- Linux: AppImage / .deb / .rpm"
-            echo "- Windows: .msi / .exe installer"
-            echo ""
-            echo "### Changes since ${PREVIOUS_TAG:-previous release}"
-            echo ""
-            echo "$LOG"
-          } > release-notes.md
-          echo "notes_file=release-notes.md" >> "$GITHUB_OUTPUT"
-
-      - name: Create git tag
-        run: |
-          TAG="v${VERSION}"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists, will update release instead."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag "$TAG"
-            git push origin "$TAG"
-          fi
-
-      - name: Create or update release
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          TAG="v${VERSION}"
-          if gh release view "$TAG" --json tagName >/dev/null 2>&1; then
-            gh release edit "$TAG" \
-              --title "Next Agent v${VERSION}" \
-              --notes-file release-notes.md
-          else
-            gh release create "$TAG" \
-              --title "Next Agent v${VERSION}" \
-              --notes-file release-notes.md
-          fi
-
-      - name: Upload release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="v${VERSION}"
-          # Upload every file in dist (skips directories)
-          find dist -type f -print0 | while IFS= read -r -d '' f; do
-            gh release upload "$TAG" "$f" --clobber
+          for platform in macOS Linux Windows; do
+            if [[ -z "$(find "dist/next-agent-$platform" -type f -print -quit)" ]]; then
+              echo "Missing $platform installers."
+              exit 1
+            fi
           done
+          assets=()
+          while IFS= read -r -d '' asset; do
+            assets+=("$asset")
+          done < <(find dist -type f -print0)
+          draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "$draft" == false ]]; then
+            echo "Release $GITHUB_REF_NAME is already published."
+            exit 0
+          fi
+          if [[ -z "$draft" ]]; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --generate-notes --title "Next Agent $GITHUB_REF_NAME"
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false
