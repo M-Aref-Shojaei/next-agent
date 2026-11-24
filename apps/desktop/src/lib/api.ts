@@ -60,6 +60,20 @@ export interface Workspace {
   path: string;
   name: string;
 }
+
+export interface ProjectEntry {
+  name: string;
+  children: ProjectEntry[] | null;
+}
+
+export interface WorkspaceDiscovery {
+  agentInstructions: string | null;
+  designMd: string | null;
+  tokensCss: string | null;
+  vaultPath: string | null;
+  files: ProjectEntry[];
+  truncated: boolean;
+}
 export interface Rule {
   id: string;
   scope: string;
@@ -131,6 +145,9 @@ export interface BoardSketchData {
 export interface Api {
   workspaceOpen(path: string): Promise<Workspace>;
   workspaceList(): Promise<Workspace[]>;
+  workspaceCreate(parent: string, name: string): Promise<Workspace>;
+  workspaceDiscover(workspaceId: string): Promise<WorkspaceDiscovery>;
+  showOpenFilePicker(): Promise<string | null>;
   vaultSet(path: string): Promise<string>;
   vaultGet(): Promise<string | null>;
   settingGet(key: string): Promise<string | null>;
@@ -349,6 +366,9 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 const tauriApi: Api = {
   workspaceOpen: (path) => call("workspace_open", { path }),
   workspaceList: () => call("workspace_list"),
+  workspaceCreate: (parent, name) => call("workspace_create", { parent, name }),
+  workspaceDiscover: (workspaceId) => call("workspace_discover", { workspaceId }),
+  showOpenFilePicker: () => call("show_open_file_picker"),
   vaultSet: (path) => call("vault_set", { path }),
   vaultGet: () => call("vault_get"),
   settingGet: (key) => call("setting_get", { key }),

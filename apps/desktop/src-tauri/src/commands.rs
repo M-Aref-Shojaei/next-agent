@@ -25,6 +25,33 @@ pub fn workspace_list(service: Svc) -> Result<Vec<WorkspaceDto>, String> {
 }
 
 #[tauri::command]
+pub fn workspace_create(
+    service: Svc,
+    parent: String,
+    name: String,
+) -> Result<WorkspaceDto, String> {
+    service.workspace_create(&parent, &name)
+}
+
+#[tauri::command]
+pub async fn workspace_discover(
+    service: Svc<'_>,
+    workspace_id: String,
+) -> Result<crate::projects::WorkspaceDiscovery, String> {
+    let service = Arc::clone(service.inner());
+    tauri::async_runtime::spawn_blocking(move || service.workspace_discover(&workspace_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn show_open_file_picker() -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(crate::projects::pick_folder)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub fn vault_set(service: Svc, path: String) -> Result<String, String> {
     service.vault_set(&path)
 }
