@@ -1137,6 +1137,138 @@ async fn legacy_router_settings_become_a_connection() {
 }
 
 #[tokio::test]
+async fn connection_target_uses_only_the_selected_endpoint() {
+    let first = MockServer::start().await;
+    let selected = MockServer::start().await;
+    let mut primary = conn(
+        "first",
+        "custom",
+        ProviderKind::OpenAi,
+        &format!("{}/v1", first.uri()),
+        1,
+    );
+    primary.name = "connection:second".into();
+    let secondary = conn(
+        "second",
+        "custom",
+        ProviderKind::OpenAi,
+        &format!("{}/v1", selected.uri()),
+        10,
+    );
+    let h = harness(vec![primary, secondary], vec![], GatewaySettings::default());
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(header("authorization", "Bearer key-second"))
+        .and(body_partial_json(json!({"model": "vendor/model"})))
+        .respond_with(openai_text("selected"))
+        .expect(1)
+        .mount(&selected)
+        .await;
+    let (result, _) = run(&h.gateway, request("connection:second/vendor/model")).await;
+    assert_eq!(result.expect("selected connection").content, "selected");
+    assert_eq!(bodies(&first).await, [] as [Value; 0]);
+    assert_eq!(h.gateway.config.accounts("custom").len(), 2);
+    assert_eq!(h.gateway.config.accounts("custom")[0].id, "first");
+}
+
+#[tokio::test]
+async fn an_open_circuit_does_not_disable_other_custom_endpoints() {
+    let failed = MockServer::start().await;
+    let healthy = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&failed)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(openai_text("healthy"))
+        .expect(1)
+        .mount(&healthy)
+        .await;
+    let first = conn("one", "custom", ProviderKind::OpenAi, &failed.uri(), 1);
+    let second = conn("two", "custom", ProviderKind::OpenAi, &healthy.uri(), 2);
+    let first_target = Target::for_suggestion(&first, "m").label();
+    let second_target = Target::for_suggestion(&second, "m").label();
+    let gateway = harness(vec![first, second], vec![], GatewaySettings::default())
+        .gateway
+        .with_state(Arc::new(GatewayState::default().with_breaker_policy(
+            breaker::BreakerPolicy {
+                threshold: 1,
+                ..breaker::BreakerPolicy::default()
+            },
+        )));
+
+    assert!(run(&gateway, request(&first_target)).await.0.is_err());
+    let refused = run(&gateway, request(&first_target)).await.0.unwrap_err();
+    assert!(refused.to_string().contains("circuit open"));
+    assert_eq!(answer(&gateway, request(&second_target)).await, "healthy");
+}
+
+#[test]
+fn missing_connection_target_never_falls_back_to_a_bare_model() {
+    let config = GatewayConfig {
+        connections: vec![conn(
+            "remaining",
+            "custom",
+            ProviderKind::OpenAi,
+            "http://127.0.0.1/v1",
+            1,
+        )],
+        ..GatewayConfig::default()
+    };
+    assert!(config
+        .resolve("connection:removed/vendor/model", "chat")
+        .is_err());
+    assert!(config.resolve("vendor/model", "chat").is_ok());
+}
+
+#[tokio::test]
+async fn provider_key_follows_only_same_origin_redirects() {
+    let origin = MockServer::start().await;
+    let other = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/v1/catalog"))
+        .mount(&origin)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/catalog"))
+        .and(header("x-api-key", "key-anthropic"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [{"id": "claude"}]})))
+        .expect(1)
+        .mount(&origin)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/other/models"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", other.uri()))
+        .mount(&origin)
+        .await;
+    let account = conn(
+        "anthropic",
+        "anthropic",
+        ProviderKind::Anthropic,
+        &format!("{}/v1", origin.uri()),
+        1,
+    );
+    let h = harness(vec![account.clone()], vec![], GatewaySettings::default());
+    assert_eq!(
+        h.gateway.list_models(&account).await.expect("same origin"),
+        ["claude"]
+    );
+    let mut redirected = account;
+    redirected.base_url = format!("{}/other", origin.uri());
+    assert!(matches!(
+        h.gateway.list_models(&redirected).await,
+        Err(LlmError::Http { status: 302, .. })
+    ));
+    assert!(other
+        .received_requests()
+        .await
+        .expect("requests")
+        .is_empty());
+}
+
+#[tokio::test]
 async fn config_loads_rows_and_reports_unknown_models() {
     let store = Store::open_in_memory().expect("store");
     store

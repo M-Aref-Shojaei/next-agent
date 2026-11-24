@@ -51,6 +51,7 @@ use futures_util::StreamExt;
 use next_agent_process_manager::{HealthProbe, HealthReport, HealthStatus, ProbeFuture};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -181,9 +182,36 @@ pub struct Target {
 }
 
 impl Target {
+    const CONNECTION_PREFIX: &str = "connection:";
+
+    /// A model suggestion scopes separately configured endpoints by connection.
+    #[must_use]
+    pub fn for_suggestion(connection: &Connection, model: &str) -> Self {
+        Self {
+            provider: routing_key(connection).into_owned(),
+            model: model.to_string(),
+        }
+    }
+
+    fn connection_address(connection_id: &str) -> String {
+        format!("{}{connection_id}", Self::CONNECTION_PREFIX)
+    }
+
     #[must_use]
     pub fn label(&self) -> String {
         format!("{}/{}", self.provider, self.model)
+    }
+}
+
+fn routing_key(connection: &Connection) -> Cow<'_, str> {
+    // Native provider accounts share the vendor's infrastructure. User-defined
+    // endpoints can be entirely unrelated, even with the same preset.
+    if matches!(connection.provider.as_str(), "custom" | "9router")
+        && connection.id != LEGACY_ROUTER_ID
+    {
+        Cow::Owned(Target::connection_address(&connection.id))
+    } else {
+        Cow::Borrowed(&connection.provider)
     }
 }
 
@@ -288,30 +316,44 @@ impl GatewayConfig {
             .or_else(|| self.legacy_model.clone())
     }
 
-    /// Active accounts answering to a provider address, by priority.
+    /// Active accounts answering to a provider or connection address, by priority.
     #[must_use]
     pub fn accounts(&self, provider: &str) -> Vec<&Connection> {
         let mut accounts: Vec<&Connection> = self
             .connections
             .iter()
-            .filter(|c| c.is_active && c.answers_to(provider))
+            .filter(|c| c.is_active && Self::matches_address(c, provider))
             .collect();
         accounts.sort_by_key(|c| c.priority);
         accounts
     }
 
-    /// Parse `provider/model`. A bare model name works when exactly one
-    /// active connection exists.
+    fn matches_address(connection: &Connection, address: &str) -> bool {
+        address
+            .strip_prefix(Target::CONNECTION_PREFIX)
+            .map_or_else(|| connection.answers_to(address), |id| connection.id == id)
+    }
+
+    /// Parse `provider/model` or `connection:<id>/model`. A bare model name
+    /// works when exactly one active connection exists.
     #[must_use]
     pub fn parse_target(&self, name: &str) -> Option<Target> {
         let name = name.trim();
         if let Some((prefix, model)) = name.split_once('/') {
-            if !model.is_empty() && self.connections.iter().any(|c| c.answers_to(prefix)) {
+            if !model.is_empty()
+                && self
+                    .connections
+                    .iter()
+                    .any(|c| Self::matches_address(c, prefix))
+            {
                 return Some(Target {
                     provider: prefix.to_string(),
                     model: model.to_string(),
                 });
             }
+        }
+        if name.starts_with(Target::CONNECTION_PREFIX) {
+            return None;
         }
         let active: Vec<&Connection> = self.connections.iter().filter(|c| c.is_active).collect();
         match active.as_slice() {
@@ -632,6 +674,19 @@ impl Gateway {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .user_agent(concat!("next-agent/", env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                // Anthropic and Gemini use provider-specific key headers that
+                // reqwest's default cross-origin header filtering doesn't remove.
+                if attempt
+                    .previous()
+                    .first()
+                    .is_some_and(|initial| initial.origin() == attempt.url().origin())
+                {
+                    reqwest::redirect::Policy::default().redirect(attempt)
+                } else {
+                    attempt.stop()
+                }
+            }))
             .build()
             .map_err(|error| LlmError::Config(error.to_string()))?;
         Ok(Self {
@@ -784,7 +839,7 @@ impl Gateway {
                         |a| a.id.clone(),
                         |a| {
                             let usable = self.state.available(&a.id, &target.model);
-                            self.state.breakers.state(&a.provider).score()
+                            self.state.breakers.state(&routing_key(a)).score()
                                 * f64::from(u8::from(usable))
                         },
                     );
@@ -798,7 +853,8 @@ impl Gateway {
                     )));
                     continue;
                 }
-                if self.state.breakers.permit(&account.provider) == breaker::Permit::Refused {
+                let breaker_key = routing_key(account);
+                if self.state.breakers.permit(&breaker_key) == breaker::Permit::Refused {
                     last_error = Some(LlmError::Unavailable(format!(
                         "{} is failing repeatedly; paused (circuit open)",
                         account.provider
@@ -812,7 +868,7 @@ impl Gateway {
                     combo: combo_name.as_deref(),
                 };
                 let outcome = self.attempt(&attempt, &body, options, &mut tee).await;
-                self.report_breaker(&account.provider, &outcome);
+                self.report_breaker(&breaker_key, &outcome);
                 match outcome {
                     Outcome::Done(answer) => {
                         self.state.succeed(&account.id, &target.model);
@@ -933,25 +989,25 @@ impl Gateway {
         self.config
             .accounts(address)
             .iter()
-            .map(|a| self.state.breakers.state(&a.provider).score())
+            .map(|a| self.state.breakers.state(&routing_key(a)).score())
             .fold(0.0, f64::max)
     }
 
-    fn report_breaker(&self, provider: &str, outcome: &Outcome) {
+    fn report_breaker(&self, key: &str, outcome: &Outcome) {
         let breakers = &self.state.breakers;
         match outcome {
             Outcome::Http { status, .. } if *status >= 500 => {
-                breakers.failure(provider);
+                breakers.failure(key);
             }
             Outcome::Http { status: 429, .. } | Outcome::NoKey(_) | Outcome::KeyUnavailable(_) => {
-                breakers.release(provider);
+                breakers.release(key);
             }
             // Any answer, even a request-scoped 4xx, shows the provider is up.
             Outcome::Done(_) | Outcome::Empty(_) | Outcome::Http { .. } => {
-                breakers.success(provider);
+                breakers.success(key);
             }
             Outcome::Transport(_) | Outcome::Fatal(_) => {
-                breakers.failure(provider);
+                breakers.failure(key);
             }
         }
     }
@@ -1816,7 +1872,7 @@ impl Gateway {
             );
         };
         let label = format!("{} · {}", account.name, target.model);
-        match self.state.breakers.state(&account.provider) {
+        match self.state.breakers.state(&routing_key(&account)) {
             breaker::BreakerState::Open => {
                 return HealthReport::new(
                     HealthStatus::Down,
