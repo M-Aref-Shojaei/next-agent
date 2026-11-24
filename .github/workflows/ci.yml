@@ -114,6 +114,11 @@ jobs:
 
       - name: Run Rust tests
         timeout-minutes: 10
+        env:
+          GIT_AUTHOR_NAME: Next Agent CI
+          GIT_AUTHOR_EMAIL: ci@example.invalid
+          GIT_COMMITTER_NAME: Next Agent CI
+          GIT_COMMITTER_EMAIL: ci@example.invalid
         run: |
           # Keep test processes in their own session so runner diagnostics survive
           # a stalled subprocess or a test exercising process-group cancellation.
