@@ -1,22 +1,33 @@
 <script lang="ts">
   import "../../app.css";
   import { onMount } from "svelte";
+  import { page } from "$app/state";
   import { app } from "$lib/app.svelte.ts";
   import { shouldCycleMode } from "$lib/shortcuts.ts";
   import { Banner, Button, Icon } from "$lib/ds/index.ts";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ActivityRail from "$lib/components/ActivityRail.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
+  import CommandPalette from "$lib/components/CommandPalette.svelte";
 
   let { children } = $props();
   /** Narrow windows: the sidebar is a drawer under the top bar. */
   let navOpen = $state(false);
+  let commandPaletteOpen = $state(false);
 
   onMount(() => {
     void app.init();
   });
 
   function onkeydown(event: KeyboardEvent) {
+    if (event.defaultPrevented || event.isComposing) return;
+    const opensPalette = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
+    // Notes reserves this shortcut for its own search palette.
+    if (opensPalette && page.route.id !== "/(app)/notes") {
+      event.preventDefault();
+      commandPaletteOpen = true;
+      return;
+    }
     const focused = document.activeElement instanceof HTMLElement && document.activeElement.hasAttribute("data-chat-input");
     if (shouldCycleMode(event, focused)) {
       event.preventDefault();
@@ -31,6 +42,8 @@
 </script>
 
 <svelte:window {onkeydown} />
+
+{#if commandPaletteOpen}<CommandPalette onclose={() => (commandPaletteOpen = false)} />{/if}
 
 <div class="shell">
   <ActivityRail />
