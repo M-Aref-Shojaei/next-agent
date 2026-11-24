@@ -599,9 +599,11 @@ fn kill_tree(child: &mut Child) {
     #[cfg(unix)]
     {
         // `unsafe` is forbidden in this workspace, so signal the process
-        // group through the `kill` utility instead of libc.
+        // group through the `kill` utility instead of libc. The option
+        // terminator keeps a negative group ID from being parsed as flags.
         let _ = Command::new("kill")
             .arg("-KILL")
+            .arg("--")
             .arg(format!("-{}", child.id()))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -875,6 +877,7 @@ mod tests {
     #[test]
     fn run_command_times_out_and_kills() {
         let dir = temp_dir("timeout");
+        let mut sibling = shell("exec sleep 30").spawn().expect("sibling");
         let mut tools = LocalTools::new().with_limits(ToolLimits {
             command_timeout: Duration::from_millis(200),
             ..ToolLimits::default()
@@ -887,9 +890,13 @@ mod tests {
                 cwd: dir,
             },
         );
+        let sibling_running = sibling.try_wait().expect("sibling status").is_none();
+        let _ = sibling.kill();
+        let _ = sibling.wait();
         assert!(!result.ok);
         assert!(result.output.starts_with("timed out"));
         assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(sibling_running, "timeout killed a different process group");
     }
 
     struct StaticPage(u16);

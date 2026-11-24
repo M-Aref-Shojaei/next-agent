@@ -189,7 +189,7 @@ impl DevServer {
         {
             // The dev server runs in its own process group: end the whole group.
             let _ = Command::new("kill")
-                .args(["-TERM", &format!("-{}", self.child.id())])
+                .args(["-TERM", "--", &format!("-{}", self.child.id())])
                 .status();
         }
         #[cfg(windows)]
