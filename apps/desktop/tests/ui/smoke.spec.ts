@@ -8,18 +8,24 @@ test.describe("Next Agent smoke tests", () => {
     await expect(page.locator("main, [role='main']").first()).toBeVisible();
   });
 
-  test("activity rail exposes seven keyboard-accessible modes", async ({ page }) => {
+  test("the activity rail exposes distinct destinations and marks only Chat current", async ({ page }) => {
     await page.goto("/");
     const rail = page.getByRole("navigation", { name: "Activity modes" });
     await expect(rail).toBeVisible();
-    await expect(rail.getByRole("link")).toHaveCount(7);
+    await expect(rail.getByRole("link")).toHaveText(["Chat", "Agents", "Knowledge", "Design", "Monitor"]);
     await expect(rail.getByRole("link", { name: "Chat" })).toHaveAttribute("aria-current", "page");
+    await expect(rail.locator('[aria-current="page"]')).toHaveCount(1);
+    await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
   });
 
-  test("navigate to settings", async ({ page }) => {
-    await page.goto("/settings");
-    
-    // Settings should be accessible
+  test("Settings remains keyboard-accessible from the narrow window menu", async ({ page }) => {
+    await page.setViewportSize({ width: 600, height: 800 });
+    await page.goto("/");
+    const menu = page.getByRole("button", { name: "Menu" });
+    await menu.press("Enter");
+    await expect(menu).toHaveAttribute("aria-expanded", "true");
+    await page.getByRole("link", { name: "Settings" }).press("Enter");
+    await expect(page).toHaveURL(/\/settings$/);
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   });
 

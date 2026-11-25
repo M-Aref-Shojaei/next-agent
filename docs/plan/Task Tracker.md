@@ -28,6 +28,10 @@ See [Design Workspace Plan](Design%20Workspace%20Plan.md) for dependencies and a
 
 | ID | Task | Depends on | Status | Acceptance evidence | Approved |
 |---|---|---|---|---|---|
+| CL-01 | Remove misleading duplicate navigation | — | ready for approval | 10 Chromium tests passed, including one current rail destination, narrow-window keyboard access to Settings, and Boards from the palette | ☐ |
+| CL-02 | Consolidate project and app navigation | CL-01, DW-02 | planned | Project Design is the canonical workspace and the app component preview has a distinct purpose and label, with old links still reachable | ☐ |
+| CL-03 | Unify project artifact storage and vault setup | DW-02 | planned | Existing notes and boards remain readable, fresh projects can save locally, and two-project switching tests prove writes stay scoped | ☐ |
+| CL-04 | Consolidate provider setup | Provider connection migration and review | planned | Saved connections and model roles work through one settings entry, with keychain and fallback regressions covered | ☐ |
 | DW-01 | Evaluate OpenPencil in the packaged desktop app | — | planned | Offline edit/save/reopen on supported desktop platforms, a representative .fig compatibility report, and comparable cold-start and bundle measurements | ☐ |
 | DW-02 | Add a project-scoped Design Workspace | — | planned | One Design destination links existing boards and prototypes to the active project, with accessible navigation and no migration of existing files | ☐ |
 | DW-03 | Edit and preview high-fidelity mockups | DW-01, DW-02 | planned | Open an imported copy or create a mockup, edit reusable components, undo, save and reopen without changing the original | ☐ |

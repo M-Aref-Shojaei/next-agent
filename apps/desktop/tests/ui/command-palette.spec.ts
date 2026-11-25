@@ -18,6 +18,12 @@ test("command palette filters and opens routes with the keyboard", async ({ page
   await search.press("Enter");
   await expect(page).toHaveURL(/\/design$/);
   await expect(palette).toHaveCount(0);
+
+  await page.keyboard.press("Control+k");
+  await search.fill("Boards");
+  await expect(palette.getByRole("option", { name: /^Boards/ })).toBeVisible();
+  await search.press("Enter");
+  await expect(page).toHaveURL(/\/boards$/);
 });
 
 test("Escape restores focus and Notes keeps its search shortcut", async ({ page }) => {

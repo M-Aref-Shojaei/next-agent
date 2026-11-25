@@ -10,6 +10,8 @@ status: proposed
 
 Give developers one project-scoped **Design** destination with **Boards**, **Screens**, **Flows**, and **Design System** views. Keep Excalidraw as the board editor and evaluate OpenPencil as the editable mockup engine. Use the existing Design Studio, model gateway, and worktree review for AI-assisted design and implementation. Keep the navigation and controls consistent with Next Agent's own design system.
 
+The workflow ships as part of one Next Agent installation. Bundle the selected editor code, fonts, and WASM locally. Opening, editing, checking, and saving mockups use no separate app, account, or design service. AI generation uses the configured model. See the [Feature Consolidation Audit](Feature%20Consolidation%20Audit.md) for the features that share a purpose and the compatibility gates for removing their duplicates.
+
 | Need | Proposed solution |
 |---|---|
 | Miro-style brainstorming | Use the existing Excalidraw canvas for notes, frames, connectors, and journey maps. Open a selected board frame as context for a mockup or flow. |
@@ -33,7 +35,7 @@ OpenPencil documents a headless Vue SDK and a framework-neutral engine. Its [Fig
 
 ## Implementation sequence
 
-1. **DW-01 — OpenPencil feasibility.** Pin a published SDK version and verify its artifacts and licenses. Try a lazy-loaded, isolated editor inside the existing Svelte/Tauri shell. Test CanvasKit and fonts offline, input/focus, a representative .fig import and export, save/reopen, and undo. Measure installer size, cold startup, and editor-load time against the current app. If the embed fails the fidelity or platform gates, retain local design exchange and evaluate a supported editor bridge before committing to a replacement.
+1. **DW-01 — OpenPencil feasibility.** Pin a published SDK version and verify its artifacts and licenses. Try a lazy-loaded, isolated editor inside the existing Svelte/Tauri shell. Test CanvasKit and fonts offline, input/focus, a representative .fig import and export, save/reopen, undo, and optional [interactive control previews](https://openpencil.dev/development/behaviours-and-preview). Measure installer size, cold startup, and editor-load time against the current app. If the embed fails the fidelity or platform gates, keep the existing built-in prototype editor while evaluating a smaller local editor integration.
 2. **DW-02 — Workspace navigation.** Add the Design views, shared project context, and links between the existing board and prototype paths using established Svelte components. Verify empty projects, projects without a vault, missing artifacts, and keyboard navigation. This can proceed in parallel with DW-01.
 3. **DW-03 — Editable screens.** Add import-as-copy, a starter mockup, canvas editing, and safe save/reopen. Start with frames, text, layout, reused components, and variables. Prove type, layout, and key component fidelity using real fixtures and report unsupported input.
 4. **DW-04 — Flow authoring and playback.** Let users connect mockups, preview branches, and attach expected outcomes. Show a static flow map and a runnable prototype. Catch broken links, missing entry points, and unreachable screens before marking a flow ready to review.

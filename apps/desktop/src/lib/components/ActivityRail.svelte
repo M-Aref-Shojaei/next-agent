@@ -4,23 +4,21 @@
 
   const ITEMS = [
     { href: "/", label: "Chat", icon: "more" },
-    { href: "/", label: "Code", icon: "edit" },
     { href: "/settings/overlay/agents", label: "Agents", icon: "settings" },
     { href: "/notes", label: "Knowledge", icon: "search" },
     { href: "/design", label: "Design", icon: "edit" },
-    { href: "/settings", label: "Source Control", icon: "check" },
     { href: "/usage", label: "Monitor", icon: "info" },
   ] as const;
 
-  function active(href: string, label: string) {
-    if (label === "Chat" || label === "Code") return page.url.pathname === "/";
+  function active(href: string) {
     return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
   }
 </script>
 
 <nav class="rail" aria-label="Activity modes">
   {#each ITEMS as item (item.label)}
-    <a class:active={active(item.href, item.label)} href={item.href} aria-current={active(item.href, item.label) ? "page" : undefined}>
+    {@const current = active(item.href)}
+    <a class:active={current} href={item.href} aria-current={current ? "page" : undefined}>
       <Icon name={item.icon} size={18} />
       <span>{item.label}</span>
     </a>
