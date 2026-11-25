@@ -8,6 +8,8 @@ status: draft
 
 The goal is one cohesive Tauri 2 app that is **local-first, transparent, auditable, cross-platform** (macOS, Windows, Linux from M1).
 
+The [Product Work Plan](Product%20Work%20Plan.md) records the current release, review queue, and implementation order for simplifying the desktop app, integrating the design workflow, and adding a project backlog. The [Task Tracker](Task%20Tracker.md) holds the corresponding work items.
+
 ## Guiding principles
 1. **Every side effect goes through the Rust core.** Agents propose tool calls; the core's tool broker evaluates them with the [[Permission Engine]] and executes them. No component bypasses it.
 2. **Markdown is the source of truth** for knowledge; SQLite holds metadata, events and audit only.
