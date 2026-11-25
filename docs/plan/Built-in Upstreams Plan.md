@@ -61,7 +61,7 @@ Goal: one self-contained app. No separate programs, no terminal setup. We extrac
 - Penpot (MPL-2.0): a full Figma-style design tool, but it needs its own server (Postgres, Redis), so it can't be built in. The Excalidraw board and the AI Design Studio cover the need.
 - Open Design's video, PPTX and image generation, plugin marketplace and cloud features.
 - Open Design's UI and UX (the owner found serious flaws). We keep only its mechanics.
-- Figma `.fig` import via open-pencil (MIT, Tauri, early stage): later, once that project is stable.
+- Editable Figma `.fig` mockups via OpenPencil are planned in [Design Workspace Plan](Design%20Workspace%20Plan.md). The feasibility task covers packaged desktop support and import fidelity.
 - tldraw: its licence requires a watermark and a paid production key, so we don't use it.
 - WhatsApp's unofficial protocol: risk of account bans. Use the official Cloud API later if needed.
 - Logseq whiteboards, PDF annotation, Datalog queries, plugin API.

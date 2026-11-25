@@ -16,6 +16,12 @@ Results of the Playwright UI test pipeline. Each run produces a row in the table
 | local-2026-11-22-command-palette | 2026-11-22 | uncommitted | Command palette | Cmd/Ctrl+K opens searchable route navigation; no side-effect actions | pending | Owner |
 | local-2026-11-24-projects | 2026-11-24 | PR #3 | Project setup and command palette fix | 10 Chromium tests passed, including project opening and creation, vault graph navigation, project switching, and keyboard navigation | pending | Owner |
 
+## Planned design workspace reviews
+
+| Change | Review evidence | Status | Reviewer |
+|---|---|---|---|
+| Design Workspace pilot (DW-02 through DW-06) | Screenshots and Playwright results for storyboard → editable mockup → clickable flow → implementation diff. Include keyboard traversal, light/dark modes, and invalid-path, empty-project, missing-vault, and unavailable-model states. | planned | Owner |
+
 ## How to review
 
 1. Open the GitHub Actions run for the PR/commit (linked from the pipeline).

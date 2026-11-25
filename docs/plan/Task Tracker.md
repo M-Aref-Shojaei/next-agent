@@ -22,6 +22,19 @@ All remaining work for the Next Agent project. Each task has a status, the chang
 | 10 | Project setup and discovery | Open an existing folder or create a new project, then show its agent instructions, design files, vault graph and file tree | ready for approval | 3 focused Rust tests and 10 Chromium tests passed; `pnpm verify`, Clippy and desktop frontend build passed | ☐ |
 | 11 | Pull request and release | Fix actionable PR failures, verify required checks and publish through the approved release workflow | awaiting CI and owner approval | Release dry run verified tag/version matching and missing-installer handling; hosted release matrix pending | ☐ |
 
+## Design Workspace
+
+See [Design Workspace Plan](Design%20Workspace%20Plan.md) for dependencies and acceptance criteria.
+
+| ID | Task | Depends on | Status | Acceptance evidence | Approved |
+|---|---|---|---|---|---|
+| DW-01 | Evaluate OpenPencil in the packaged desktop app | — | planned | Offline edit/save/reopen on supported desktop platforms, a representative .fig compatibility report, and comparable cold-start and bundle measurements | ☐ |
+| DW-02 | Add a project-scoped Design Workspace | — | planned | One Design destination links existing boards and prototypes to the active project, with accessible navigation and no migration of existing files | ☐ |
+| DW-03 | Edit and preview high-fidelity mockups | DW-01, DW-02 | planned | Open an imported copy or create a mockup, edit reusable components, undo, save and reopen without changing the original | ☐ |
+| DW-04 | Author and check clickable flows | DW-02, DW-03 | planned | Board sketch opens an editable mockup, a keyboard-operable flow runner handles expected and failure paths, and invalid links are flagged | ☐ |
+| DW-05 | Connect project tokens and AI-assisted design | DW-02, DW-03 | planned | Light/dark token mappings apply to previews, AI changes are reviewable, and existing tokens are updated only through an explicit approved diff | ☐ |
+| DW-06 | Implement and verify the pilot workflow | DW-04, DW-05 | planned | Approved prototype becomes a worktree diff, with matching Playwright checks against the running app and owner review evidence | ☐ |
+
 ## Definition of done (M1)
 
 - All steps accepted on macOS, Windows, Linux.
