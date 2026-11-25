@@ -34,7 +34,7 @@ See the [Product Work Plan](Product%20Work%20Plan.md) for the recommended order 
 | UX-02 | Simplify the project and task screens | UX-01 | planned | The primary action is clear in empty, ready, and error states. Keyboard navigation, project switching, and access to review and Settings pass Playwright. | ☐ |
 | PT-01 | Add a local project task list | — | planned | Quick-add, acceptance checklists, status changes, and reopen persistence work offline in two separate projects. | ☐ |
 | PT-02 | Link planned tasks to agent runs and review | PT-01 | planned | An explicit Run with Agent action links one or more runs and the diff to the same task. Retries create no duplicate task, and review approval is separate from run success. | ☐ |
-| PT-03 | Link work in Notes and Design | PT-01, DW-02 | planned | A note TODO or board item can link to the same task. Switching projects cannot update the other project's task or source artifact. | ☐ |
+| PT-03 | Link work in Notes and Design | PT-01, DW-02, CL-03 | planned | A note TODO or board item can link to the same task. Switching projects cannot update the other project's task or source artifact. | ☐ |
 | PT-04 | Add optional task board and Markdown exchange | PT-01, PT-02 | planned | List and Kanban show the same records and status. A sample Markdown import is previewed, deduplicated, and exported with acceptance criteria intact. | ☐ |
 
 ## Design Workspace
