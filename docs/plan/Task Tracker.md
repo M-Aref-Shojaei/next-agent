@@ -35,6 +35,9 @@ See the [Product Work Plan](Product%20Work%20Plan.md) for the recommended order 
 | UX-02 | Refactor the desktop workspace | UX-01 | planned | Clear primary actions in empty, ready, and error states. Keyboard navigation, project switching, and access to Tasks, Design, review, and Settings pass Playwright for the flows implemented. | ☐ |
 | RF-01 | Audit duplicate and redundant code | — | done | [Audit and handoff](Clean%20Code%20Scope%20Audit.md) record desktop and Rust candidates, ownership boundaries, and an independently reviewed first refactor. | ☐ |
 | RF-02 | Consolidate verified duplicate code | RF-01 | planned | Focused refactors preserve supported callers, persisted data, and permissions. Focused and full checks pass before redundant paths are removed. | ☐ |
+| SEC-01 | Review project isolation and sensitive data in diagnostics | — | planned | Document enforcement and test coverage for project isolation and sensitive data in diagnostics. Register each verified gap as a focused change for independent review. Reuse task 4 for execution paths and worktree review. | ☐ |
+| PERF-01 | Measure the main desktop workflows | — | planned | Reproducible baselines identify where native project discovery and vault indexing spend time. Record inputs, commit, hardware, and repeated results. | ☐ |
+| PERF-02 | Optimize one measured bottleneck | PERF-01 | planned | A focused change meets the target agreed from the baseline and preserves behavior and resource bounds. Record before-and-after evidence or close with a measured no-op decision. | ☐ |
 | PT-01 | Add the vault-backed project Tasks tab | CL-03, UX-01 | planned | Quick-add, acceptance checklists, and status changes update the canonical vault Markdown. The Tasks tab opens from the project sidebar by mouse and keyboard and addresses the Tasks findings from UX-01. Two offline projects reopen with independent task lists. | ☐ |
 | PT-02 | Link planned tasks to agent runs and review | PT-01 | planned | An explicit Run with Agent action links one or more runs and the diff to the same task. Retries create no duplicate task, and review approval is separate from run success. | ☐ |
 | PT-03 | Link work in Notes and Design | PT-01, DW-02, CL-03 | planned | A note TODO or board item can link to the same task. Switching projects cannot update the other project's task or source artifact. | ☐ |
@@ -62,8 +65,11 @@ See [Design Workspace Plan](Design%20Workspace%20Plan.md) for dependencies and a
 | ID | Task | Status | Acceptance evidence |
 |---|---|---|---|
 | PLAN-01 | Assess and decompose the active tracker | Done | 70 work packages cover 25 tracker items with remaining work or evidence. Independently reviewed. Verified parent status preservation, unique IDs, link targets, and an acyclic dependency graph. |
+| PLAN-02 | Sequence the four refactors for parallel execution | Done | Four concurrent starting assignments and eight new security and performance cards. Independent review, link and dependency validation, and `pnpm check` passed. |
 
 ## Execution table
+
+Use the [Parallel Refactor Plan](Parallel%20Refactor%20Plan.md) to start the UI/UX, security, optimization, and readability lanes together.
 
 Each row is one work package. Open its ID for scope and the specific conditions to mark it **Done**. Update the status, assignee, and evidence in this table. Dependencies include the parent’s gates. See the [Work Package Guide](Work%20Package%20Guide.md) for how to claim, parallelize, review, and close work.
 
@@ -131,6 +137,19 @@ Each row is one work package. Open its ID for scope and the specific conditions 
 | [RF-02-A](Work%20Packages%20-%20UX%20and%20Refactoring.md#rf-02-a--lock-down-the-existing-behavior) | Lock down the existing behavior | RF-01 | Planned | — | [Selected scope and checks](Clean%20Code%20Scope%20Audit.md#rf-02-handoff) |
 | [RF-02-B](Work%20Packages%20-%20UX%20and%20Refactoring.md#rf-02-b--move-callers-to-the-surviving-implementation) | Move callers to the surviving implementation | RF-01, RF-02-A | Planned | — | — |
 | [RF-02-C](Work%20Packages%20-%20UX%20and%20Refactoring.md#rf-02-c--remove-the-redundant-implementation-and-recheck) | Remove the redundant implementation and recheck | RF-01, RF-02-B | Planned | — | — |
+
+### Security and optimization
+
+| ID | Task | Depends on | Status | Assignee | Evidence or blocker |
+|---|---|---|---|---|---|
+| [SEC-01-A](Parallel%20Refactor%20Plan.md#sec-01-a--map-project-and-vault-isolation) | Map project and vault isolation | — | Planned | — | — |
+| [SEC-01-B](Parallel%20Refactor%20Plan.md#sec-01-b--review-sensitive-data-in-diagnostics) | Review sensitive data in diagnostics | — | Planned | — | — |
+| [SEC-01-C](Parallel%20Refactor%20Plan.md#sec-01-c--schedule-confirmed-security-fixes) | Schedule confirmed security fixes | SEC-01-A, SEC-01-B | Planned | — | — |
+| [PERF-01-A](Parallel%20Refactor%20Plan.md#perf-01-a--measure-native-project-discovery) | Measure native project discovery | — | Planned | — | — |
+| [PERF-01-B](Parallel%20Refactor%20Plan.md#perf-01-b--measure-vault-indexing-and-refresh) | Measure vault indexing and refresh | — | Planned | — | — |
+| [PERF-01-C](Parallel%20Refactor%20Plan.md#perf-01-c--select-one-measured-bottleneck) | Select one measured bottleneck | PERF-01-A, PERF-01-B | Planned | — | — |
+| [PERF-02-A](Parallel%20Refactor%20Plan.md#perf-02-a--change-the-selected-hot-path) | Change the selected hot path | PERF-01 | Planned | — | — |
+| [PERF-02-B](Parallel%20Refactor%20Plan.md#perf-02-b--compare-and-review-the-candidate) | Compare and review the candidate | PERF-01, PERF-02-A | Planned | — | — |
 
 ### Design workspace
 
