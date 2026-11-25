@@ -30,12 +30,15 @@ See the [Product Work Plan](Product%20Work%20Plan.md) for the recommended order 
 |---|---|---|---|---|---|
 | REL-01 | Fix the macOS release bundle signature | 11 | planned | A clean download verifies as a signed bundle and installs and launches on an Apple Silicon Mac without local repair. Record signing and notarization requirements for public distribution. | ☐ |
 | PROV-01 | Review guided 9Router setup and isolation | — | ready for approval | [PR #10](https://github.com/M-Aref-Shojaei/next-agent/pull/10) passed CI and UI checks. Model import, connection-scoped routing, fallback, and redirect regression tests passed against mock endpoints. | ☐ |
-| UX-01 | Review the everyday desktop workflow | CL-01 | planned | Annotated review of opening a project, starting an agent task, and inspecting its diff at typical and narrow widths. Each finding identifies the affected action and a proposed fix. | ☐ |
-| UX-02 | Simplify the project and task screens | UX-01 | planned | The primary action is clear in empty, ready, and error states. Keyboard navigation, project switching, and access to review and Settings pass Playwright. | ☐ |
-| PT-01 | Add a local project task list | — | planned | Quick-add, acceptance checklists, status changes, and reopen persistence work offline in two separate projects. | ☐ |
+| PS-01 | Load or create project instructions | 10 | planned | Open and New Project read root `AGENTS.md`. New Project creates a starter when absent. Open offers creation if missing. Reopening never overwrites edits, and switching projects reloads instructions from the selected root. | ☐ |
+| UX-01 | Audit the desktop UI and UX | CL-01 | planned | Annotated desktop and narrow-window review of project opening, vault and task setup, Design, agent chat, and diff review. Each finding identifies the affected action and a proposed fix. | ☐ |
+| UX-02 | Refactor the desktop workspace | UX-01 | planned | Clear primary actions in empty, ready, and error states. Keyboard navigation, project switching, and access to Tasks, Design, review, and Settings pass Playwright for the flows implemented. | ☐ |
+| RF-01 | Audit duplicate and redundant code | — | planned | Inventory candidates across desktop UI, Tauri commands, and core services. Each finding names the files and callers, behavioral differences, canonical implementation, and needed regression tests. | ☐ |
+| RF-02 | Consolidate verified duplicate code | RF-01 | planned | Focused refactors preserve supported callers, persisted data, and permissions. Focused and full checks pass before redundant paths are removed. | ☐ |
+| PT-01 | Add the vault-backed project Tasks tab | CL-03, UX-01 | planned | Quick-add, acceptance checklists, and status changes update the canonical vault Markdown. The Tasks tab opens from the project sidebar by mouse and keyboard and addresses the Tasks findings from UX-01. Two offline projects reopen with independent task lists. | ☐ |
 | PT-02 | Link planned tasks to agent runs and review | PT-01 | planned | An explicit Run with Agent action links one or more runs and the diff to the same task. Retries create no duplicate task, and review approval is separate from run success. | ☐ |
 | PT-03 | Link work in Notes and Design | PT-01, DW-02, CL-03 | planned | A note TODO or board item can link to the same task. Switching projects cannot update the other project's task or source artifact. | ☐ |
-| PT-04 | Add optional task board and Markdown exchange | PT-01, PT-02 | planned | List and Kanban show the same records and status. A sample Markdown import is previewed, deduplicated, and exported with acceptance criteria intact. | ☐ |
+| PT-04 | Add optional task board and Markdown exchange | PT-01, PT-02 | planned | List and Kanban use the same vault task records and status. A sample Markdown import is previewed, deduplicated, and exported with acceptance criteria intact. | ☐ |
 
 ## Design Workspace
 
@@ -45,7 +48,7 @@ See [Design Workspace Plan](Design%20Workspace%20Plan.md) for dependencies and a
 |---|---|---|---|---|---|
 | CL-01 | Remove misleading duplicate navigation | — | ready for approval | 10 Chromium tests passed, including one current rail destination, narrow-window keyboard access to Settings, and Boards from the palette | ☐ |
 | CL-02 | Consolidate project and app navigation | CL-01, DW-02 | planned | Project Design is the canonical workspace and the app component preview has a distinct purpose and label, with old links still reachable | ☐ |
-| CL-03 | Unify project artifact storage and vault setup | DW-02 | planned | Existing notes and boards remain readable, fresh projects can save locally, and two-project switching tests prove writes stay scoped | ☐ |
+| CL-03 | Discover or attach the vault on Open and New Project | 10 | planned | Existing vault documents, links, and graph load as project context without copying or modifying source files. Explicit selection and fresh project-local setup both work. Existing global-vault artifacts stay readable, and two-project tests prove writes stay scoped. | ☐ |
 | CL-04 | Consolidate provider setup | PROV-01 | planned | Saved connections and model roles work through one settings entry, with keychain and fallback regressions covered | ☐ |
 | DW-01 | Evaluate OpenPencil in the packaged desktop app | — | planned | Offline edit/save/reopen on supported desktop platforms, a representative .fig compatibility report, and comparable cold-start and bundle measurements | ☐ |
 | DW-02 | Add a project-scoped Design Workspace | — | planned | One Design destination links existing boards and prototypes to the active project, with accessible navigation and no migration of existing files | ☐ |

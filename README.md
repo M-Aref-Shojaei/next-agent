@@ -67,6 +67,18 @@ The app opens a local window. No external accounts or API keys required to start
 - `packages/vault` — Markdown frontmatter, `[[wikilinks]]`, slugs, task-record paths
 - `docs/` — self-contained Markdown vault (Obsidian/Logseq compatible). Open `docs/` as a vault to browse it.
 
+## Project task table
+
+| Task | Required outcome |
+|---|---|
+| PS-01 — Open or create project instructions | Read the project's `AGENTS.md` on Open and New Project. Scaffold a starter file for a new project and offer to create one when an existing folder has none. Preserve any existing instructions. |
+| CL-03 — Open or attach the project vault | Discover an existing vault or let the user select one. Load its documents and graph into the active project, and offer a local vault setup when none exists. |
+| PT-01 — Show vault-backed tasks | Store the to-do list and task table as Markdown in the project's vault. Show the same records in a dedicated Tasks tab, reachable from the project sidebar. |
+| UX-01, UX-02 — Refactor desktop UI and UX | Audit the desktop experience, then simplify project opening, navigation, Tasks, Design, and code review with the existing design system. |
+| RF-01, RF-02 — Refactor duplicate code | Audit overlapping implementations, choose the canonical path for each, then retire redundant code in focused changes with regression tests. |
+
+The [vault Task Tracker](docs/plan/Task%20Tracker.md) records status, dependencies, tests, and approval for these tasks. The [Product Work Plan](docs/plan/Product%20Work%20Plan.md) describes how the workflows fit together.
+
 ## Docs
 
 - [Roadmap](docs/plan/Roadmap.md) — milestones M0–M5

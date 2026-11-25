@@ -21,9 +21,15 @@ Next Agent is one local-first desktop app for opening a project, organizing the 
 ## Work in this order
 
 1. **Make the installed app reliable.** Finish task 5 with an authorized 9Router key and a short live reply. Review PROV-01 and then finish CL-04 so provider setup has one entry point. Track the macOS packaging repair independently as REL-01.
-2. **Simplify the everyday UI.** Review CL-01. Run UX-01 using open project, start a task, and review a diff as the baseline. Implement UX-02 from those observed issues. Coordinate CL-02 and CL-03 with the Design Workspace navigation and project storage decisions.
+2. **Establish the project workspace and simplify the UI.** Implement PS-01 and CL-03 for instructions and vault setup. Review CL-01 and run UX-01 across project opening, task planning, Design, chat, and review. Implement UX-02 from observed issues. Run RF-01 in parallel and use its evidence to sequence small RF-02 refactors.
 3. **Prove the design tools fit inside the app.** Follow [DW-01–DW-06](Design%20Workspace%20Plan.md). Keep one board engine, evaluate the OpenPencil editor locally, and use Next Agent to play linked mockups and test implemented flows. The pilot takes the app's own project-opening flow from sketch to a reviewable Svelte change.
-4. **Give each project one backlog.** PT-01 and PT-02 can proceed alongside design feasibility. Add Notes and Design links when their project context is stable, then consider Kanban and Markdown exchange.
+4. **Give each project one backlog.** Once vault attachment is working, add the vault-backed Tasks tab and agent handoff. Link Notes and Design entries to those task records, then consider Kanban and Markdown exchange.
+
+## Opening or creating a project
+
+- Load the selected root's `AGENTS.md` into project context. Reuse existing instructions. Scaffold a starter on New Project where the file is absent. On Open, offer to create a starter for an existing folder with no instructions.
+- Discover a supported vault in the project or let the user select an existing vault. Attach it to the project so its Markdown and graph can be read in place. Offer to initialize a project-local vault when a project has none. Show the selected destination before saving project artifacts.
+- Preserve documents, boards, and tasks when switching projects. Keep earlier vault files readable during migration and verify that pending writes finish in the project that initiated them.
 
 ## Decisions carried forward
 
@@ -35,9 +41,9 @@ Next Agent is one local-first desktop app for opening a project, organizing the 
 
 [Backlog.md](https://github.com/MrLesk/Backlog.md) is the reference for acceptance criteria and reviewable agent handoff. [Vikunja](https://vikunja.io/help/views/) is the reference for quick entry and multiple views of the same records. [Kanboard](https://github.com/kanboard/kanboard) is the reference for a small, readable workflow. Use these patterns in Next Agent's existing desktop stack.
 
-- Make the Tasks area the home for planned work. Start with quick add, a list, an acceptance checklist, and To Do, In Progress, Review, and Done. Persist by project using the existing local storage layer.
+- Make the dedicated Tasks tab the home for planned work, reachable from the project sidebar. Start with quick add, a list, an acceptance checklist, and To Do, In Progress, Review, and Done. Project-vault Markdown owns planned work. SQLite can index those records and retain execution metadata.
 - Link planned tasks to the existing execution records. One task can have several runs or retries. The execution timeline owns running, failed, and cancelled statuses. Project work enters Done after the relevant review or explicit completion.
 - Keep Notes checkboxes useful on their own. Let the user explicitly link a note TODO or a design board item to a planned task, with one shared task status. Agent work starts only through the existing permission and approval flow.
-- Treat Markdown exchange as an explicit import or export. Preview updates before applying them, preserve stable IDs, and keep the existing `docs/plan/Task Tracker.md` readable. A Kanban view should read the same records as the list.
+- Treat exchange with other task formats as explicit import or export. Preview updates before applying them, preserve stable IDs, and keep the existing `docs/plan/Task Tracker.md` readable. Notes, Tasks, and a future Kanban view should refer to the same vault records.
 
 The [Task Tracker](Task%20Tracker.md) contains statuses, dependencies, acceptance evidence, and owner approval. Use the tracker to record changes to this order.
