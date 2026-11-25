@@ -20,6 +20,8 @@ Next Agent is one local-first desktop app for opening a project, organizing the 
 
 ## Work in this order
 
+Use the [execution table](Task%20Tracker.md#execution-table) to claim individual work packages. The [Work Package Guide](Work%20Package%20Guide.md) identifies what can start in parallel and where to coordinate shared files.
+
 1. **Make the installed app reliable.** Finish task 5 with an authorized 9Router key and a short live reply. Review PROV-01 and then finish CL-04 so provider setup has one entry point. Track the macOS packaging repair independently as REL-01.
 2. **Establish the project workspace and simplify the UI.** Implement PS-01 and CL-03 for instructions and vault setup. Review CL-01 and run UX-01 across project opening, task planning, Design, chat, and review. Implement UX-02 from observed issues. Run RF-01 in parallel and use its evidence to sequence small RF-02 refactors.
 3. **Prove the design tools fit inside the app.** Follow [DW-01–DW-06](Design%20Workspace%20Plan.md). Keep one board engine, evaluate the OpenPencil editor locally, and use Next Agent to play linked mockups and test implemented flows. The pilot takes the app's own project-opening flow from sketch to a reviewable Svelte change.

@@ -77,7 +77,7 @@ The app opens a local window. No external accounts or API keys required to start
 | UX-01, UX-02 — Refactor desktop UI and UX | Audit the desktop experience, then simplify project opening, navigation, Tasks, Design, and code review with the existing design system. |
 | RF-01, RF-02 — Refactor duplicate code | Audit overlapping implementations, choose the canonical path for each, then retire redundant code in focused changes with regression tests. |
 
-The [vault Task Tracker](docs/plan/Task%20Tracker.md) records status, dependencies, tests, and approval for these tasks. The [Product Work Plan](docs/plan/Product%20Work%20Plan.md) describes how the workflows fit together.
+The [vault Task Tracker](docs/plan/Task%20Tracker.md) records status, dependencies, tests, and approval for these tasks. Its [execution table](docs/plan/Task%20Tracker.md#execution-table) lists the smaller tasks an individual contributor or agent can claim and complete. The [Product Work Plan](docs/plan/Product%20Work%20Plan.md) describes how the workflows fit together.
 
 ## Docs
 
