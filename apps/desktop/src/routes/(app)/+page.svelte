@@ -82,7 +82,9 @@
 
   /* Narrow: details panel moves under the chat. */
   @media (max-width: 900px) {
-    .page { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+    .page { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(min-content, 1fr) auto; overflow-y: auto; }
+    /* Long histories belong in the timeline scrollport. */
+    .chat > :global(.timeline) { contain: size; }
     .page > :global(.panel) { border-left: 0; border-top: var(--border-width) solid var(--color-border); max-height: 35vh; }
   }
 </style>

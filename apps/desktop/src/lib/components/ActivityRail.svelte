@@ -2,6 +2,14 @@
   import { page } from "$app/state";
   import { Icon } from "$lib/ds/index.ts";
 
+  let { onactivate }: { onactivate?: () => void } = $props();
+
+  function activate(event: MouseEvent) {
+    if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+      onactivate?.();
+    }
+  }
+
   const ITEMS = [
     { href: "/", label: "Chat", icon: "more" },
     { href: "/settings/overlay/agents", label: "Agents", icon: "settings" },
@@ -18,7 +26,7 @@
 <nav class="rail" aria-label="Activity modes">
   {#each ITEMS as item (item.label)}
     {@const current = active(item.href)}
-    <a class:active={current} href={item.href} aria-current={current ? "page" : undefined}>
+    <a class:active={current} href={item.href} aria-current={current ? "page" : undefined} onclick={activate}>
       <Icon name={item.icon} size={18} />
       <span>{item.label}</span>
     </a>

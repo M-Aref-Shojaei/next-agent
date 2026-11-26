@@ -29,6 +29,57 @@ test.describe("Next Agent smoke tests", () => {
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   });
 
+  test("narrow Menu and Chat keep their controls in separate, usable space", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 390 });
+    await page.goto("/");
+    const menu = page.getByRole("button", { name: "Menu" });
+    const chat = page.getByRole("region", { name: "Chat" });
+    const details = page.getByRole("complementary", { name: "Details panel" });
+    await menu.press("Enter");
+    await expect(chat).toBeHidden();
+    await expect(details).toBeHidden();
+
+    const rail = page.getByRole("navigation", { name: "Activity modes" });
+    await rail.getByRole("link", { name: "Chat" }).press("Enter");
+    await expect(chat).toBeVisible();
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
+    await menu.press("Enter");
+    const openProject = page.getByRole("button", { name: "Open Project" });
+    await openProject.press("Enter");
+    const path = page.getByRole("textbox", { name: "Workspace folder path" });
+    await path.fill("/projects/Existing Project");
+    await path.press("Enter");
+    await expect(openProject).toBeFocused();
+    await openProject.press("Escape");
+
+    await expect(menu).toBeFocused();
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
+    const timeline = chat.getByRole("log", { name: "Task timeline" });
+    await timeline.evaluate((element) => {
+      const messages = Array.from({ length: 100 }, (_, index) => {
+        const message = document.createElement("p");
+        message.textContent = `Task update ${index + 1}`;
+        return message;
+      });
+      element.append(...messages);
+    });
+    await expect.poll(() => timeline.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    const composer = chat.locator("form");
+    await expect(composer).toBeVisible();
+    await expect(details).toBeVisible();
+    await expect.poll(async () => {
+      const [composerBox, panelBox] = await Promise.all([composer.boundingBox(), details.boundingBox()]);
+      return !!composerBox && !!panelBox && composerBox.y + composerBox.height <= panelBox.y + 1;
+    }).toBe(true);
+    await details.getByRole("tab", { name: "Files" }).click();
+    await expect(details.getByRole("tab", { name: "Files" })).toBeFocused();
+
+    await menu.press("Enter");
+    await rail.getByRole("link", { name: "Design" }).click();
+    await expect(page).toHaveURL(/\/design$/);
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
+  });
+
   test("diff viewer exists in tasks", async ({ page }) => {
     // Navigate to a task view (placeholder for now)
     await page.goto("/");

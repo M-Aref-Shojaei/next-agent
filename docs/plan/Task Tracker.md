@@ -49,7 +49,7 @@ See [Design Workspace Plan](Design%20Workspace%20Plan.md) for dependencies and a
 
 | ID | Task | Depends on | Status | Acceptance evidence | Approved |
 |---|---|---|---|---|---|
-| CL-01 | Remove misleading duplicate navigation | — | ready for approval | 10 Chromium tests passed, including one current rail destination, narrow-window keyboard access to Settings, and Boards from the palette | ☐ |
+| CL-01 | Remove misleading duplicate navigation | — | merged | [PR #11](https://github.com/M-Aref-Shojaei/next-agent/pull/11) merged at `d4a89cc`. Verified one current rail destination, narrow keyboard access to Settings, and Boards in the palette. | ✓ |
 | CL-02 | Consolidate project and app navigation | CL-01, DW-02 | planned | Project Design is the canonical workspace and the app component preview has a distinct purpose and label, with old links still reachable | ☐ |
 | CL-03 | Discover or attach the vault on Open and New Project | 10 | planned | Existing vault documents, links, and graph load as project context without copying or modifying source files. Explicit selection and fresh project-local setup both work. Existing global-vault artifacts stay readable, and two-project tests prove writes stay scoped. | ☐ |
 | CL-04 | Consolidate provider setup | PROV-01 | planned | Saved connections and model roles work through one settings entry, with keychain and fallback regressions covered | ☐ |
@@ -124,14 +124,17 @@ Each row is one work package. Open its ID for scope and the specific conditions 
 
 | ID | Task | Depends on | Status | Assignee | Evidence or blocker |
 |---|---|---|---|---|---|
-| [CL-01-A](Work%20Packages%20-%20UX%20and%20Refactoring.md#cl-01-a--close-the-duplicate-navigation-review) | Close the duplicate navigation review | — | Planned | — | — |
-| [UX-01-A](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-01-a--audit-open-and-new-project) | Audit Open and New Project | CL-01 | Planned | — | — |
-| [UX-01-B](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-01-b--audit-navigation-design-chat-and-review) | Audit navigation, Design, chat, and review | CL-01 | Planned | — | — |
+| [CL-01-A](Work%20Packages%20-%20UX%20and%20Refactoring.md#cl-01-a--close-the-duplicate-navigation-review) | Close the duplicate navigation review | — | Done | Owner | [Merged in PR #11](https://github.com/M-Aref-Shojaei/next-agent/pull/11) |
+| [UX-01-A](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-01-a--audit-open-and-new-project) | Audit Open and New Project | CL-01 | In progress | Desktop UI and QA | [Findings and remaining checks](Desktop%20UX%20Audit.md) |
+| [UX-01-B](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-01-b--audit-navigation-design-chat-and-review) | Audit navigation, Design, chat, and review | CL-01 | In progress | Desktop UI and QA | [Findings and remaining checks](Desktop%20UX%20Audit.md) |
 | [UX-01-C](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-01-c--turn-findings-into-a-prioritized-change-list) | Turn findings into a prioritized change list | CL-01, UX-01-A, UX-01-B | Planned | — | — |
 | [UX-02-A](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-02-a--simplify-project-opening-and-empty-states) | Simplify project opening and empty states | UX-01, PS-01, CL-03 | Planned | — | — |
 | [UX-02-B](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-02-b--simplify-chat-and-diff-review) | Simplify chat and diff review | UX-01 | Planned | — | — |
 | [UX-02-C](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-02-c--verify-the-desktop-workflow-at-both-widths) | Verify the desktop workflow at both widths | UX-01, UX-02-A, UX-02-B | Planned | — | — |
-| [UX-02-D](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-02-d--improve-project-form-recovery-with-existing-services) | Improve project form recovery with existing services | — | In review | Desktop UI and QA | [Local evidence and owner review](UiTestResults.md) |
+| [UX-02-D](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-02-d--improve-project-form-recovery-with-existing-services) | Improve project form recovery with existing services | — | Done | Desktop UI and QA | [Merged in PR #11](https://github.com/M-Aref-Shojaei/next-agent/pull/11). Native picker verification is tracked separately. |
+| [UX-02-E](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-02-e--separate-the-narrow-menu-from-chat) | Separate the narrow menu from Chat | CL-01 | In review | Desktop UI and QA | 14 Chromium tests passed. [UI review](UiTestResults.md) |
+| [UX-02-F](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-02-f--verify-the-native-folder-picker) | Verify the native folder picker | UX-02-D | Planned | — | Verify Open and New Project cancellation, selection, and focus in a macOS build of the merged code. |
+| [UX-02-G](Work%20Packages%20-%20UX%20and%20Refactoring.md#ux-02-g--keep-the-chat-draft-when-a-task-cannot-start) | Keep the Chat draft when a task cannot start | — | Planned | — | A failed start keeps the exact prompt and permits retry. Successful starts clear only the submitted draft. |
 | [RF-01-A](Work%20Packages%20-%20UX%20and%20Refactoring.md#rf-01-a--inventory-overlapping-desktop-paths) | Inventory overlapping desktop paths | — | Done | Desktop reviewer | [Desktop caller and behavior inventory](Clean%20Code%20Scope%20Audit.md) |
 | [RF-01-B](Work%20Packages%20-%20UX%20and%20Refactoring.md#rf-01-b--inventory-overlapping-tauri-commands-and-core-paths) | Inventory overlapping Tauri commands and core paths | — | Done | Rust reviewer | [Rust caller and compatibility inventory](Clean%20Code%20Scope%20Audit.md) |
 | [RF-01-C](Work%20Packages%20-%20UX%20and%20Refactoring.md#rf-01-c--pick-the-first-safe-refactor) | Pick the first safe refactor | RF-01-A, RF-01-B | Done | Coordinator and validation reviewer | [Independent review and first refactor](Clean%20Code%20Scope%20Audit.md) |

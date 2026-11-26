@@ -61,6 +61,24 @@ The product reviewer owns screenshots and findings. Desktop specialists own UI s
 - Work Simplify Open and New Project in the current sidebar. Use one form at a time, report progress and errors next to the fields, and preserve attempted values. Restore focus after picker fallback, cancel, or success when the user is still in the flow.
 - Done when desktop and narrow Chromium tests cover keyboard access, cancellation, duplicate-name retry, and a deferred registration that preserves focus outside the form. Record local render evidence and the owner review row. PS-01, CL-03, and the broader UX-02-A work retain their existing scope.
 
+### UX-02-E — Separate the narrow menu from Chat
+
+- Depends on CL-01.
+- Work Give the expanded narrow Menu the content row. Restore Chat on close or route navigation and keep the composer and review panel in flow in short windows.
+- Done when Chromium verifies keyboard access, focus on dismissal, and non-overlapping composer and review controls in a 375px short viewport. Desktop layout and existing project forms must keep working.
+
+### UX-02-F — Verify the native folder picker
+
+- Depends on UX-02-D.
+- Work Build the merged code for macOS. In a temporary project, select and cancel the Open Project folder picker and the New Project parent folder picker.
+- Done when the record names the tested build and confirms the manual path fallback, captured paths, successful registration, and focus restoration. Keep the task open if native GUI interaction is unavailable.
+
+### UX-02-G — Keep the Chat draft when a task cannot start
+
+- Depends on None.
+- Work Keep the draft while Chat waits for registration. Clear it only after the task is accepted and the draft still matches the submitted text.
+- Done when tests cover rejection, an exact multiline retry, successful creation, and edits made while a start is pending.
+
 ## RF-01 · Prove which code is redundant
 
 ### RF-01-A — Inventory overlapping desktop paths
