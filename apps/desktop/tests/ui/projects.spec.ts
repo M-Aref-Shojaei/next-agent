@@ -21,6 +21,7 @@ test("opening a folder discovers project files and opens its vault graph", async
   await connections.getByRole("link", { name: "Open vault graph" }).click();
   await expect(page).toHaveURL(/\/notes\?view=graph$/);
   await expect(page.getByRole("radio", { name: "Graph" })).toHaveAttribute("aria-checked", "true");
+  await expect(projects.getByRole("button", { name: "Existing Project" })).toHaveAttribute("aria-current", "true");
 });
 
 test("creating a project selects its empty tree and switching refreshes its connections", async ({ page }) => {

@@ -2,6 +2,7 @@
   import "../../app.css";
   import { onMount } from "svelte";
   import { page } from "$app/state";
+  import { afterNavigate } from "$app/navigation";
   import { app } from "$lib/app.svelte.ts";
   import { shouldCycleMode } from "$lib/shortcuts.ts";
   import { Banner, Button, Icon } from "$lib/ds/index.ts";
@@ -19,8 +20,21 @@
     void app.init();
   });
 
+  afterNavigate(({ from, to }) => {
+    if (from?.url?.pathname !== to?.url?.pathname) navOpen = false;
+  });
+
   function onkeydown(event: KeyboardEvent) {
     if (event.defaultPrevented || event.isComposing) return;
+    if (event.key === "Escape" && navOpen && !commandPaletteOpen) {
+      const menu = document.getElementById("sidebar-toggle");
+      if (menu?.getClientRects().length) {
+        event.preventDefault();
+        navOpen = false;
+        menu.focus();
+        return;
+      }
+    }
     const opensPalette = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
     // Notes reserves this shortcut for its own search palette.
     if (opensPalette && page.route.id !== "/(app)/notes") {
@@ -35,6 +49,15 @@
     }
   }
 
+  function activateRail(event: MouseEvent) {
+    if (!navOpen) return;
+    navOpen = false;
+    // The current link only needs to reveal the route already on screen.
+    if (event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href === page.url.href) {
+      event.preventDefault();
+    }
+  }
+
   /** Choosing a workspace, task or page closes the drawer. */
   function onnavclick(event: MouseEvent) {
     if ((event.target as Element).closest("a, li button")) navOpen = false;
@@ -45,10 +68,10 @@
 
 {#if commandPaletteOpen}<CommandPalette onclose={() => (commandPaletteOpen = false)} />{/if}
 
-<div class="shell">
-  <ActivityRail />
+<div class="shell" class:menu-open={navOpen}>
+  <ActivityRail onactivate={activateRail} />
   <div class="topbar">
-    <Button variant="ghost" size="sm" aria-expanded={navOpen} aria-controls="app-sidebar" onclick={() => (navOpen = !navOpen)}>
+    <Button id="sidebar-toggle" variant="ghost" size="sm" aria-expanded={navOpen} aria-controls="app-sidebar" onclick={() => (navOpen = !navOpen)}>
       {#snippet icon()}<Icon name={navOpen ? "x" : "more"} size={16} />{/snippet}
       Menu
     </Button>
@@ -76,13 +99,15 @@
   .topbar { display: none; }
   main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
-  /* Narrow: one column; the sidebar becomes a drawer under the top bar. */
+  /* Narrow windows give either the sidebar or the route the full content row. */
   @media (max-width: 640px) {
-    .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
+    .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; height: 100dvh; }
     .shell :global(.rail) { grid-column: 1; grid-row: 2; }
-    .topbar { display: block; padding: var(--space-1) var(--space-2); border-bottom: var(--border-width) solid var(--color-border); background: var(--color-surface-sunken); }
-    .side { display: none; max-height: 60vh; }
+    .topbar { display: block; grid-row: 1; padding: var(--space-1) var(--space-2); border-bottom: var(--border-width) solid var(--color-border); background: var(--color-surface-sunken); }
+    .side, main { grid-row: 3; }
+    .side, .menu-open main { display: none; }
     .side.open { display: flex; }
+    .shell :global(.status) { grid-row: 4; }
     .side :global(.sidebar) { width: 100%; border-right: 0; border-bottom: var(--border-width) solid var(--color-border); }
   }
 </style>
