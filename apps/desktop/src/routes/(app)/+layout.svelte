@@ -49,6 +49,15 @@
     }
   }
 
+  function activateRail(event: MouseEvent) {
+    if (!navOpen) return;
+    navOpen = false;
+    // The current link only needs to reveal the route already on screen.
+    if (event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href === page.url.href) {
+      event.preventDefault();
+    }
+  }
+
   /** Choosing a workspace, task or page closes the drawer. */
   function onnavclick(event: MouseEvent) {
     if ((event.target as Element).closest("a, li button")) navOpen = false;
@@ -60,7 +69,7 @@
 {#if commandPaletteOpen}<CommandPalette onclose={() => (commandPaletteOpen = false)} />{/if}
 
 <div class="shell" class:menu-open={navOpen}>
-  <ActivityRail onactivate={() => (navOpen = false)} />
+  <ActivityRail onactivate={activateRail} />
   <div class="topbar">
     <Button id="sidebar-toggle" variant="ghost" size="sm" aria-expanded={navOpen} aria-controls="app-sidebar" onclick={() => (navOpen = !navOpen)}>
       {#snippet icon()}<Icon name={navOpen ? "x" : "more"} size={16} />{/snippet}

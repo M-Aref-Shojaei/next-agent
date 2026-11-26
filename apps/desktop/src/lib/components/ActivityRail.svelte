@@ -2,11 +2,11 @@
   import { page } from "$app/state";
   import { Icon } from "$lib/ds/index.ts";
 
-  let { onactivate }: { onactivate?: () => void } = $props();
+  let { onactivate }: { onactivate?: (event: MouseEvent) => void } = $props();
 
   function activate(event: MouseEvent) {
     if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-      onactivate?.();
+      onactivate?.(event);
     }
   }
 
