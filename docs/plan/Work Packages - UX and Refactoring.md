@@ -55,6 +55,12 @@ The product reviewer owns screenshots and findings. Desktop specialists own UI s
 - Work Test the changed flows at normal and narrow widths, with a keyboard pass through project switching, Design, review, and Settings. Capture evidence for the routes implemented in this PR. PT-01 verifies its own Tasks interactions.
 - Done when `pnpm --filter @next-agent/desktop check` and `pnpm --filter @next-agent/desktop test:ui` pass, and the tracker links an entry in [UI Test Results](UiTestResults.md) with screenshots and review status.
 
+### UX-02-D — Improve project form recovery with existing services
+
+- Depends on None.
+- Work Simplify Open and New Project in the current sidebar. Use one form at a time, report progress and errors next to the fields, and preserve attempted values. Restore focus after picker fallback, cancel, or success when the user is still in the flow.
+- Done when desktop and narrow Chromium tests cover keyboard access, cancellation, duplicate-name retry, and a deferred registration that preserves focus outside the form. Record local render evidence and the owner review row. PS-01, CL-03, and the broader UX-02-A work retain their existing scope.
+
 ## RF-01 · Prove which code is redundant
 
 ### RF-01-A — Inventory overlapping desktop paths

@@ -16,6 +16,9 @@ Results of the Playwright UI test pipeline. Each run produces a row in the table
 | local-2026-11-22-command-palette | 2026-11-22 | uncommitted | Command palette | Cmd/Ctrl+K opens searchable route navigation; no side-effect actions | pending | Owner |
 | local-2026-11-24-projects | 2026-11-24 | PR #3 | Project setup and command palette fix | 10 Chromium tests passed, including project opening and creation, vault graph navigation, project switching, and keyboard navigation | pending | Owner |
 | local-2026-11-25-navigation | 2026-11-25 | PR #11 | Remove duplicate navigation | 10 Chromium tests passed, including narrow-window Settings access and Boards by name in the palette | pending | Owner |
+| local-2026-11-26-project-recovery | 2026-11-26 | PR #11 | Project form recovery (UX-02-D) | 5 focused and 13 full Chromium tests passed. Desktop and narrow cases cover keyboard cancellation, duplicate-folder retry, progress, and preserving focus when a user moves away. Desktop light and 375px dark RTL captures checked. | pending | Owner |
+
+The project form tests use the browser's mock API. Native picker interaction still needs packaged-app validation. The narrow render also showed the existing Chat composer and review panel can overlap below the open drawer at 375px. Track that shell finding under UX-01-B.
 
 ## Planned design workspace reviews
 
