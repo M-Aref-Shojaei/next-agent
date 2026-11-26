@@ -194,13 +194,15 @@ class AppStore {
     }
   }
 
-  async startTask(prompt: string): Promise<void> {
+  async startTask(prompt: string): Promise<boolean> {
     const ws = this.activeWorkspace;
-    if (!ws || !prompt.trim()) return;
+    if (!ws || !prompt.trim()) return false;
     const id = await this.trackTask(prompt, (deliver) =>
       api.taskStart(ws.id, prompt, this.mode, deliver, this.profile || undefined),
     );
-    if (id) this.activeTaskId = id;
+    if (!id) return false;
+    this.activeTaskId = id;
+    return true;
   }
 
   /**
