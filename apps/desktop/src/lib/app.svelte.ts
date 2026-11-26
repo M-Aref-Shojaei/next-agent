@@ -6,6 +6,7 @@ import { goto } from "$app/navigation";
 import { api, type RouterHealthReport, type Workspace, type WorkspaceDiscovery } from "./api.ts";
 import { onOverlaySettingsRequest } from "./overlay-settings.ts";
 import type { DiffAction } from "./diff.ts";
+import { errorText } from "./errors.ts";
 import { cycleMode } from "./modes.ts";
 import {
   applyMessage,
@@ -98,25 +99,23 @@ class AppStore {
     }
   }
 
-  async openWorkspace(path: string): Promise<boolean> {
+  async openWorkspace(path: string): Promise<string | null> {
     return this.registerWorkspace(() => api.workspaceOpen(path.trim()));
   }
 
-  async createWorkspace(parent: string, name: string): Promise<boolean> {
+  async createWorkspace(parent: string, name: string): Promise<string | null> {
     return this.registerWorkspace(() => api.workspaceCreate(parent.trim(), name.trim()));
   }
 
-  private async registerWorkspace(register: () => Promise<Workspace>): Promise<boolean> {
+  private async registerWorkspace(register: () => Promise<Workspace>): Promise<string | null> {
     try {
       const ws = await register();
       this.workspaces = [ws, ...this.workspaces.filter((entry) => entry.id !== ws.id)];
       this.selectWorkspace(ws.id);
-      this.error = null;
-      return true;
+      return null;
     } catch (e) {
       log.warn("ui_error", { kind: "workspace_registration" });
-      this.error = String(e);
-      return false;
+      return errorText(e) || "Check the folder path and try again.";
     }
   }
 

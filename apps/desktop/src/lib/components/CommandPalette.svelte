@@ -6,7 +6,7 @@
   type Action = { label: string; hint: string; href: string; icon: IconName };
   const actions: Action[] = [
     { label: "Chat", hint: "Open workspace", href: "/", icon: "more" },
-    { label: "Code", hint: "Open boards", href: "/boards", icon: "edit" },
+    { label: "Boards", hint: "Open design boards", href: "/boards", icon: "edit" },
     { label: "Knowledge", hint: "Open notes", href: "/notes", icon: "search" },
     { label: "Design", hint: "Open design workspace", href: "/design", icon: "edit" },
     { label: "Usage", hint: "View usage", href: "/usage", icon: "info" },
