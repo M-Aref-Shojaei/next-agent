@@ -1,7 +1,7 @@
 // Pure timeline reducer: Tauri Channel messages in, render-ready state out.
 // Kept free of Svelte so it runs under `node --test`.
 import type { EventEnvelope } from "@next-agent/contracts";
-import type { DiffFile } from "./diff.ts";
+import type { DiffFile, ReviewDecision } from "./diff.ts";
 
 export type ToolStatus = "running" | "waiting" | "ok" | "failed" | "denied";
 
@@ -70,8 +70,7 @@ export interface TaskState {
 export interface ReviewState {
   branch: string;
   files: DiffFile[];
-  /** Set once the user merged, discarded or kept the changes. */
-  outcome?: string;
+  decision?: ReviewDecision;
 }
 
 export type StreamMessage =
@@ -145,9 +144,8 @@ function findTool(items: TimelineItem[], callId: string): ToolItem | undefined {
   return found?.kind === "tool" ? found : undefined;
 }
 
-/** Record the outcome of Merge / Discard / Keep. */
-export function settleReview(task: TaskState, outcome: string): TaskState {
-  return task.review ? { ...task, review: { ...task.review, outcome } } : task;
+export function recordReviewDecision(task: TaskState, decision: ReviewDecision): TaskState {
+  return task.review ? { ...task, review: { ...task.review, decision } } : task;
 }
 
 function updateTool(items: TimelineItem[], callId: string, patch: Partial<ToolItem>): TimelineItem[] {

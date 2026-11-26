@@ -79,6 +79,12 @@ The product reviewer owns screenshots and findings. Desktop specialists own UI s
 - Work Keep the draft while Chat waits for registration. Clear it only after the task is accepted and the draft still matches the submitted text.
 - Done when tests cover rejection, an exact multiline retry, successful creation, and edits made while a start is pending.
 
+### UX-02-H — Resume a kept diff review
+
+- Depends on None.
+- Work Render Keep as a pending review decision. Keep Merge and Discard available when the user reopens a kept task. Keep terminal decisions and notices visible after merge or discard.
+- Done when the browser fixture uses Keep, switches tasks, returns, and finishes the review. Verify both terminal actions using mocked outcomes.
+
 ## RF-01 · Prove which code is redundant
 
 ### RF-01-A — Inventory overlapping desktop paths

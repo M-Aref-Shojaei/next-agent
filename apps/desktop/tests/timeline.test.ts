@@ -5,7 +5,7 @@ import {
   newTask,
   pendingApprovals,
   resolveApproval,
-  settleReview,
+  recordReviewDecision,
   type StreamMessage,
   type TaskState,
 } from "../src/lib/timeline.ts";
@@ -148,7 +148,11 @@ test("worktree, review and documented messages land on the task", () => {
   assert.equal(task.branch, "next-agent/auto-1");
   assert.equal(task.review?.files.length, 1);
   assert.equal(task.recordPath, "/vault/x.md");
-  assert.equal(settleReview(task, "merged").review?.outcome, "merged");
+  const kept = recordReviewDecision(task, { action: "keep", label: "kept for later" });
+  assert.equal(kept.review?.decision?.action, "keep");
+  assert.equal(kept.review?.files, task.review?.files);
+  const merged = recordReviewDecision(kept, { action: "merge", label: "merged" });
+  assert.deepEqual(merged.review?.decision, { action: "merge", label: "merged" });
 });
 
 test("channel approvals offer no 'always' button", () => {

@@ -4,19 +4,10 @@
   import MergeEditor from "./MergeEditor.svelte";
   import type { DiffFileStatus } from "$lib/diff.ts";
   import { diffStats, type DiffViewerProps } from "$lib/diff.ts";
-  let { files, branch, onAction, outcome }: DiffViewerProps = $props();
+  let { files, branch, onAction, decision, busy = false }: DiffViewerProps = $props();
   const stats = $derived(diffStats(files));
-  let busy = $state(false);
+  const kept = $derived(decision?.action === "keep");
   const STATUS_TONE: Partial<Record<DiffFileStatus, "ok" | "danger">> = { added: "ok", deleted: "danger" };
-
-  async function act(action: "merge" | "discard" | "keep") {
-    busy = true;
-    try {
-      await onAction?.(action);
-    } finally {
-      busy = false;
-    }
-  }
 
 </script>
 
@@ -28,13 +19,14 @@
       <code>{branch ?? "(no branch)"}</code>
       <span>{files.length} file{files.length === 1 ? "" : "s"}, <span class="add">+{stats.added}</span> <span class="rem">−{stats.removed}</span></span>
     </header>
-    {#if outcome}
-      <Banner tone="ok">Changes {outcome}.</Banner>
-    {:else}
+    {#if decision}
+      <Banner tone={kept ? "info" : "ok"}>Changes {decision.label}.</Banner>
+    {/if}
+    {#if !decision || kept}
       <div class="row" role="group" aria-label="Review actions">
-        <Button size="sm" variant="primary" disabled={busy} onclick={() => act("merge")}>Merge</Button>
-        <Button size="sm" variant="danger" disabled={busy} onclick={() => act("discard")}>Discard</Button>
-        <Button size="sm" disabled={busy} onclick={() => act("keep")}>Keep for later</Button>
+        <Button size="sm" variant="primary" disabled={busy} onclick={() => onAction?.("merge")}>Merge</Button>
+        <Button size="sm" variant="danger" disabled={busy} onclick={() => onAction?.("discard")}>Discard</Button>
+        <Button size="sm" disabled={busy || kept} onclick={() => onAction?.("keep")}>Keep for later</Button>
       </div>
     {/if}
     {#each files as file (file.path)}
