@@ -85,6 +85,12 @@ The product reviewer owns screenshots and findings. Desktop specialists own UI s
 - Work Render Keep as a pending review decision. Keep Merge and Discard available when the user reopens a kept task. Keep terminal decisions and notices visible after merge or discard.
 - Done when the browser fixture uses Keep, switches tasks, returns, and finishes the review. Verify both terminal actions using mocked outcomes.
 
+### UX-02-I — Show the next step in empty Chat
+
+- Depends on UX-02-E.
+- Work Add one action to empty Chat that reveals the existing project options. Focus the Open action or the current form field while preserving any draft. After selection, invite the user to start a task.
+- Done when desktop and 375px Chromium flows reach project setup by keyboard, resume a pending form, and transition to the enabled composer after opening a project.
+
 ## RF-01 · Prove which code is redundant
 
 ### RF-01-A — Inventory overlapping desktop paths

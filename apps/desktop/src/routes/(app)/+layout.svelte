@@ -1,9 +1,10 @@
 <script lang="ts">
   import "../../app.css";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { page } from "$app/state";
   import { afterNavigate } from "$app/navigation";
   import { app } from "$lib/app.svelte.ts";
+  import { setShowProjectActions } from "$lib/project-actions-context.ts";
   import { shouldCycleMode } from "$lib/shortcuts.ts";
   import { Banner, Button, Icon } from "$lib/ds/index.ts";
   import Sidebar from "$lib/components/Sidebar.svelte";
@@ -15,6 +16,14 @@
   /** Narrow windows: the sidebar is a drawer under the top bar. */
   let navOpen = $state(false);
   let commandPaletteOpen = $state(false);
+  let sidebar = $state<HTMLDivElement | null>(null);
+
+  setShowProjectActions(async () => {
+    if (!sidebar?.getClientRects().length) navOpen = true;
+    await tick();
+    const entry = sidebar?.querySelector<HTMLElement>("[data-project-entry]:not(:disabled)");
+    (entry ?? sidebar)?.focus();
+  });
 
   onMount(() => {
     void app.init();
@@ -77,7 +86,7 @@
     </Button>
   </div>
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="side" id="app-sidebar" class:open={navOpen} onclick={onnavclick}>
+  <div class="side" id="app-sidebar" tabindex="-1" bind:this={sidebar} class:open={navOpen} onclick={onnavclick}>
     <Sidebar />
   </div>
   <main>

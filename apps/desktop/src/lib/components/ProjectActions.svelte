@@ -104,10 +104,10 @@
       <div class="form-error" dir="auto"><Banner tone="danger" compact>{error}</Banner></div>
     {/if}
     {#if mode === "open"}
-      <TextField size="sm" label="Workspace folder path" name="project-path" placeholder="/path/to/project…" autocomplete="off"
+      <TextField size="sm" label="Workspace folder path" name="project-path" data-project-entry placeholder="/path/to/project…" autocomplete="off"
         spellcheck={false} dir="ltr" mono bind:value={path} bind:ref={pathInput} required disabled={busy} />
     {:else}
-      <TextField size="sm" label="Project name" name="project-name" autocomplete="off" dir="auto"
+      <TextField size="sm" label="Project name" name="project-name" data-project-entry autocomplete="off" dir="auto"
         bind:value={name} bind:ref={nameInput} required disabled={busy} />
       <div class="folder">
         <TextField size="sm" label="Parent folder path" name="project-parent" placeholder="/path/to/projects…" autocomplete="off"
@@ -125,7 +125,7 @@
   <div class="progress" role="status">{progress}</div>
 {:else}
   <div class="actions" bind:this={launchers}>
-    <Button size="sm" variant="primary" data-project-action="open" onclick={openProject}>Open Project</Button>
+    <Button size="sm" variant="primary" data-project-action="open" data-project-entry onclick={openProject}>Open Project</Button>
     <Button size="sm" data-project-action="create" onclick={startCreate}>New Project</Button>
   </div>
 {/if}

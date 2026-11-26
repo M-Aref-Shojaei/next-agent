@@ -1,11 +1,13 @@
 <script lang="ts">
   import { app } from "$lib/app.svelte.ts";
+  import { getShowProjectActions } from "$lib/project-actions-context.ts";
   import { pendingApprovals } from "$lib/timeline.ts";
-  import { Banner, BrandMark, EmptyState } from "$lib/ds/index.ts";
+  import { Banner, BrandMark, Button, EmptyState } from "$lib/ds/index.ts";
   import ApprovalCard from "./ApprovalCard.svelte";
   import ToolCard from "./ToolCard.svelte";
 
   const task = $derived(app.activeTask);
+  const showProjectActions = getShowProjectActions();
   const pending = $derived(task ? pendingApprovals(task) : []);
   let scroller: HTMLElement | undefined = $state();
 
@@ -19,9 +21,18 @@
 <div class="timeline" bind:this={scroller} role="log" aria-live="polite" aria-label="Task timeline" tabindex="-1">
   {#if !task}
     <div class="empty">
-      <EmptyState title="No task yet" description="Open a workspace, then describe a task below. Without a router and model, a scripted demo agent runs it.">
-        {#snippet icon()}<BrandMark size={32} />{/snippet}
-      </EmptyState>
+      {#if app.activeWorkspace}
+        <EmptyState title="Start a task" description="Describe what you want the agent to do.">
+          {#snippet icon()}<BrandMark size={32} />{/snippet}
+        </EmptyState>
+      {:else}
+        <EmptyState title="No project open">
+          {#snippet icon()}<BrandMark size={32} />{/snippet}
+          {#snippet actions()}
+            <Button size="sm" variant="primary" aria-controls="app-sidebar" onclick={showProjectActions}>Choose a project</Button>
+          {/snippet}
+        </EmptyState>
+      {/if}
     </div>
   {:else}
     {#if task.origin}
