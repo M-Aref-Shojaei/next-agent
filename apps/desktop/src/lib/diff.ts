@@ -26,13 +26,18 @@ export interface DiffFile {
 
 export type DiffAction = "merge" | "discard" | "keep";
 
+export interface ReviewDecision {
+  action: DiffAction;
+  label: string;
+}
+
 export interface DiffViewerProps {
   files: DiffFile[];
   /** Branch under review, e.g. `next-agent/auto-3f2a`. */
   branch?: string;
   onAction?: (action: DiffAction) => void | Promise<void>;
-  /** Set once an action completed, e.g. "merged (1a2b3c4d)". */
-  outcome?: string;
+  decision?: ReviewDecision;
+  busy?: boolean;
 }
 
 export interface SideCell {

@@ -13,7 +13,7 @@ import {
   messageTaskId,
   newTask,
   resolveApproval,
-  settleReview,
+  recordReviewDecision,
   type ApprovalChoice,
   type StreamMessage,
   type TaskState,
@@ -28,6 +28,7 @@ class AppStore {
   projectDiscoveryLoading = $state(false);
   projectDiscoveryError = $state<string | null>(null);
   private discoveryRequest = 0;
+  private reviewingTasks = $state.raw<ReadonlySet<string>>(new Set());
   tasks = $state<TaskState[]>([]);
   activeTaskId = $state<string | null>(null);
   mode = $state<ModeName>("manual");
@@ -263,7 +264,13 @@ class AppStore {
     }
   }
 
+  reviewPending(taskId: string): boolean {
+    return this.reviewingTasks.has(taskId);
+  }
+
   async review(taskId: string, action: DiffAction): Promise<void> {
+    if (this.reviewPending(taskId)) return;
+    this.reviewingTasks = new Set([...this.reviewingTasks, taskId]);
     try {
       const outcome = await api.reviewAction(taskId, action);
       const label =
@@ -274,15 +281,19 @@ class AppStore {
             : "kept for later";
       this.tasks = this.tasks.map((t) => {
         if (t.id !== taskId) return t;
-        const settled = settleReview(t, label);
+        const reviewed = recordReviewDecision(t, { action: outcome.action, label });
         return outcome.notice
-          ? applyMessage(settled, { type: "notice", task_id: taskId, tone: "error", text: outcome.notice })
-          : settled;
+          ? applyMessage(reviewed, { type: "notice", task_id: taskId, tone: "error", text: outcome.notice })
+          : reviewed;
       });
       this.error = null;
     } catch (e) {
       log.warn("ui_error", { kind: "review_action" });
       this.error = String(e);
+    } finally {
+      const remaining = new Set(this.reviewingTasks);
+      remaining.delete(taskId);
+      this.reviewingTasks = remaining;
     }
   }
 

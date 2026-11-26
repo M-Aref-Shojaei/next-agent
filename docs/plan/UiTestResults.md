@@ -19,6 +19,7 @@ Results of the Playwright UI test pipeline. Each run produces a row in the table
 | local-2026-11-26-project-recovery | 2026-11-26 | PR #11 | Project form recovery (UX-02-D) | 5 focused and 13 full Chromium tests passed. Desktop and narrow cases cover keyboard cancellation, duplicate-folder retry, progress, and preserving focus when a user moves away. Desktop light and 375px dark RTL captures checked. | merged | Owner |
 | local-2026-11-26-narrow-shell | 2026-11-26 | `codex/ux-narrow-shell` | Narrow Menu and Chat (UX-02-E) | 14 Chromium tests passed. At 375px, Menu gets its own content row and Escape restores focus. The long timeline scrolls internally and review stays reachable. Production preview captured in dark mode. | pending | Owner |
 | local-2026-11-26-chat-draft | 2026-11-26 | `codex/ux-chat-draft` | Chat draft recovery (UX-02-G) | 15 Chromium tests passed. A failed start preserves the exact draft. The pending start blocks duplicates, and edits made during acceptance remain. Synthetic keyboard events cover composition confirmation. | pending | Owner |
+| local-2026-11-26-kept-review | 2026-11-26 | `codex/ux-keep-review` | Resume a kept diff review (UX-02-H) | 16 Chromium tests passed. Keyboard task switching, pending tab remount, mock Merge and Discard, and the post-merge notice are covered. | pending | Owner |
 
 The project form tests use the browser's mock API. Native picker interaction still needs packaged-app validation. The project-form render exposed a narrow layout overlap. UX-02-E fixes the shell behavior.
 

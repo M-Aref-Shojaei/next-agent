@@ -19,7 +19,8 @@
           <DiffViewer
             files={task?.review?.files ?? []}
             branch={task?.review?.branch}
-            outcome={task?.review?.outcome}
+            decision={task?.review?.decision}
+            busy={task ? app.reviewPending(task.id) : false}
             onAction={(action) => (task ? app.review(task.id, action) : undefined)}
           />
         {:else if active === "Files"}
