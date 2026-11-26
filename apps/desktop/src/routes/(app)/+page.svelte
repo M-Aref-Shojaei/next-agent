@@ -10,15 +10,22 @@
   import Timeline from "$lib/components/Timeline.svelte";
 
   let prompt = $state("");
+  let starting = $state(false);
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    const text = prompt;
-    prompt = "";
-    await app.startTask(text);
+    if (starting || !prompt.trim() || !app.activeWorkspace) return;
+    const submitted = prompt;
+    starting = true;
+    try {
+      if (await app.startTask(submitted) && prompt === submitted) prompt = "";
+    } finally {
+      starting = false;
+    }
   }
   function onkeydown(event: KeyboardEvent) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    // Older WebKit can report the IME confirmation as 229 after compositionend.
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault();
       (event.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
     }
@@ -56,7 +63,9 @@
           ]}
         />
       {/if}
-      <Button variant="primary" type="submit" disabled={!app.activeWorkspace || !prompt.trim()}>Send</Button>
+      <Button variant="primary" type="submit" disabled={starting || !app.activeWorkspace || !prompt.trim()}>
+        {starting ? "Starting…" : "Send"}
+      </Button>
       {#if app.activeTask?.status === "running"}
         <Button onclick={() => app.cancel(app.activeTask!.id)}>Cancel</Button>
       {:else if app.activeTask && (app.activeTask.snapshots ?? 0) > 0}
