@@ -21,6 +21,7 @@ All remaining work for the Next Agent project. Each task has a status, the chang
 | 9 | Command palette | Cmd/Ctrl+K opens route navigation and Notes retains its search shortcut | ready for approval | Playwright keyboard and focus tests passed; desktop type check and build passed | ☐ |
 | 10 | Project setup and discovery | Open an existing folder or create a new project, then show its agent instructions, design files, vault graph and file tree | ready for approval | 3 focused Rust tests and 10 Chromium tests passed; `pnpm verify`, Clippy and desktop frontend build passed | ☐ |
 | 11 | Pull request and release | Fix actionable PR failures, verify required checks and publish through the approved release workflow | awaiting CI and owner approval | Release dry run verified tag/version matching and missing-installer handling; hosted release matrix pending | ☐ |
+| 12 | Kill hardcoded UI/UX geometry | Route shell rail, breakpoints, and control geometry (Slider, Spinner, Radio, Checkbox, Switch, Tabs, Kbd, Dialog, Swatch, ActivityRail) through tokens.css; fix phantom `--shell-rail` variable; remove unused legacy token aliases | ready for approval | Design-token check passed; 514 workspace tests passed; desktop build + svelte-check clean (0 errors); Playwright: 10 passed | ☐ |
 
 ## Definition of done (M1)
 

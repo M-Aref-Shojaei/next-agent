@@ -24,8 +24,8 @@
   .cap {
     display: inline-grid;
     place-items: center;
-    min-width: 20px;
-    height: 20px;
+    min-width: var(--space-5);
+    height: var(--space-5);
     padding: 0 var(--space-1);
     border: var(--border-width) solid var(--color-border);
     border-bottom-width: var(--border-width-strong);
@@ -37,5 +37,5 @@
     font-weight: var(--font-weight-medium);
     line-height: 1;
   }
-  .sm .cap { min-width: 16px; height: 16px; font-size: calc(var(--font-size-xs) - 1px); }
+  .sm .cap { min-width: var(--space-4); height: var(--space-4); font-size: calc(var(--font-size-xs) - 1px); }
 </style>

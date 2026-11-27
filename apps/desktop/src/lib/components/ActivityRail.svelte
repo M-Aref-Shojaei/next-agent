@@ -29,8 +29,8 @@
 
 <style>
   .rail {
-    width: var(--shell-rail, 56px);
-    min-width: var(--shell-rail, 56px);
+    width: var(--shell-activity-rail-width);
+    min-width: var(--shell-activity-rail-width);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -42,16 +42,16 @@
   a {
     position: relative;
     display: flex;
-    width: 48px;
-    min-height: 44px;
+    width: var(--space-12);
+    min-height: var(--shell-titlebar-height);
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 2px;
+    gap: var(--space-0-5);
     color: var(--color-text-secondary);
     border-radius: var(--radius-sm);
     text-decoration: none;
-    font-size: 10px;
+    font-size: calc(var(--font-size-xs) - 1px);
     font-weight: var(--font-weight-medium);
   }
   a:hover { color: var(--color-text); background: var(--color-surface-sunken); }
@@ -61,13 +61,13 @@
     content: "";
     position: absolute;
     left: calc(var(--space-1) * -1);
-    top: 8px;
-    bottom: 8px;
-    width: 3px;
+    top: var(--space-2);
+    bottom: var(--space-2);
+    width: calc(var(--space-0-5) + var(--border-width));
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     background: var(--color-accent);
   }
-  @media (max-width: 640px) {
+  @media (max-width: var(--breakpoint-narrow)) {
     .rail {
       width: 100%;
       min-width: 0;
@@ -77,7 +77,7 @@
       border-bottom: var(--border-width) solid var(--color-border);
       overflow-x: auto;
     }
-    a { flex: 0 0 48px; }
-    a.active::before { left: 8px; right: 8px; top: auto; bottom: 0; width: auto; height: 3px; }
+    a { flex: 0 0 var(--space-12); }
+    a.active::before { left: var(--space-2); right: var(--space-2); top: auto; bottom: 0; width: auto; height: calc(var(--space-0-5) + var(--border-width)); }
   }
 </style>

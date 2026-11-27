@@ -68,7 +68,7 @@
   .shell {
     --sidebar-width: calc(var(--settings-nav-width) + var(--space-8));
     display: grid;
-    grid-template-columns: var(--shell-rail, 56px) var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: var(--shell-activity-rail-width) var(--sidebar-width) minmax(0, 1fr);
     grid-template-rows: 1fr auto;
     height: 100vh;
   }
@@ -77,7 +77,7 @@
   main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
   /* Narrow: one column; the sidebar becomes a drawer under the top bar. */
-  @media (max-width: 640px) {
+  @media (max-width: var(--breakpoint-narrow)) {
     .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
     .shell :global(.rail) { grid-column: 1; grid-row: 2; }
     .topbar { display: block; padding: var(--space-1) var(--space-2); border-bottom: var(--border-width) solid var(--color-border); background: var(--color-surface-sunken); }

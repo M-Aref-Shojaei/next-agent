@@ -61,19 +61,19 @@
   .horizontal .options { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
   .opt { position: relative; display: inline-flex; align-items: flex-start; gap: var(--space-2); cursor: pointer; }
   .opt.disabled { cursor: not-allowed; opacity: 0.55; }
-  input { position: absolute; opacity: 0; width: 16px; height: 16px; margin: 0; }
+  input { position: absolute; opacity: 0; width: var(--space-4); height: var(--space-4); margin: 0; }
   .dot {
     flex: none;
-    width: 16px;
-    height: 16px;
-    margin-top: 2px;
+    width: var(--space-4);
+    height: var(--space-4);
+    margin-top: var(--space-0-5);
     border-radius: var(--radius-full);
     border: var(--border-width) solid var(--color-border-strong);
     background: var(--color-surface);
     transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
   }
   .opt:hover .dot { border-color: var(--color-accent); }
-  input:checked + .dot { border: 5px solid var(--color-accent); background: var(--color-control-thumb); }
+  input:checked + .dot { border: calc(var(--space-1) + var(--border-width)) solid var(--color-accent); background: var(--color-control-thumb); }
   input:focus-visible + .dot { box-shadow: var(--focus-ring); }
   .text { display: grid; gap: var(--space-0-5); }
   .desc { color: var(--color-text-secondary); font-size: var(--font-size-sm); }

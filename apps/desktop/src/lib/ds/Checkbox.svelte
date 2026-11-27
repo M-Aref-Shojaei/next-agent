@@ -54,8 +54,8 @@
   input {
     position: absolute;
     opacity: 0;
-    width: 16px;
-    height: 16px;
+    width: var(--space-4);
+    height: var(--space-4);
     margin: 0;
     cursor: inherit;
   }
@@ -63,9 +63,9 @@
     flex: none;
     display: grid;
     place-items: center;
-    width: 16px;
-    height: 16px;
-    margin-top: 2px;
+    width: var(--space-4);
+    height: var(--space-4);
+    margin-top: var(--space-0-5);
     border: var(--border-width) solid var(--color-border-strong);
     border-radius: var(--radius-sm);
     background: var(--color-surface);

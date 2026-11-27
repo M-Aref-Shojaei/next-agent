@@ -15,6 +15,7 @@ Results of the Playwright UI test pipeline. Each run produces a row in the table
 | local-2026-11-21 | 2026-11-21 | uncommitted | Honest structured diff review + LLM summaries + Playwright CI fixes | Read-only structured hunks; gateway JSON summaries with fallback; Node 22.6, Vite 1420, deterministic smoke tests | approved | User |
 | local-2026-11-22-command-palette | 2026-11-22 | uncommitted | Command palette | Cmd/Ctrl+K opens searchable route navigation; no side-effect actions | pending | Owner |
 | local-2026-11-24-projects | 2026-11-24 | PR #3 | Project setup and command palette fix | 10 Chromium tests passed, including project opening and creation, vault graph navigation, project switching, and keyboard navigation | pending | Owner |
+| local-2026-11-27-token-geometry | 2026-11-27 | local (uncommitted) | Kill hardcoded UI/UX geometry (task 12) | Rail now uses real `--shell-activity-rail-width` token; 8 new geometry tokens (switch, dialog, swatch, narrow breakpoint); 11 components de-hardcoded; unused legacy alias block removed; design-token check, 514 workspace tests, build, svelte-check, Playwright 10/10 passed | pending | Owner |
 
 ## How to review
 
