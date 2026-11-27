@@ -16,4 +16,4 @@
   });
 </script>
 
-<div id="hub"><p style="padding: 24px">Loading…</p></div>
+<div id="hub"><p style="padding: var(--space-6)">Loading…</p></div>

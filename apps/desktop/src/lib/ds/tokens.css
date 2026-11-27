@@ -92,6 +92,17 @@
   --content-max-width: 880px;
   --settings-nav-width: 200px;
 
+  /* Component geometry: sizes with no 4px-scale equivalent. (Media queries keep
+     their literal 640px narrow breakpoint: var() in @media conditions is not
+     reliable across the supported Chromium range. */
+  --dialog-width-md: 440px;
+  --dialog-width-lg: 680px;
+  --switch-width: 34px;
+  --switch-height: 20px;
+  --switch-sm-width: 26px;
+  --switch-sm-height: 16px;
+  --swatch-size: 22px;
+
   /* Coding Agent Design System v0.2 semantic aliases. Feature code uses
      these names; existing component tokens remain the compatibility layer. */
   --color-bg-canvas: var(--color-bg);
@@ -398,18 +409,4 @@
   /* Text-entry controls (TextField, TextArea, Select, ShortcutField) glow instead of ringing. */
   --field-focus-ring: 0 0 0 3px var(--color-accent-subtle);
   --field-focus-ring-invalid: 0 0 0 3px var(--color-danger-subtle);
-
-  /* Legacy names (pre-ADR-0012). Do not use in new code; later tasks remove them. */
-  --bg: var(--color-bg);
-  --panel: var(--color-surface);
-  --sidebar: var(--color-surface-sunken);
-  --border: var(--color-border);
-  --text: var(--color-text);
-  --muted: var(--color-text-secondary);
-  --accent: var(--color-accent);
-  --info: var(--color-info);
-  --warn: var(--color-warn);
-  --danger: var(--color-danger);
-  --ok: var(--color-ok);
-  --focus: var(--color-focus);
 }

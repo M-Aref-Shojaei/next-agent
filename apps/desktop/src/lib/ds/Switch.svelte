@@ -50,9 +50,9 @@
 
 <style>
   .ds-switch {
-    --w: 34px;
-    --h: 20px;
-    --pad: 2px;
+    --w: var(--switch-width);
+    --h: var(--switch-height);
+    --pad: var(--space-0-5);
     position: relative;
     flex: none;
     width: var(--w);
@@ -64,7 +64,7 @@
     cursor: pointer;
     transition: background-color var(--duration-normal) var(--ease-standard);
   }
-  .sm { --w: 26px; --h: 16px; }
+  .sm { --w: var(--switch-sm-width); --h: var(--switch-sm-height); }
   .ds-switch:hover:not(:disabled) { background: var(--color-text-tertiary); }
   .ds-switch[aria-checked="true"] { background: var(--color-accent); }
   .ds-switch[aria-checked="true"]:hover:not(:disabled) { background: var(--color-accent-hover); }

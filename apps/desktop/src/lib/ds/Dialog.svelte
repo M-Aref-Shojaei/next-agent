@@ -102,7 +102,7 @@
 
 <style>
   .ds-dialog {
-    width: min(440px, calc(100vw - 2 * var(--space-4)));
+    width: min(var(--dialog-width-md), calc(100vw - 2 * var(--space-4)));
     max-height: calc(100vh - 2 * var(--space-8));
     padding: 0;
     border: var(--border-width) solid var(--color-border);
@@ -112,7 +112,7 @@
     box-shadow: var(--shadow-xl);
     overflow: auto;
   }
-  .ds-dialog.lg { width: min(680px, calc(100vw - 2 * var(--space-4))); }
+  .ds-dialog.lg { width: min(var(--dialog-width-lg), calc(100vw - 2 * var(--space-4))); }
   .ds-dialog[open] { animation: pop var(--duration-normal) var(--ease-out); }
   .ds-dialog::backdrop { background: var(--color-scrim); }
   .body { display: grid; gap: var(--space-2); padding: var(--space-5) var(--space-5) var(--space-4); }
@@ -128,6 +128,6 @@
     border-top: var(--border-width) solid var(--color-border-subtle);
     background: var(--color-surface-sunken);
   }
-  @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
+  @keyframes pop { from { opacity: 0; transform: translateY(var(--space-1-5)) scale(0.98); } }
   @media (prefers-reduced-motion: reduce) { .ds-dialog[open] { animation: none; } }
 </style>
