@@ -62,8 +62,8 @@
 <style>
   .ds-swatches { display: inline-flex; flex-wrap: wrap; gap: var(--space-1-5); }
   button {
-    width: 22px;
-    height: 22px;
+    width: var(--swatch-size);
+    height: var(--swatch-size);
     padding: 0;
     border: var(--border-width) solid var(--color-border);
     border-radius: var(--radius-full);
@@ -72,6 +72,6 @@
     transition: transform var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
   }
   button:hover { transform: scale(1.08); border-color: var(--color-border); }
-  button[aria-checked="true"] { box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--swatch); }
+  button[aria-checked="true"] { box-shadow: 0 0 0 var(--border-width-strong) var(--color-bg), 0 0 0 var(--space-1) var(--swatch); }
   button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 </style>

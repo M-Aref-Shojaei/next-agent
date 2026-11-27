@@ -104,21 +104,21 @@
     position: absolute;
     left: var(--space-2);
     right: var(--space-2);
-    bottom: -1px;
-    height: 2px;
+    bottom: calc(-1 * var(--border-width));
+    height: var(--border-width-strong);
     border-radius: var(--radius-full);
     background: var(--color-accent);
   }
   button:focus-visible { outline: none; box-shadow: var(--focus-ring-inset); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
   .badge {
-    min-width: 18px;
+    min-width: calc(var(--space-4) + var(--space-0-5));
     padding: 0 var(--space-1);
     border-radius: var(--radius-full);
     background: var(--color-neutral-subtle);
     color: var(--color-neutral-text);
     font-size: var(--font-size-xs);
-    line-height: 16px;
+    line-height: var(--space-4);
     text-align: center;
   }
   .panel:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-md); }

@@ -68,7 +68,7 @@
   .shell {
     --sidebar-width: calc(var(--settings-nav-width) + var(--space-8));
     display: grid;
-    grid-template-columns: var(--shell-rail, 56px) var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: var(--shell-activity-rail-width) var(--sidebar-width) minmax(0, 1fr);
     grid-template-rows: 1fr auto;
     height: 100vh;
   }

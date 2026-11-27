@@ -21,6 +21,7 @@ All remaining work for the Next Agent project. Each task has a status, the chang
 | 9 | Command palette | Cmd/Ctrl+K opens route navigation and Notes retains its search shortcut | shipped in v0.2.0 | Playwright keyboard and focus tests, desktop type checks, and build passed in [PR #3](https://github.com/M-Aref-Shojaei/next-agent/pull/3) | ✓ |
 | 10 | Project setup and discovery | Open or create a project and discover its agent instructions, design files, supported vault graph and file tree | shipped in v0.2.0 | Three focused Rust tests and 10 Chromium tests passed. Installed app opened the project and discovered its instructions and design files. | ✓ |
 | 11 | Pull request and release | Fix the CI failures and publish verified platform installers from the approved tag | shipped in v0.2.0 | PR and main checks passed. The [release](https://github.com/M-Aref-Shojaei/next-agent/releases/tag/v0.2.0) contains six published installer assets. | ✓ |
+| 12 | Kill hardcoded UI/UX geometry | Route shell rail and control geometry (Slider, Spinner, Radio, Checkbox, Switch, Tabs, Kbd, Dialog, Swatch, ActivityRail) through tokens.css; fix phantom `--shell-rail` variable; remove unused legacy token aliases | ready for approval | Design-token check passed; 514 workspace tests passed; desktop build + svelte-check clean (0 errors); Playwright: 13 passed | ☐ |
 
 ## Follow-up work
 

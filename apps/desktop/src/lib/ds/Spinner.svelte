@@ -18,8 +18,8 @@
   .spinner {
     display: inline-block;
     flex: none;
-    width: 16px;
-    height: 16px;
+    width: var(--space-4);
+    height: var(--space-4);
     border-radius: var(--radius-full);
     border: var(--border-width-strong) solid currentColor;
     border-right-color: transparent;
@@ -27,8 +27,8 @@
     animation: spin 0.7s linear infinite;
     vertical-align: middle;
   }
-  .sm { width: 12px; height: 12px; }
-  .lg { width: 24px; height: 24px; border-width: 3px; }
+  .sm { width: var(--space-3); height: var(--space-3); }
+  .lg { width: var(--space-6); height: var(--space-6); border-width: calc(var(--space-0-5) + var(--border-width)); }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) {
     .spinner { animation-duration: 2.4s; }
