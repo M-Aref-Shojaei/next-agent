@@ -75,7 +75,7 @@ class AppStore {
         this.tasks = [{ ...newTask(started.taskId, started.title), status: "running" }, ...this.tasks];
       });
       await api.onTaskStream((message) => {
-        const id = message.type === "event" ? message.event.task_id : message.task_id;
+        const id = messageTaskId(message);
         if (adopted.has(id)) this.apply(id, message);
       });
     } catch {
